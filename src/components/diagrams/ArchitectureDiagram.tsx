@@ -1,17 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useId } from 'react';
 import mermaid from 'mermaid';
-import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Info, Layers, FileText, GitBranch } from 'lucide-react';
+import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Info, Layers, FileText, GitBranch, Brain, AlertTriangle } from 'lucide-react';
+import { FileInfo as BaseFileInfo } from '../../types';
 
-interface FileInfo {
-  name: string;
-  path: string;
+export interface ExtendedFileInfo extends BaseFileInfo {
   type: string;
-  size: number;
-  lastModified: string;
-  complexity: number;
   dependencies: string[];
   contributors: string[];
   commitCount: number;
+  functions?: {
+    name: string;
+    complexity: number;
+    dependencies: string[];
+    calls: string[];
+    description?: string;
+  }[];
 }
 
 interface ArchitectureDiagramProps {
@@ -22,8 +25,10 @@ interface ArchitectureDiagramProps {
   height?: number;
   theme?: 'default' | 'dark' | 'forest' | 'neutral';
   interactive?: boolean;
-  fileInfo?: Record<string, FileInfo>;
+  fileInfo?: Record<string, ExtendedFileInfo>;
   showDetails?: boolean;
+  onNodeClick?: (nodeId: string, nodeInfo: ExtendedFileInfo) => void;
+  useLLM?: boolean;
 }
 
 const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
@@ -35,7 +40,9 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   theme = 'default',
   interactive = true,
   fileInfo = {},
-  showDetails = true
+  showDetails = true,
+  onNodeClick,
+  useLLM = true
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -43,9 +50,11 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [diagramSvg, setDiagramSvg] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<FileInfo | null>(null);
+  const [selectedNode, setSelectedNode] = useState<ExtendedFileInfo | null>(null);
   const [showMetrics, setShowMetrics] = useState(true);
-  const eventListenersRef = useRef<Map<Element, () => void>>(new Map());
+  const [isLLMAvailable, setIsLLMAvailable] = useState(true);
+  const [detailedView, setDetailedView] = useState(false);
+  const uniqueId = useId();
   const mermaidInitialized = useRef(false);
 
   // Initialize mermaid
@@ -92,48 +101,49 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
     }
   }, []);
 
-  // Update theme
+  // Check LLM availability
   useEffect(() => {
-    if (mermaidInitialized.current) {
-      mermaid.initialize({
-        theme: theme,
-        securityLevel: 'loose',
-        flowchart: {
-          htmlLabels: true,
-          curve: 'basis',
-          padding: 20,
-          useMaxWidth: false,
-        },
-        sequence: {
-          diagramMarginX: 50,
-          diagramMarginY: 10,
-          actorMargin: 50,
-          width: 150,
-          height: 65,
-          boxMargin: 10,
-          boxTextMargin: 5,
-          noteMargin: 10,
-          messageMargin: 35,
-        },
-        gantt: {
-          titleTopMargin: 25,
-          barHeight: 20,
-          barGap: 4,
-          topPadding: 50
-        },
-        themeVariables: {
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSize: '16px',
-          primaryColor: '#4299e1',
-          primaryTextColor: '#fff',
-          primaryBorderColor: '#2b6cb0',
-          lineColor: '#e2e8f0',
-          secondaryColor: '#48bb78',
-          tertiaryColor: '#ed8936',
-        },
-      });
+    if (useLLM) {
+      // Simulate LLM availability check
+      const checkLLM = async () => {
+        try {
+          // Replace with actual LLM availability check
+          const response = await fetch('/api/llm/check');
+          setIsLLMAvailable(response.ok);
+        } catch (error) {
+          console.warn('LLM service not available:', error);
+          setIsLLMAvailable(false);
+        }
+      };
+      checkLLM();
     }
-  }, [theme]);
+  }, [useLLM]);
+
+  // Generate detailed diagram with LLM
+  const generateDetailedDiagram = async (baseDiagram: string) => {
+    if (!useLLM || !isLLMAvailable) {
+      return baseDiagram;
+    }
+
+    try {
+      // Replace with actual LLM API call
+      const response = await fetch('/api/llm/enhance-diagram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diagram: baseDiagram, fileInfo })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to enhance diagram with LLM');
+      }
+
+      const { enhancedDiagram } = await response.json();
+      return enhancedDiagram;
+    } catch (error) {
+      console.warn('Failed to enhance diagram with LLM:', error);
+      return baseDiagram;
+    }
+  };
 
   // Render diagram
   useEffect(() => {
@@ -150,10 +160,41 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
         }
 
         // Generate unique ID for this diagram instance
-        const diagramId = `architecture-diagram-${Math.random().toString(36).substr(2, 9)}`;
+        const diagramId = `architecture-diagram-${uniqueId.replace(/:/g, '-')}`;
+        
+        // Add click directives to the diagram if interactive
+        let diagramWithClicks = cleanDiagram;
+        if (interactive) {
+          // Extract node IDs from the diagram
+          const nodeMatches = cleanDiagram.match(/[A-Za-z0-9]+\["[^"]+"\]/g) || [];
+          const nodeIds = nodeMatches.map(match => match.split('[')[0]);
+          
+          // Add click directives for each node
+          const clickDirectives = nodeIds.map(nodeId => 
+            `click ${nodeId} call handleMermaidClick_${uniqueId.replace(/:/g, '-')}("${nodeId}") "Click for details"`
+          ).join('\n');
+          
+          diagramWithClicks = `${cleanDiagram}\n\n${clickDirectives}`;
+        }
+
+        // Generate detailed diagram if requested
+        const finalDiagram = detailedView ? 
+          await generateDetailedDiagram(diagramWithClicks) : 
+          diagramWithClicks;
+        
+        // Expose the click handler to the global scope
+        (window as any)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`] = (nodeId: string) => {
+          const nodeInfo = fileInfo[nodeId];
+          if (nodeInfo) {
+            setSelectedNode(nodeInfo);
+            if (onNodeClick) {
+              onNodeClick(nodeId, nodeInfo);
+            }
+          }
+        };
         
         // Render diagram
-        const { svg } = await mermaid.render(diagramId, cleanDiagram);
+        const { svg } = await mermaid.render(diagramId, finalDiagram);
         
         if (!isMounted) return;
         
@@ -171,112 +212,15 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
         svgElement.setAttribute('height', '100%');
         svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
         
+        // Fix self-closing tags in the SVG
+        const fixedSvg = svgElement.outerHTML
+          .replace(/<br>/g, '<br/>')
+          .replace(/<br\s*>/g, '<br/>')
+          .replace(/<br\s*\/>/g, '<br/>');
+        
         // Update the diagram SVG state
-        setDiagramSvg(tempDiv.innerHTML);
+        setDiagramSvg(fixedSvg);
 
-        // Add interactivity to SVG elements after the SVG is rendered
-        if (interactive && containerRef.current) {
-          const containerSvg = containerRef.current.querySelector('svg');
-          if (containerSvg) {
-            // Function to handle node selection
-            const handleNodeClick = (node: Element, nodeId: string) => {
-              try {
-                // Remove selection from all nodes
-                containerSvg.querySelectorAll('.node rect, .node circle, .node polygon, .node path').forEach(n => {
-                  n.classList.remove('selected');
-                });
-                
-                // Add selection to clicked node and its associated elements
-                const nodeElements = containerSvg.querySelectorAll(`[data-node-id="${nodeId}"]`);
-                nodeElements.forEach(el => el.classList.add('selected'));
-                
-                // Extract node information from the diagram
-                const nodeText = node.querySelector('text')?.textContent || '';
-                const nodeInfoParts = nodeText.split('<br/>');
-                const nodeName = nodeInfoParts[0] || nodeId;
-                const nodePath = nodeInfoParts[1] || '';
-                
-                // Create or update file info for the node
-                const baseNodeId = nodeId.split('-')[0];
-                const existingInfo = fileInfo[baseNodeId] || {};
-                
-                // Update selected node state with complete information
-                const updatedNodeInfo: FileInfo = {
-                  name: nodeName,
-                  path: nodePath || existingInfo.path || nodeName,
-                  type: existingInfo.type || 'component',
-                  size: existingInfo.size || 0,
-                  lastModified: existingInfo.lastModified || new Date().toISOString(),
-                  complexity: existingInfo.complexity || 0,
-                  dependencies: existingInfo.dependencies || [],
-                  contributors: existingInfo.contributors || [],
-                  commitCount: existingInfo.commitCount || 0
-                };
-                
-                setSelectedNode(updatedNodeInfo);
-              } catch (err) {
-                console.error('Error handling node click:', err);
-                setError('Failed to process node click');
-              }
-            };
-
-            // Add click handlers to all clickable elements
-            containerSvg.querySelectorAll('.node rect, .node circle, .node polygon, .node path, .node text').forEach((element: Element) => {
-              try {
-                // Get the node ID from the element's ID or parent's ID
-                const elementId = element.getAttribute('id') || element.parentElement?.getAttribute('id');
-                if (elementId) {
-                  // Extract the node ID from the flowchart ID
-                  const nodeId = elementId.replace('flowchart-', '').split('-')[0];
-                  
-                  // Remove any existing click handler
-                  const existingCleanup = eventListenersRef.current.get(element);
-                  if (existingCleanup) {
-                    existingCleanup();
-                    eventListenersRef.current.delete(element);
-                  }
-                  
-                  // Add click handler
-                  const clickHandler = (e: Event) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleNodeClick(element, nodeId);
-                  };
-                  
-                  element.addEventListener('click', clickHandler);
-                  
-                  // Store cleanup function
-                  eventListenersRef.current.set(element, () => {
-                    element.removeEventListener('click', clickHandler);
-                  });
-                  
-                  // Add data attribute with the base node ID
-                  element.setAttribute('data-node-id', nodeId);
-                  
-                  // Add cursor pointer style
-                  element.setAttribute('style', 'cursor: pointer;');
-                }
-              } catch (err) {
-                console.error('Error setting up click handler:', err);
-              }
-            });
-
-            // Add click handler to clear selection
-            const clearSelectionHandler = (e: MouseEvent) => {
-              if (e.target === containerSvg) {
-                setSelectedNode(null);
-                containerSvg.querySelectorAll('.node rect, .node circle, .node polygon, .node path').forEach(n => {
-                  n.classList.remove('selected');
-                });
-              }
-            };
-            
-            containerSvg.addEventListener('click', clearSelectionHandler);
-            eventListenersRef.current.set(containerSvg, () => {
-              containerSvg.removeEventListener('click', clearSelectionHandler);
-            });
-          }
-        }
       } catch (err) {
         if (isMounted) {
           console.error('Error rendering diagram:', err);
@@ -294,11 +238,10 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
     // Cleanup function
     return () => {
       isMounted = false;
-      // Remove all event listeners
-      eventListenersRef.current.forEach(cleanup => cleanup());
-      eventListenersRef.current.clear();
+      // Remove the global click handler
+      delete (window as any)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`];
     };
-  }, [diagram, interactive, fileInfo]);
+  }, [diagram, interactive, fileInfo, onNodeClick, uniqueId, detailedView, useLLM, isLLMAvailable]);
 
   // Handle zoom
   const handleZoom = (delta: number) => {
@@ -336,17 +279,6 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
     navigator.clipboard.writeText(diagram);
   };
 
-  // Get selected node info
-  const selectedNodeInfo = selectedNode ? fileInfo[selectedNode.path] : null;
-
-  // Debug selected node
-  useEffect(() => {
-    if (selectedNode) {
-      console.log('Selected node:', selectedNode);
-      console.log('Node info:', fileInfo[selectedNode.path]);
-    }
-  }, [selectedNode, fileInfo]);
-
   return (
     <div className="flex flex-col items-center w-full">
       {/* Title and Description */}
@@ -360,7 +292,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
       )}
 
       {/* Controls */}
-      <div className="w-full mb-4 flex items-center justify-between">
+      <div className="w-full mb-4 flex justify-between items-center">
         <div className="flex items-center gap-2">
           <button
             onClick={() => handleZoom(0.1)}
@@ -385,12 +317,26 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {useLLM && (
+            <button
+              onClick={() => setDetailedView(!detailedView)}
+              className={`p-2 rounded-lg transition-colors duration-200 ${
+                detailedView 
+                  ? 'bg-purple-100 text-purple-600' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+              title={detailedView ? "Disable detailed view" : "Enable detailed view"}
+              disabled={!isLLMAvailable}
+            >
+              <Brain className="w-5 h-5" />
+            </button>
+          )}
           <button
-            onClick={() => setShowMetrics(!showMetrics)}
+            onClick={handleDownload}
             className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title={showMetrics ? "Hide metrics" : "Show metrics"}
+            title="Download SVG"
           >
-            <Info className="w-5 h-5" />
+            <Download className="w-5 h-5" />
           </button>
           <button
             onClick={handleCopy}
@@ -400,256 +346,153 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
             <Copy className="w-5 h-5" />
           </button>
           <button
-            onClick={handleDownload}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Download diagram"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <button
             onClick={toggleFullscreen}
             className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
             title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           >
-            {isFullscreen ? (
-              <Minimize2 className="w-5 h-5" />
-            ) : (
-              <Maximize2 className="w-5 h-5" />
-            )}
+            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
           </button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="relative flex-1 w-full flex gap-4">
-        {/* Diagram Container */}
-        <div
-          ref={containerRef}
-          className="relative flex-1 overflow-auto bg-white rounded-lg shadow-lg"
-          style={{
-            width: isFullscreen ? '100vw' : width,
-            height: isFullscreen ? '100vh' : height,
-            transform: `scale(${zoomLevel})`,
-            transformOrigin: 'center center',
-            transition: 'transform 0.2s ease-in-out',
-          }}
-        >
-          {isLoading ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-            </div>
-          ) : error ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-red-500 text-center p-4">
-                <p className="font-semibold">Error rendering diagram</p>
-                <p className="text-sm mt-2">{error}</p>
-              </div>
-            </div>
-          ) : (
-            <div
-              className="mermaid-diagram"
-              dangerouslySetInnerHTML={{ __html: diagramSvg || '' }}
-            />
-          )}
+      {/* LLM Status */}
+      {useLLM && !isLLMAvailable && (
+        <div className="w-full mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-yellow-500" />
+          <p className="text-sm text-yellow-700">
+            LLM service is not available. Using basic diagram view.
+          </p>
         </div>
+      )}
 
-        {/* Details Panel */}
-        {showDetails && (
-          <div className="w-80 bg-white rounded-lg shadow-lg p-4 overflow-auto">
-            {selectedNodeInfo ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-blue-500" />
-                  <h3 className="text-lg font-semibold">{selectedNodeInfo.path}</h3>
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-gray-500" />
-                    <span className="text-sm text-gray-600">Type: {selectedNodeInfo.type}</span>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-gray-500" />
-                    <span className="text-sm text-gray-600">
-                      Dependencies: {selectedNodeInfo.dependencies.length}
-                    </span>
-                  </div>
-
-                  {showMetrics && (
-                    <>
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">Metrics</h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="text-sm">
-                          <span className="text-gray-500">Size:</span>
-                          <span className="ml-2">{selectedNodeInfo.size} bytes</span>
-                        </div>
-                        <div className="text-sm">
-                          <span className="text-gray-500">Complexity:</span>
-                          <span className="ml-2">{selectedNodeInfo.complexity}</span>
-                        </div>
-                        <div className="text-sm">
-                          <span className="text-gray-500">Commits:</span>
-                          <span className="ml-2">{selectedNodeInfo.commitCount}</span>
-                        </div>
-                        <div className="text-sm">
-                          <span className="text-gray-500">Modified:</span>
-                          <span className="ml-2">{new Date(selectedNodeInfo.lastModified).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {selectedNodeInfo.dependencies.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">Dependencies</h4>
-                      <div className="space-y-1">
-                        {selectedNodeInfo.dependencies.map((dep, index) => (
-                          <div key={index} className="text-sm text-gray-600">
-                            {dep}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedNodeInfo.contributors.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">Contributors</h4>
-                      <div className="space-y-1">
-                        {selectedNodeInfo.contributors.map((contributor, index) => (
-                          <div key={index} className="text-sm text-gray-600">
-                            {contributor}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="text-center text-gray-500 py-8">
-                <Info className="w-8 h-8 mx-auto mb-2" />
-                <p>Select a node to view details</p>
-                <p className="text-sm mt-2">Click on any component in the diagram</p>
-              </div>
-            )}
+      {/* Diagram Container */}
+      <div
+        ref={containerRef}
+        className="w-full h-full flex justify-center items-center bg-white rounded-lg border overflow-auto"
+        style={{
+          transform: `scale(${zoomLevel})`,
+          transformOrigin: 'center',
+          transition: 'transform 0.2s ease-in-out'
+        }}
+      >
+        {isLoading ? (
+          <div className="flex items-center justify-center w-full h-full">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           </div>
+        ) : error ? (
+          <div className="text-red-500 p-4">{error}</div>
+        ) : (
+          <div 
+            className="mermaid-container w-full h-full"
+            dangerouslySetInnerHTML={{ __html: diagramSvg || '' }}
+          />
         )}
       </div>
 
-      {/* Custom Styles */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        .mermaid-diagram {
-          width: 100%;
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .mermaid-diagram svg {
-          max-width: 100%;
-          max-height: 100%;
-        }
-
-        .mermaid-diagram .node {
-          transition: all 0.2s ease-in-out;
-          cursor: pointer;
-          transform-origin: center;
-        }
-
-        .mermaid-diagram .node.hover {
-          filter: brightness(1.1);
-        }
-
-        .mermaid-diagram .node.selected {
-          stroke: #4299e1;
-          stroke-width: 3px;
-          filter: brightness(1.1);
-        }
-
-        .mermaid-diagram .edgePath {
-          transition: all 0.2s ease-in-out;
-        }
-
-        .mermaid-diagram .edgePath.connected-hover {
-          stroke: #4299e1;
-          stroke-width: 2px;
-        }
-
-        .mermaid-diagram .label {
-          font-family: 'Inter', system-ui, sans-serif;
-          font-size: 14px;
-          cursor: pointer;
-          transition: all 0.2s ease-in-out;
-        }
-
-        .mermaid-diagram .label.hover {
-          font-weight: bold;
-        }
-
-        .mermaid-diagram .label.selected {
-          font-weight: bold;
-          color: #4299e1;
-        }
-
-        .mermaid-diagram text {
-          cursor: pointer;
-          transition: all 0.2s ease-in-out;
-        }
-
-        .mermaid-diagram text.hover {
-          font-weight: bold;
-        }
-
-        .mermaid-diagram text.selected {
-          font-weight: bold;
-          fill: #4299e1;
-        }
-
-        .mermaid-diagram .cluster {
-          fill: #f7fafc;
-          stroke: #e2e8f0;
-          stroke-width: 1px;
-          rx: 4;
-          ry: 4;
-        }
-
-        .mermaid-diagram .cluster:hover {
-          fill: #edf2f7;
-        }
-
-        .mermaid-diagram .edgeLabel {
-          background-color: white;
-          padding: 2px 4px;
-          border-radius: 2px;
-          font-size: 12px;
-        }
-
-        .mermaid-diagram .edgeLabel:hover {
-          background-color: #f7fafc;
-        }
-
-        /* Dark theme overrides */
-        .dark .mermaid-diagram .cluster {
-          fill: #2d3748;
-          stroke: #4a5568;
-        }
-
-        .dark .mermaid-diagram .cluster:hover {
-          fill: #4a5568;
-        }
-
-        .dark .mermaid-diagram .edgeLabel {
-          background-color: #2d3748;
-          color: #e2e8f0;
-        }
-
-        .dark .mermaid-diagram .edgeLabel:hover {
-          background-color: #4a5568;
-        }
-      ` }} />
+      {/* Node Details Panel */}
+      {selectedNode && showDetails && (
+        <div className="w-full mt-4 p-4 bg-white rounded-lg border shadow-sm">
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{selectedNode.name}</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-gray-600">Path</p>
+              <p className="font-medium">{selectedNode.path}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Type</p>
+              <p className="font-medium">{selectedNode.type}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Size</p>
+              <p className="font-medium">{selectedNode.size} bytes</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Complexity</p>
+              <p className="font-medium">{selectedNode.complexity}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Last Modified</p>
+              <p className="font-medium">{selectedNode.lastModified ? new Date(selectedNode.lastModified).toLocaleDateString() : 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Commit Count</p>
+              <p className="font-medium">{selectedNode.commitCount}</p>
+            </div>
+          </div>
+          {selectedNode.dependencies && selectedNode.dependencies.length > 0 && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600 mb-2">Dependencies</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedNode.dependencies.map((dep, index) => (
+                  <span key={index} className="px-2 py-1 bg-gray-100 rounded text-sm">
+                    {dep}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {selectedNode.contributors && selectedNode.contributors.length > 0 && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600 mb-2">Contributors</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedNode.contributors.map((contributor, index) => (
+                  <span key={index} className="px-2 py-1 bg-gray-100 rounded text-sm">
+                    {contributor}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {selectedNode.functions && selectedNode.functions.length > 0 && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600 mb-2">Functions</p>
+              <div className="space-y-2">
+                {selectedNode.functions.map((func, index) => (
+                  <div key={index} className="p-2 bg-gray-50 rounded">
+                    <div className="flex items-center justify-between">
+                      <code className="text-sm font-medium text-purple-600">{func.name}</code>
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        func.complexity >= 70 ? 'bg-red-100 text-red-800' :
+                        func.complexity >= 50 ? 'bg-orange-100 text-orange-800' :
+                        'bg-green-100 text-green-800'
+                      }`}>
+                        {func.complexity}% complex
+                      </span>
+                    </div>
+                    {func.description && (
+                      <p className="text-sm text-gray-600 mt-1">{func.description}</p>
+                    )}
+                    {func.dependencies && func.dependencies.length > 0 && (
+                      <div className="mt-1">
+                        <p className="text-xs text-gray-500">Dependencies:</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {func.dependencies.map((dep, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">
+                              {dep}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {func.calls && func.calls.length > 0 && (
+                      <div className="mt-1">
+                        <p className="text-xs text-gray-500">Calls:</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {func.calls.map((call, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">
+                              {call}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

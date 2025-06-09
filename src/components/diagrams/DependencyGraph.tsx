@@ -2,11 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Search, Filter, ZoomIn, ZoomOut, RefreshCw, Info, BarChart2, GitBranch, Clock, AlertCircle, FileText, Layers } from 'lucide-react';
 
-interface DependencyNode extends d3.SimulationNodeDatum {
+interface DependencyNode {
   id: string;
   name: string;
-  type: 'module' | 'package' | 'file';
-  size?: number;
+  type: string;
+  size: number;
   cluster?: string;
   metrics?: {
     complexity?: number;
@@ -43,11 +43,14 @@ interface DependencyNode extends d3.SimulationNodeDatum {
   fy?: number | null;
 }
 
-interface DependencyLink extends d3.SimulationLinkDatum<DependencyNode> {
+interface DependencyLink {
   source: DependencyNode;
   target: DependencyNode;
-  type: 'import' | 'require' | 'dependency';
-  strength?: number;
+  type: string;
+  strength: number;
+  name?: string;
+  version?: string;
+  vulnerabilities?: number;
   metrics?: {
     frequency?: number;
     lastUsed?: string;
@@ -69,8 +72,8 @@ interface DependencyLink extends d3.SimulationLinkDatum<DependencyNode> {
 interface DependencyGraphProps {
   nodes: DependencyNode[];
   links: DependencyLink[];
-  width?: number;
-  height?: number;
+  width: number;
+  height: number;
 }
 
 const DependencyGraph: React.FC<DependencyGraphProps> = ({
@@ -298,7 +301,8 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
       .attr("fill", d => {
         const baseColor = nodeColor(d.type);
         if (highlightedNode === d.id) {
-          return d3.color(baseColor).brighter(0.5).toString();
+          const color = d3.color(baseColor);
+          return color ? color.brighter(0.5).toString() : baseColor;
         }
         return baseColor;
       })
@@ -460,6 +464,12 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
       .style("fill", "#333")
       .text(d => d);
 
+    // Cleanup
+    return () => {
+      if (simulation) {
+        simulation.stop();
+      }
+    };
   }, [nodes, links, width, height, searchTerm, selectedTypes, selectedClusters, highlightedNode, showMetrics, layoutMode]);
 
   // Enhanced node styling based on view mode

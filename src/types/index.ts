@@ -31,6 +31,20 @@ export interface FileInfo {
   primaryAuthor?: string;
 }
 
+export interface ExtendedFileInfo extends FileInfo {
+  type: string;
+  dependencies: string[];
+  contributors: string[];
+  commitCount: number;
+  functions?: {
+    name: string;
+    complexity: number;
+    dependencies: string[];
+    calls: string[];
+    description?: string;
+  }[];
+}
+
 export interface Contributor {
   login: string;
   contributions: number;
