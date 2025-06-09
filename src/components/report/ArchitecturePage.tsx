@@ -21,6 +21,30 @@ interface ArchitecturePageProps {
   reportData: AnalysisResult;
 }
 
+interface ComplexityData {
+  name: string;
+  path: string;
+  complexity: number;
+  size: number;
+  churn: number;
+  lastModified?: string;
+  dependencies?: string[];
+  contributors?: string[];
+  commitCount?: number;
+}
+
+interface FileInfo {
+  name: string;
+  path: string;
+  size: number;
+  complexity?: number;
+  churn?: number;
+  lastModified?: string;
+  dependencies?: string[];
+  contributors?: string[];
+  commitCount?: number;
+}
+
 const ArchitecturePage = ({ reportData }: ArchitecturePageProps) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('treemap');
   
@@ -35,13 +59,19 @@ const ArchitecturePage = ({ reportData }: ArchitecturePageProps) => {
     { name: 'express', type: 'production', version: '^4.18.0', vulnerabilities: 2 }
   ];
 
-  const complexityData = files.slice(0, 20).map((file, index) => ({
-    name: file.name,
-    path: file.path,
-    complexity: Math.floor(Math.random() * 80) + 20,
-    size: file.size,
-    churn: Math.floor(Math.random() * 50) + 5
-  }));
+  const complexityData: ComplexityData[] = (reportData.files as FileInfo[])
+    .filter(file => file.complexity && file.complexity > 0)
+    .map(file => ({
+      name: file.name,
+      path: file.path,
+      complexity: file.complexity || 0,
+      size: file.size,
+      churn: file.churn || 0,
+      lastModified: file.lastModified,
+      dependencies: file.dependencies,
+      contributors: file.contributors,
+      commitCount: file.commitCount
+    }));
 
   const getComplexityColor = (complexity: number) => {
     if (complexity >= 80) return '#EF4444';
@@ -176,20 +206,180 @@ const ArchitecturePage = ({ reportData }: ArchitecturePageProps) => {
               <div className="w-full h-full min-h-[500px]">
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Complexity vs Size Scatter Plot</h4>
                 <div className="relative h-full bg-white rounded-lg border overflow-auto">
-                  <svg className="w-full h-full min-w-[800px] min-h-[500px]">
-                    {complexityData.map((file, index) => (
-                      <circle
-                        key={index}
-                        cx={50 + (file.size / 2000) * 300}
-                        cy={300 - (file.complexity / 100) * 250}
-                        r={Math.max(3, file.churn / 10)}
-                        fill={getComplexityColor(file.complexity)}
-                        opacity={0.7}
-                        className="hover:opacity-100 cursor-pointer"
+                  <svg
+                    className="w-full h-full"
+                    viewBox="0 0 1000 600"
+                    preserveAspectRatio="xMidYMid meet"
+                  >
+                    {/* Background grid */}
+                    <defs>
+                      <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+                        <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#e5e7eb" strokeWidth="0.5"/>
+                      </pattern>
+                      <linearGradient id="complexityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" style={{ stopColor: '#10b981', stopOpacity: 0.2 }} />
+                        <stop offset="50%" style={{ stopColor: '#f59e0b', stopOpacity: 0.2 }} />
+                        <stop offset="100%" style={{ stopColor: '#ef4444', stopOpacity: 0.2 }} />
+                      </linearGradient>
+                      {/* Arrow marker for file dependencies */}
+                      <marker
+                        id="arrow"
+                        viewBox="0 0 10 10"
+                        refX="5"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto-start-reverse"
                       >
-                        <title>{`${file.name}: ${file.complexity}% complexity, ${file.size} bytes`}</title>
-                      </circle>
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+                      </marker>
+                    </defs>
+
+                    {/* Grid background */}
+                    <rect width="100%" height="100%" fill="url(#grid)" />
+
+                    {/* Gradient background for complexity zones */}
+                    <rect x="0" y="0" width="1000" height="600" fill="url(#complexityGradient)" />
+
+                    {/* Complexity zones */}
+                    <rect x="0" y="0" width="1000" height="600" fill="none" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="5,5" />
+                    <line x1="0" y1="200" x2="1000" y2="200" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="5,5" />
+                    <line x1="0" y1="400" x2="1000" y2="400" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="5,5" />
+                    <line x1="333" y1="0" x2="333" y2="600" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="5,5" />
+                    <line x1="666" y1="0" x2="666" y2="600" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="5,5" />
+
+                    {/* Zone labels with statistics */}
+                    <g className="text-xs fill-gray-500">
+                      <text x="10" y="20">High Complexity ({complexityData.filter(f => f.complexity >= 70).length} files)</text>
+                      <text x="10" y="220">Medium Complexity ({complexityData.filter(f => f.complexity >= 50 && f.complexity < 70).length} files)</text>
+                      <text x="10" y="420">Low Complexity ({complexityData.filter(f => f.complexity < 50).length} files)</text>
+                      <text x="10" y="590">Small Files ({complexityData.filter(f => f.size < 1000).length} files)</text>
+                      <text x="990" y="590" className="text-right">Large Files ({complexityData.filter(f => f.size >= 1000).length} files)</text>
+                    </g>
+
+                    {/* Data points */}
+                    {complexityData.map((file, index) => (
+                      <g key={index} className="group">
+                        {/* Background circle for better hover detection */}
+                        <circle
+                          cx={file.size * 0.1}
+                          cy={600 - file.complexity * 6}
+                          r={Math.sqrt(file.complexity) * 0.8 + 10}
+                          fill="transparent"
+                          className="cursor-pointer"
+                        />
+                        
+                        {/* Main data point */}
+                        <circle
+                          cx={file.size * 0.1}
+                          cy={600 - file.complexity * 6}
+                          r={Math.sqrt(file.complexity) * 0.8}
+                          fill={file.complexity >= 70 ? '#ef4444' :
+                                file.complexity >= 50 ? '#f59e0b' :
+                                '#10b981'}
+                          fillOpacity={0.7}
+                          stroke={file.complexity >= 70 ? '#dc2626' :
+                                 file.complexity >= 50 ? '#d97706' :
+                                 '#059669'}
+                          strokeWidth={2}
+                          className="transition-colors duration-200"
+                        />
+
+                        {/* Warning indicator for high complexity */}
+                        {file.complexity >= 70 && (
+                          <circle
+                            cx={file.size * 0.1}
+                            cy={600 - file.complexity * 6}
+                            r={Math.sqrt(file.complexity) * 0.8 + 4}
+                            fill="none"
+                            stroke="#ef4444"
+                            strokeWidth={1}
+                            strokeDasharray="2,2"
+                            className="animate-pulse"
+                          />
+                        )}
+
+                        {/* File name label - always visible but subtle */}
+                        <text
+                          x={file.size * 0.1}
+                          y={600 - file.complexity * 6 - Math.sqrt(file.complexity) * 0.8 - 5}
+                          className="text-[10px] fill-gray-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                          textAnchor="middle"
+                        >
+                          {file.name.split('/').pop()}
+                        </text>
+
+                        {/* Detailed tooltip */}
+                        <foreignObject
+                          x={file.size * 0.1 + 15}
+                          y={600 - file.complexity * 6 - 60}
+                          width="200"
+                          height="120"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                        >
+                          <div className="bg-white rounded-lg shadow-lg p-3 text-xs">
+                            <div className="font-medium text-gray-900 mb-1">{file.name}</div>
+                            <div className="space-y-1 text-gray-600">
+                              <div className="flex justify-between">
+                                <span>Complexity:</span>
+                                <span className="font-medium">{file.complexity}%</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Size:</span>
+                                <span className="font-medium">{(file.size / 1024).toFixed(1)} KB</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Last Modified:</span>
+                                <span className="font-medium">{file.lastModified ? new Date(file.lastModified).toLocaleDateString() : 'N/A'}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Dependencies:</span>
+                                <span className="font-medium">{file.dependencies?.length || 0}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Contributors:</span>
+                                <span className="font-medium">{file.contributors?.length || 0}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Commits:</span>
+                                <span className="font-medium">{file.commitCount || 0}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </foreignObject>
+                      </g>
                     ))}
+
+                    {/* Statistics Panel */}
+                    <g transform="translate(750, 20)">
+                      <rect x="0" y="0" width="200" height="120" fill="white" fillOpacity="0.9" rx="4" />
+                      <text x="10" y="20" className="text-sm font-medium fill-gray-900">Codebase Statistics</text>
+                      <text x="10" y="40" className="text-xs fill-gray-700">
+                        Total Files: {complexityData.length}
+                      </text>
+                      <text x="10" y="60" className="text-xs fill-gray-700">
+                        Avg Complexity: {Math.round(complexityData.reduce((sum, f) => sum + f.complexity, 0) / complexityData.length)}%
+                      </text>
+                      <text x="10" y="80" className="text-xs fill-gray-700">
+                        High Risk Files: {complexityData.filter(f => f.complexity >= 70).length}
+                      </text>
+                      <text x="10" y="100" className="text-xs fill-gray-700">
+                        Total Size: {(complexityData.reduce((sum, f) => sum + f.size, 0) / 1024).toFixed(1)} KB
+                      </text>
+                    </g>
+
+                    {/* Legend with enhanced information */}
+                    <g transform="translate(20, 20)">
+                      <rect x="0" y="0" width="200" height="100" fill="white" fillOpacity="0.9" rx="4" />
+                      <text x="10" y="20" className="text-sm font-medium fill-gray-900">Complexity Levels</text>
+                      <circle cx="15" cy="35" r="6" fill="#10b981" fillOpacity="0.7" stroke="#059669" strokeWidth="2" />
+                      <text x="30" y="40" className="text-xs fill-gray-700">Low ({'<'} 50%)</text>
+                      <circle cx="15" cy="55" r="6" fill="#f59e0b" fillOpacity="0.7" stroke="#d97706" strokeWidth="2" />
+                      <text x="30" y="60" className="text-xs fill-gray-700">Medium (50-70%)</text>
+                      <circle cx="15" cy="75" r="6" fill="#ef4444" fillOpacity="0.7" stroke="#dc2626" strokeWidth="2" />
+                      <text x="30" y="80" className="text-xs fill-gray-700">High ({'>'} 70%)</text>
+                      <text x="10" y="95" className="text-xs fill-gray-500">Circle size indicates complexity level</text>
+                    </g>
                   </svg>
                   <div className="absolute bottom-2 left-2 text-xs text-gray-500">File Size →</div>
                   <div className="absolute top-2 left-2 text-xs text-gray-500 transform -rotate-90 origin-left">Complexity ↑</div>
@@ -243,19 +433,6 @@ const ArchitecturePage = ({ reportData }: ArchitecturePageProps) => {
                       UserSvc --> DB
                       DataSvc --> DB
                       FileSvc --> S3
-
-                      %% File-to-file connections
-                      UI --> |"src/components/UI.tsx"| State
-                      State --> |"src/store/index.ts"| Router
-                      Router --> |"src/routes/index.tsx"| API
-                      API --> |"src/api/gateway.ts"| Auth
-                      Auth --> |"src/auth/index.ts"| Cache
-                      Cache --> |"src/cache/redis.ts"| UserSvc
-                      Cache --> |"src/cache/redis.ts"| DataSvc
-                      Cache --> |"src/cache/redis.ts"| FileSvc
-                      UserSvc --> |"src/services/user.ts"| DB
-                      DataSvc --> |"src/services/data.ts"| DB
-                      FileSvc --> |"src/services/file.ts"| S3
 
                       classDef frontend fill:#4299e1,stroke:#2b6cb0,color:white
                       classDef backend fill:#48bb78,stroke:#2f855a,color:white
@@ -325,43 +502,63 @@ const ArchitecturePage = ({ reportData }: ArchitecturePageProps) => {
                     },
                     'Cache': {
                       path: 'src/cache/redis.ts',
-                      type: 'Cache Layer',
+                      type: 'Caching',
                       size: 1500,
                       lastModified: '2024-03-13',
-                      complexity: 7,
+                      complexity: 5,
                       dependencies: ['redis', 'ioredis'],
-                      contributors: ['Jane Smith', 'Mike Johnson'],
-                      commitCount: 9
+                      contributors: ['John Doe'],
+                      commitCount: 6
                     },
                     'UserSvc': {
                       path: 'src/services/user.ts',
                       type: 'Service',
-                      size: 4200,
+                      size: 2200,
                       lastModified: '2024-03-15',
-                      complexity: 15,
-                      dependencies: ['mongoose', 'bcrypt', 'jsonwebtoken'],
-                      contributors: ['John Doe', 'Jane Smith', 'Mike Johnson'],
-                      commitCount: 25
+                      complexity: 9,
+                      dependencies: ['mongoose', 'bcrypt'],
+                      contributors: ['Jane Smith', 'Mike Johnson'],
+                      commitCount: 14
                     },
                     'DataSvc': {
                       path: 'src/services/data.ts',
                       type: 'Service',
-                      size: 3800,
+                      size: 1900,
                       lastModified: '2024-03-14',
-                      complexity: 14,
+                      complexity: 7,
                       dependencies: ['mongoose', 'redis'],
-                      contributors: ['John Doe', 'Mike Johnson'],
-                      commitCount: 18
+                      contributors: ['John Doe'],
+                      commitCount: 9
                     },
                     'FileSvc': {
                       path: 'src/services/file.ts',
                       type: 'Service',
-                      size: 2900,
-                      lastModified: '2024-03-13',
-                      complexity: 11,
+                      size: 2100,
+                      lastModified: '2024-03-15',
+                      complexity: 8,
                       dependencies: ['aws-sdk', 'multer'],
                       contributors: ['Jane Smith'],
-                      commitCount: 14
+                      commitCount: 11
+                    },
+                    'DB': {
+                      path: 'src/db/index.ts',
+                      type: 'Database',
+                      size: 1800,
+                      lastModified: '2024-03-13',
+                      complexity: 6,
+                      dependencies: ['mongoose', 'redis'],
+                      contributors: ['John Doe', 'Mike Johnson'],
+                      commitCount: 9
+                    },
+                    'S3': {
+                      path: 'src/storage/s3.ts',
+                      type: 'Object Storage',
+                      size: 1200,
+                      lastModified: '2024-03-14',
+                      complexity: 4,
+                      dependencies: ['aws-sdk'],
+                      contributors: ['Jane Smith'],
+                      commitCount: 7
                     }
                   }}
                 />

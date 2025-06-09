@@ -56,7 +56,42 @@ const ReportPage = () => {
       if (savedReport) {
         try {
           const data = JSON.parse(savedReport);
-          setReportData(data);
+          // Ensure all required fields are present with default values
+          const defaultData = {
+            metrics: {
+              codeQuality: 0,
+              testCoverage: 0,
+              technicalDebtScore: 0,
+              performanceScore: 0,
+              totalCommits: 0,
+              totalContributors: 0,
+              linesOfCode: 0,
+              busFactor: 0
+            },
+            hotspots: [],
+            keyFunctions: [],
+            architectureAnalysis: "No architecture analysis available.",
+            files: [],
+            languages: {},
+            repository: {
+              name: "Unknown Repository",
+              fullName: "Unknown Repository",
+              stars: 0,
+              forks: 0
+            }
+          };
+          
+          // Merge the loaded data with defaults
+          const completeData = {
+            ...defaultData,
+            ...data,
+            metrics: {
+              ...defaultData.metrics,
+              ...(data.metrics || {})
+            }
+          };
+          
+          setReportData(completeData);
         } catch (error) {
           console.error('Failed to parse report data:', error);
         }

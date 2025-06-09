@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { Search, Filter, ZoomIn, ZoomOut, RefreshCw, Info, BarChart2, GitBranch, Clock, AlertCircle } from 'lucide-react';
+import { Search, Filter, ZoomIn, ZoomOut, RefreshCw, Info, BarChart2, GitBranch, Clock, AlertCircle, FileText, Layers } from 'lucide-react';
 
 interface DependencyNode extends d3.SimulationNodeDatum {
   id: string;
@@ -22,6 +22,20 @@ interface DependencyNode extends d3.SimulationNodeDatum {
     maintainabilityScore?: number;
     commitFrequency?: number;
     contributors?: number;
+    cyclomaticComplexity?: number;
+    cognitiveComplexity?: number;
+    duplication?: number;
+    codeSmells?: number;
+    vulnerabilities?: number;
+    hotspots?: number;
+    reliability?: number;
+    maintainability?: number;
+    security?: number;
+    coverage?: number;
+    duplications?: number;
+    issues?: number;
+    debt?: number;
+    effort?: number;
   };
   x?: number;
   y?: number;
@@ -41,6 +55,14 @@ interface DependencyLink extends d3.SimulationLinkDatum<DependencyNode> {
     latency?: number;
     reliability?: number;
     security?: number;
+    complexity?: number;
+    coupling?: number;
+    cohesion?: number;
+    stability?: number;
+    volatility?: number;
+    risk?: number;
+    impact?: number;
+    criticality?: number;
   };
 }
 
@@ -66,8 +88,17 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
   const [selectedNode, setSelectedNode] = useState<DependencyNode | null>(null);
   const [showMetrics, setShowMetrics] = useState(true);
   const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
+  const [viewMode, setViewMode] = useState<'standard' | 'metrics' | 'complexity' | 'security'>('standard');
+  const [filterMetrics, setFilterMetrics] = useState({
+    minComplexity: 0,
+    maxComplexity: 100,
+    minDependencies: 0,
+    maxDependencies: 100,
+    minSecurityScore: 0,
+    maxSecurityScore: 100,
+  });
 
-  // Calculate graph statistics
+  // Calculate advanced graph statistics
   const stats = {
     totalNodes: nodes.length,
     totalLinks: links.length,
@@ -76,7 +107,32 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
     criticalNodes: nodes.filter(n => (n.metrics?.complexity || 0) > 80).length,
     highDependencyNodes: nodes.filter(n => (n.metrics?.dependencies || 0) > 10).length,
     clusters: Array.from(new Set(nodes.map(n => n.cluster || 'default'))).length,
+    securityIssues: nodes.filter(n => (n.metrics?.securityScore || 0) < 50).length,
+    maintainabilityIssues: nodes.filter(n => (n.metrics?.maintainabilityScore || 0) < 50).length,
+    performanceIssues: nodes.filter(n => (n.metrics?.performanceScore || 0) < 50).length,
+    totalTechnicalDebt: d3.sum(nodes.map(n => n.metrics?.technicalDebt || 0)) || 0,
+    avgTestCoverage: d3.mean(nodes.map(n => n.metrics?.testCoverage || 0)) || 0,
+    totalBugs: d3.sum(nodes.map(n => n.metrics?.bugCount || 0)) || 0,
+    totalCodeSmells: d3.sum(nodes.map(n => n.metrics?.codeSmells || 0)) || 0,
+    totalVulnerabilities: d3.sum(nodes.map(n => n.metrics?.vulnerabilities || 0)) || 0,
+    totalHotspots: d3.sum(nodes.map(n => n.metrics?.hotspots || 0)) || 0,
   };
+
+  // Create color scales
+  const nodeColor = d3.scaleOrdinal<string>()
+    .domain(['module', 'package', 'file'])
+    .range(['#4299e1', '#48bb78', '#ed8936']);
+
+  const linkColor = d3.scaleOrdinal<string>()
+    .domain(['import', 'require', 'dependency'])
+    .range(['#4299e1', '#48bb78', '#ed8936']);
+
+  const clusterColor = d3.scaleOrdinal<string>()
+    .domain(Array.from(new Set(nodes.map(n => n.cluster || 'default'))))
+    .range(d3.schemeSet3);
+
+  const complexityColor = d3.scaleSequential(d3.interpolateRdYlGn)
+    .domain([0, 100]);
 
   useEffect(() => {
     if (!svgRef.current || !nodes.length) return;
@@ -105,22 +161,6 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
       });
 
     svg.call(zoom as any);
-
-    // Create color scales
-    const nodeColor = d3.scaleOrdinal<string>()
-      .domain(['module', 'package', 'file'])
-      .range(['#4299e1', '#48bb78', '#ed8936']);
-
-    const linkColor = d3.scaleOrdinal<string>()
-      .domain(['import', 'require', 'dependency'])
-      .range(['#4299e1', '#48bb78', '#ed8936']);
-
-    const clusterColor = d3.scaleOrdinal<string>()
-      .domain(Array.from(new Set(nodes.map(n => n.cluster || 'default'))))
-      .range(d3.schemeSet3);
-
-    const complexityColor = d3.scaleSequential(d3.interpolateRdYlGn)
-      .domain([0, 100]);
 
     // Filter nodes and links based on search and filters
     const filteredNodes = nodes.filter(node => {
@@ -422,11 +462,247 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
 
   }, [nodes, links, width, height, searchTerm, selectedTypes, selectedClusters, highlightedNode, showMetrics, layoutMode]);
 
+  // Enhanced node styling based on view mode
+  const getNodeStyle = (node: DependencyNode) => {
+    if (!node) return {
+      fill: '#ccc',
+      stroke: '#fff',
+      strokeWidth: 2,
+      strokeDasharray: 'none',
+    };
+
+    switch (viewMode) {
+      case 'metrics':
+        return {
+          fill: d3.scaleSequential(d3.interpolateRdYlGn)
+            .domain([0, 100])(node.metrics?.maintainabilityScore || 0),
+          stroke: node.metrics?.securityScore ? 
+            d3.scaleSequential(d3.interpolateRdYlGn)
+              .domain([0, 100])(node.metrics.securityScore) : '#fff',
+          strokeWidth: 2,
+          strokeDasharray: node.metrics?.complexity ? '5,5' : 'none',
+        };
+      case 'complexity':
+        return {
+          fill: d3.scaleSequential(d3.interpolateRdYlGn)
+            .domain([0, 100])(node.metrics?.complexity || 0),
+          stroke: '#fff',
+          strokeWidth: 2,
+          strokeDasharray: node.metrics?.cyclomaticComplexity ? '5,5' : 'none',
+        };
+      case 'security':
+        return {
+          fill: d3.scaleSequential(d3.interpolateRdYlGn)
+            .domain([0, 100])(node.metrics?.securityScore || 0),
+          stroke: node.metrics?.vulnerabilities ? '#ef4444' : '#fff',
+          strokeWidth: node.metrics?.vulnerabilities ? 3 : 2,
+          strokeDasharray: node.metrics?.vulnerabilities ? '5,5' : 'none',
+        };
+      default:
+        return {
+          fill: nodeColor(node.type),
+          stroke: node.cluster ? clusterColor(node.cluster) : '#fff',
+          strokeWidth: 2,
+          strokeDasharray: 'none',
+        };
+    }
+  };
+
+  // Enhanced link styling based on metrics
+  const getLinkStyle = (link: DependencyLink) => {
+    const baseStyle = {
+      stroke: linkColor(link.type),
+      strokeOpacity: 0.6,
+      strokeWidth: Math.sqrt(link.strength || 1) * 2,
+    };
+
+    if (viewMode === 'metrics') {
+      return {
+        ...baseStyle,
+        stroke: d3.scaleSequential(d3.interpolateRdYlGn)
+          .domain([0, 100])(link.metrics?.complexity || 0),
+        strokeWidth: Math.sqrt(link.metrics?.coupling || 1) * 2,
+      };
+    }
+
+    return baseStyle;
+  };
+
+  // Enhanced tooltip content
+  const getNodeTooltip = (node: DependencyNode) => {
+    const metrics = node.metrics || {};
+    return `
+      <div class="p-2">
+        <h3 class="font-bold text-lg mb-2">${node.name}</h3>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <span class="font-semibold">Type:</span> ${node.type}
+          </div>
+          ${node.cluster ? `
+            <div>
+              <span class="font-semibold">Cluster:</span> ${node.cluster}
+            </div>
+          ` : ''}
+          ${metrics.complexity ? `
+            <div>
+              <span class="font-semibold">Complexity:</span> ${metrics.complexity}
+            </div>
+          ` : ''}
+          ${metrics.dependencies ? `
+            <div>
+              <span class="font-semibold">Dependencies:</span> ${metrics.dependencies}
+            </div>
+          ` : ''}
+          ${metrics.dependents ? `
+            <div>
+              <span class="font-semibold">Dependents:</span> ${metrics.dependents}
+            </div>
+          ` : ''}
+          ${metrics.linesOfCode ? `
+            <div>
+              <span class="font-semibold">Lines of Code:</span> ${metrics.linesOfCode}
+            </div>
+          ` : ''}
+          ${metrics.testCoverage ? `
+            <div>
+              <span class="font-semibold">Test Coverage:</span> ${metrics.testCoverage}%
+            </div>
+          ` : ''}
+          ${metrics.bugCount ? `
+            <div>
+              <span class="font-semibold">Bugs:</span> ${metrics.bugCount}
+            </div>
+          ` : ''}
+          ${metrics.technicalDebt ? `
+            <div>
+              <span class="font-semibold">Technical Debt:</span> ${metrics.technicalDebt}
+            </div>
+          ` : ''}
+          ${metrics.performanceScore ? `
+            <div>
+              <span class="font-semibold">Performance:</span> ${metrics.performanceScore}
+            </div>
+          ` : ''}
+          ${metrics.securityScore ? `
+            <div>
+              <span class="font-semibold">Security:</span> ${metrics.securityScore}
+            </div>
+          ` : ''}
+          ${metrics.maintainabilityScore ? `
+            <div>
+              <span class="font-semibold">Maintainability:</span> ${metrics.maintainabilityScore}
+            </div>
+          ` : ''}
+          ${metrics.commitFrequency ? `
+            <div>
+              <span class="font-semibold">Commits/Month:</span> ${metrics.commitFrequency}
+            </div>
+          ` : ''}
+          ${metrics.contributors ? `
+            <div>
+              <span class="font-semibold">Contributors:</span> ${metrics.contributors}
+            </div>
+          ` : ''}
+          ${metrics.lastModified ? `
+            <div>
+              <span class="font-semibold">Last Modified:</span> ${new Date(metrics.lastModified).toLocaleDateString()}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  };
+
+  // Enhanced link tooltip content
+  const getLinkTooltip = (link: DependencyLink) => {
+    const metrics = link.metrics || {};
+    return `
+      <div class="p-2">
+        <h3 class="font-bold text-lg mb-2">${link.source.name} → ${link.target.name}</h3>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <span class="font-semibold">Type:</span> ${link.type}
+          </div>
+          ${metrics.frequency ? `
+            <div>
+              <span class="font-semibold">Frequency:</span> ${metrics.frequency}
+            </div>
+          ` : ''}
+          ${metrics.lastUsed ? `
+            <div>
+              <span class="font-semibold">Last Used:</span> ${metrics.lastUsed}
+            </div>
+          ` : ''}
+          ${metrics.dataVolume ? `
+            <div>
+              <span class="font-semibold">Data Volume:</span> ${metrics.dataVolume}
+            </div>
+          ` : ''}
+          ${metrics.latency ? `
+            <div>
+              <span class="font-semibold">Latency:</span> ${metrics.latency}ms
+            </div>
+          ` : ''}
+          ${metrics.reliability ? `
+            <div>
+              <span class="font-semibold">Reliability:</span> ${metrics.reliability}%
+            </div>
+          ` : ''}
+          ${metrics.security ? `
+            <div>
+              <span class="font-semibold">Security:</span> ${metrics.security}
+            </div>
+          ` : ''}
+          ${metrics.complexity ? `
+            <div>
+              <span class="font-semibold">Complexity:</span> ${metrics.complexity}
+            </div>
+          ` : ''}
+          ${metrics.coupling ? `
+            <div>
+              <span class="font-semibold">Coupling:</span> ${metrics.coupling}
+            </div>
+          ` : ''}
+          ${metrics.cohesion ? `
+            <div>
+              <span class="font-semibold">Cohesion:</span> ${metrics.cohesion}
+            </div>
+          ` : ''}
+          ${metrics.stability ? `
+            <div>
+              <span class="font-semibold">Stability:</span> ${metrics.stability}
+            </div>
+          ` : ''}
+          ${metrics.volatility ? `
+            <div>
+              <span class="font-semibold">Volatility:</span> ${metrics.volatility}
+            </div>
+          ` : ''}
+          ${metrics.risk ? `
+            <div>
+              <span class="font-semibold">Risk:</span> ${metrics.risk}
+            </div>
+          ` : ''}
+          ${metrics.impact ? `
+            <div>
+              <span class="font-semibold">Impact:</span> ${metrics.impact}
+            </div>
+          ` : ''}
+          ${metrics.criticality ? `
+            <div>
+              <span class="font-semibold">Criticality:</span> ${metrics.criticality}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  };
+
   return (
     <div className="flex flex-col items-center">
-      {/* Controls */}
-      <div className="w-full mb-4 flex items-center gap-4">
-        <div className="flex-1">
+      {/* Enhanced Controls */}
+      <div className="w-full mb-4 flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-[200px]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input
@@ -439,6 +715,16 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value as any)}
+            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="standard">Standard View</option>
+            <option value="metrics">Metrics View</option>
+            <option value="complexity">Complexity View</option>
+            <option value="security">Security View</option>
+          </select>
           <button
             onClick={() => setShowMetrics(!showMetrics)}
             className="p-2 text-gray-600 hover:text-gray-900"
@@ -482,8 +768,8 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
         <svg ref={svgRef} className="min-w-[800px] min-h-[500px]"></svg>
       </div>
 
-      {/* Statistics */}
-      <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+      {/* Enhanced Statistics and Details */}
+      <div className="mt-4 grid grid-cols-4 gap-4 text-sm">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="font-semibold mb-2">Graph Overview</h3>
           <div className="space-y-1">
@@ -501,29 +787,79 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
           </div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="font-semibold mb-2">Selected Node</h3>
-          {selectedNode ? (
-            <div className="space-y-1">
-              <p>{selectedNode.name}</p>
-              <p>Type: {selectedNode.type}</p>
-              {selectedNode.metrics?.complexity && (
-                <p>Complexity: {selectedNode.metrics.complexity}</p>
-              )}
-              {selectedNode.metrics?.dependencies && (
-                <p>Dependencies: {selectedNode.metrics.dependencies}</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-gray-500">Click a node to see details</p>
-          )}
+          <h3 className="font-semibold mb-2">Quality Metrics</h3>
+          <div className="space-y-1">
+            <p>Security Issues: {stats.securityIssues}</p>
+            <p>Maintainability Issues: {stats.maintainabilityIssues}</p>
+            <p>Performance Issues: {stats.performanceIssues}</p>
+            <p>Technical Debt: {stats.totalTechnicalDebt.toFixed(1)}</p>
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow">
+          <h3 className="font-semibold mb-2">Code Quality</h3>
+          <div className="space-y-1">
+            <p>Test Coverage: {stats.avgTestCoverage.toFixed(1)}%</p>
+            <p>Total Bugs: {stats.totalBugs}</p>
+            <p>Code Smells: {stats.totalCodeSmells}</p>
+            <p>Vulnerabilities: {stats.totalVulnerabilities}</p>
+          </div>
         </div>
       </div>
+
+      {/* Selected Node Details */}
+      {selectedNode && (
+        <div className="mt-4 w-full bg-white p-4 rounded-lg shadow">
+          <h3 className="font-semibold mb-2">Selected Node Details</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-500" />
+                <p className="font-medium">{selectedNode.name}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-gray-500" />
+                <p>Type: {selectedNode.type}</p>
+              </div>
+              {selectedNode.cluster && (
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-gray-500" />
+                  <p>Cluster: {selectedNode.cluster}</p>
+                </div>
+              )}
+            </div>
+            <div>
+              {selectedNode.metrics && (
+                <>
+                  {selectedNode.metrics.complexity && (
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-gray-500" />
+                      <p>Complexity: {selectedNode.metrics.complexity}</p>
+                    </div>
+                  )}
+                  {selectedNode.metrics.dependencies && (
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="w-4 h-4 text-gray-500" />
+                      <p>Dependencies: {selectedNode.metrics.dependencies}</p>
+                    </div>
+                  )}
+                  {selectedNode.metrics.lastModified && (
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-gray-500" />
+                      <p>Modified: {new Date(selectedNode.metrics.lastModified).toLocaleDateString()}</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Description */}
       <div className="mt-4 text-sm text-gray-600 text-center max-w-md">
         <p>Interactive dependency graph showing relationships between modules, packages, and files. 
         Drag nodes to explore connections. Zoom with mouse wheel or buttons. Search and filter nodes.
-        Hover over nodes and links to see detailed metrics.</p>
+        Hover over nodes and links to see detailed metrics. Use different view modes to analyze different aspects of the codebase.</p>
       </div>
     </div>
   );
