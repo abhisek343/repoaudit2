@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useId } from 'react';
 import mermaid from 'mermaid';
 import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Info, Layers, FileText, GitBranch, Brain, AlertTriangle } from 'lucide-react';
-import { FileInfo as BaseFileInfo } from '../../types';
+import { ExtendedFileInfo } from '../../types';
 
 export interface ExtendedFileInfo extends BaseFileInfo {
   type: string;

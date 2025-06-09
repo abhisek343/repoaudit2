@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 import { AnalysisResult, FileInfo } from '../../types';
 import DependencyGraph from '../diagrams/DependencyGraph';
-import ArchitectureDiagram, { ExtendedFileInfo } from '../diagrams/ArchitectureDiagram';
-import { generateDetailedArchitectureDiagram } from '../../api/llm';
+import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
+import { ExtendedFileInfo } from '../../types';
 
 interface ComplexityData {
   name: string;
@@ -91,8 +91,10 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
     (hotspot.dependencies || []).map(dep => ({
       source: hotspot.file,
       target: dep,
-      type: 'import',
-      strength: 1,
+      type: 'production',
+       strength: 1,
+      name: dep,
+      version: 'N/A',
       vulnerabilities: 0
     }))
   );
@@ -241,10 +243,8 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
           <div className="w-full h-full min-h-[500px]">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Dependency Network</h4>
             <DependencyGraph
-              nodes={dependencyData.map((dep, index) => ({
-                id: dep.source,
-                name: dep.source,
-                type: 'file',
+ nodes={[...new Set(dependencyData.map(d => d.source))]
+   .map(id => ({ id, name: id, type: 'file', size: 1, metrics: {/* … */} }))}
                 size: 1,
                 metrics: {
                   complexity: 0,

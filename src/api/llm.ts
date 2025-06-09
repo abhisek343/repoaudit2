@@ -62,7 +62,8 @@ export function generateFunctionConnections(fileInfo: Record<string, ExtendedFil
 
         // Add function dependencies
         func.dependencies.forEach((dep: string) => {
-          connections.push(`${fileId}_${func.name} --> ${dep}`);
+const safeName = func.name.replace(/[^\w]/g, '_');
+const nodeId = `${fileId}_${safeName}`;
         });
 
         // Add function calls

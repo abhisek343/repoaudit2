@@ -177,7 +177,10 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
     });
 
     const filteredLinks = links.filter(link => {
-      const sourceNode = nodes.find(n => n.id === link.source.id);
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+const sourceNode = nodes.find(n => n.id === sourceId);
+const targetNode = nodes.find(n => n.id === targetId);
       const targetNode = nodes.find(n => n.id === link.target.id);
       return sourceNode && targetNode && 
         filteredNodes.includes(sourceNode) && 
