@@ -4,7 +4,6 @@ import {
   Shield, 
   CheckCircle, 
   AlertTriangle, 
-  TrendingUp, 
   GitCommit,
   Users,
   Code,

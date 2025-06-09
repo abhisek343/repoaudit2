@@ -1,11 +1,11 @@
 import OpenAI from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
-import { LLMConfig } from '../types';
+import { LLMConfig, Contributor, Commit, FileInfo, TechnicalDebt } from '../types';
 
 export class LLMService {
   private openai?: OpenAI;
-  private google?: GoogleGenerativeAI;
+  private google?: GoogleGenAI;
   private claude?: Anthropic;
   private config: LLMConfig;
 
@@ -21,8 +21,8 @@ export class LLMService {
           apiKey: this.config.apiKey
         });
         break;
-      case 'google':
-        this.google = new GoogleGenerativeAI(this.config.apiKey);
+      case 'gemini':
+        this.google = new GoogleGenAI({ apiKey: this.config.apiKey });
         break;
       case 'claude':
         this.claude = new Anthropic({
@@ -33,36 +33,49 @@ export class LLMService {
   }
 
   private getValidModel(provider: string, configuredModel?: string): string {
-    switch (provider) {
-      case 'openai': {
-        const valid = ['gpt-4.5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'];
-        const model = valid.includes(configuredModel || '') ? configuredModel! : 'gpt-4.5';
-        if (configuredModel !== model) console.warn(`Invalid OpenAI model: ${configuredModel}. Using ${model}`);
-        return model;
+    const models = {
+      openai: {
+        pro: 'gpt-4.5',
+        flash: 'gpt-4.1-nano',
+        valid: ['gpt-4.5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano']
+      },
+      gemini: {
+        pro: 'gemini-2.5-pro-preview-06-05',
+        flash: 'gemini-2.5-flash-preview-05-20',
+        valid: ['gemini-2.5-pro-preview-06-05', 'gemini-2.5-flash-preview-05-20']
+      },
+      claude: {
+        pro: 'claude-opus-4',
+        flash: 'claude-sonnet-4',
+        valid: ['claude-opus-4', 'claude-sonnet-4']
       }
-      case 'google': {
-        const valid = [
-          'gemini-2.0-pro',
-          'gemini-2.0-flash'
-        ];
-        const model = valid.includes(configuredModel || '') ? configuredModel! : 'gemini-2.0-flash';
-        if (configuredModel !== model) console.warn(`Invalid Gemini model: ${configuredModel}. Using ${model}`);
-        return model;
-      }
-      case 'claude': {
-        const valid = ['claude-opus-4', 'claude-sonnet-4'];
-        const model = valid.includes(configuredModel || '') ? configuredModel! : 'claude-opus-4';
-        if (configuredModel !== model) console.warn(`Invalid Claude model: ${configuredModel}. Using ${model}`);
-        return model;
-      }
-      default:
-        throw new Error('Unsupported LLM provider');
+    };
+
+    const providerModels = models[provider as keyof typeof models];
+    if (!providerModels) {
+      throw new Error('Unsupported LLM provider');
     }
+
+    if (configuredModel && providerModels.valid.includes(configuredModel)) {
+      return configuredModel;
+    }
+
+    if (configuredModel) {
+      console.warn(`Invalid ${provider} model: ${configuredModel}. Falling back.`);
+      if (configuredModel.includes('pro')) {
+        return providerModels.flash;
+      }
+      if (configuredModel.includes('flash')) {
+        return providerModels.pro;
+      }
+    }
+
+    return providerModels.flash;
   }
 
   private cleanJsonResponse(response: string): string | null {
     // Remove markdown code block delimiters
-    let cleaned = response
+    const cleaned = response
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')
@@ -111,7 +124,7 @@ export class LLMService {
     try {
       JSON.parse(extractedJson);
       return extractedJson;
-    } catch (error) {
+    } catch {
       console.warn('Extracted JSON is invalid:', extractedJson);
       return null;
     }
@@ -120,7 +133,7 @@ export class LLMService {
   async generateText(prompt: string, maxTokens: number = 1000): Promise<string> {
     try {
       switch (this.config.provider) {
-        case 'openai':
+        case 'openai': {
           if (!this.openai) throw new Error('OpenAI not initialized');
           const openaiResponse = await this.openai.chat.completions.create({
             model: this.getValidModel('openai', this.config.model),
@@ -129,20 +142,15 @@ export class LLMService {
             temperature: 0.7,
           });
           return openaiResponse.choices[0]?.message?.content || '';
-
-        case 'google':
+        }
+        case 'gemini': {
           if (!this.google) throw new Error('Google AI not initialized');
-          const modelName = this.getValidModel('google', this.config.model);
+          const modelName = this.getValidModel('gemini', this.config.model);
           try {
-            const model = this.google.getGenerativeModel({ 
-              model: modelName,
-              generationConfig: {
-                maxOutputTokens: maxTokens,
-                temperature: 0.7,
-              }
-            });
-            const googleResponse = await model.generateContent(prompt);
-            return googleResponse.response.text();
+            const model = this.google.getGenerativeModel({ model: modelName });
+            const result = await model.generateContent(prompt);
+            const response = result.response;
+            return response.text();
           } catch (error) {
             if (error instanceof Error) {
               if (error.message.includes('404')) {
@@ -157,8 +165,8 @@ export class LLMService {
             }
             throw error;
           }
-
-        case 'claude':
+        }
+        case 'claude': {
           if (!this.claude) throw new Error('Claude not initialized');
           try {
             const claudeResponse = await this.claude.messages.create({
@@ -178,7 +186,7 @@ export class LLMService {
             }
             throw error;
           }
-
+        }
         default:
           throw new Error('Unsupported LLM provider');
       }
@@ -199,7 +207,14 @@ export class LLMService {
     }
   }
 
-  async generateExecutiveSummary(repoData: any): Promise<string> {
+  async generateExecutiveSummary(repoData: {
+    name: string;
+    description: string;
+    language: string;
+    stars: number;
+    contributors?: Contributor[];
+    commits?: Commit[];
+  }): Promise<string> {
     const prompt = `
 Analyze this GitHub repository and provide a comprehensive executive summary in plain text (no markdown formatting):
 
@@ -211,10 +226,10 @@ Contributors: ${repoData.contributors?.length || 0}
 Recent commits: ${repoData.commits?.length || 0}
 
 Recent commit messages (last 10):
-${repoData.commits?.slice(0, 10).map((c: any) => `- ${c.message}`).join('\n') || 'No recent commits available'}
+${repoData.commits?.slice(0, 10).map((c: Commit) => `- ${c.message}`).join('\n') || 'No recent commits available'}
 
 Top contributors:
-${repoData.contributors?.slice(0, 5).map((c: any) => `- ${c.login}: ${c.contributions} contributions`).join('\n') || 'No contributor data available'}
+${repoData.contributors?.slice(0, 5).map((c: Contributor) => `- ${c.login}: ${c.contributions} contributions`).join('\n') || 'No contributor data available'}
 
 Please provide a clear, professional summary that includes:
 1. A brief overview of what this project does and its purpose
@@ -277,7 +292,7 @@ Be specific and actionable. Aim for 150-200 words.
     return this.generateText(prompt, 400);
   }
 
-  async analyzeArchitecture(files: any[], languages: Record<string, number>): Promise<string> {
+  async analyzeArchitecture(files: FileInfo[], languages: Record<string, number>): Promise<string> {
     const prompt = `
 Analyze the architecture of this codebase:
 
@@ -300,7 +315,7 @@ Provide a technical but concise analysis. Aim for 200-250 words.
     return this.generateText(prompt, 500);
   }
 
-  async generateSecurityAnalysis(files: any[]): Promise<string> {
+  async generateSecurityAnalysis(files: FileInfo[]): Promise<string> {
     const securityFiles = files.filter(f => 
       f.path.includes('auth') || 
       f.path.includes('security') || 
@@ -371,8 +386,8 @@ Focus on loops, recursive calls, and data structure operations.
   }
 
   async generateRefactoringRoadmap(data: {
-    technicalDebt: any[];
-    hotspots: any[];
+    technicalDebt: TechnicalDebt[];
+    hotspots: Array<{ file: string; complexity: number; }>;
     fileCount: number;
   }): Promise<Array<{
     priority: number;

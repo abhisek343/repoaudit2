@@ -1,10 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   BarChart3, 
-  Clock, 
   Star, 
-  TrendingUp, 
   Plus,
   Search,
   Filter,
@@ -200,7 +198,7 @@ const DashboardPage = () => {
                     </div>
                     <div className="flex items-center space-x-1">
                       {report.isPublic && (
-                        <Eye className="w-4 h-4 text-green-500\" title="Public" />
+                        <Eye className="w-4 h-4 text-green-500" />
                       )}
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                         report.category === 'security' ? 'bg-red-100 text-red-800' :

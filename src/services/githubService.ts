@@ -17,7 +17,7 @@ export class GitHubService {
     };
   }
 
-  private handleGitHubError(error: any, context: string): never {
+  private handleGitHubError(error: unknown, context: string): never {
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;
       const message = error.response?.data?.message || error.message;
@@ -56,7 +56,7 @@ export class GitHubService {
       }
     }
     
-    throw new Error(`Failed to ${context}: ${error.message}`);
+    throw new Error(`Failed to ${context}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   async getRepository(owner: string, repo: string): Promise<Repository> {
@@ -93,49 +93,203 @@ export class GitHubService {
   }
 
   async getContributors(owner: string, repo: string): Promise<Contributor[]> {
-    try {
-      const response = await axios.get(
-        `${this.baseURL}/repos/${owner}/${repo}/contributors`,
-        { 
-          headers: this.getHeaders(),
-          params: { per_page: 100 }
-        }
-      );
+    let allContributors: Contributor[] = [];
+    let url = `${this.baseURL}/repos/${owner}/${repo}/contributors`;
+    let page = 1;
 
-      return response.data.map((contributor: any) => ({
-        login: contributor.login,
-        contributions: contributor.contributions,
-        avatarUrl: contributor.avatar_url,
-        type: contributor.type
-      }));
+    try {
+      while (url) {
+        const response = await axios.get(url, {
+          headers: this.getHeaders(),
+          params: page === 1 ? { per_page: 100, page: page } : undefined,
+        });
+
+        // Define a more specific type for the raw contributor data from GitHub API
+        interface RawGitHubContributor {
+          login: string;
+          contributions: number;
+          avatar_url: string;
+          type: string;
+          id: number; // example of another property that might exist
+          node_id: string;
+          gravatar_id: string;
+          url: string;
+          html_url: string;
+          followers_url: string;
+          following_url: string;
+          gists_url: string;
+          starred_url: string;
+          subscriptions_url: string;
+          organizations_url: string;
+          repos_url: string;
+          events_url: string;
+          received_events_url: string;
+          site_admin: boolean;
+        }
+
+        const responseData = response.data as RawGitHubContributor[];
+
+        const contributorsOnPage: Contributor[] = responseData.map((contributor: RawGitHubContributor) => ({
+          login: contributor.login,
+          contributions: contributor.contributions,
+          avatarUrl: contributor.avatar_url,
+          type: contributor.type,
+        }));
+        
+        allContributors = allContributors.concat(contributorsOnPage);
+
+        // Check for pagination link
+        const linkHeader = response.headers['link'];
+        if (linkHeader) {
+          const nextLink = linkHeader.split(',').find((s: string) => s.includes('rel="next"'));
+          if (nextLink) {
+            url = (nextLink.match(/<(.*?)>/) || [])[1] || '';
+            page++; // Increment page for the next direct request if URL parsing fails (fallback)
+          } else {
+            url = ''; // No next page
+          }
+        } else {
+          // If no link header, assume it's the last page (or only page)
+          if (contributorsOnPage.length < 100 && page === 1 && allContributors.length === contributorsOnPage.length) {
+            // This was likely the only page and had less than 100 results.
+          } else if (contributorsOnPage.length === 0 && page > 1) {
+            // No more contributors on subsequent pages
+          } else if (contributorsOnPage.length < 100) {
+            // Fewer than 100 contributors on this page, so it must be the last.
+          } else if (page === 1 && contributorsOnPage.length === 100 && !linkHeader) {
+            // Potentially more pages, but no link header. This is unusual.
+            // For safety, we might log a warning or assume this is all.
+            // For now, we'll stop.
+          }
+          url = '';
+        }
+      }
+      return allContributors;
     } catch (error) {
-      console.warn('Error fetching contributors:', error);
-      return [];
+      this.handleGitHubError(error, `fetch contributors for ${owner}/${repo}`);
     }
   }
 
-  async getCommits(owner: string, repo: string, limit: number = 100): Promise<Commit[]> {
-    try {
-      const response = await axios.get(
-        `${this.baseURL}/repos/${owner}/${repo}/commits`,
-        { 
-          headers: this.getHeaders(),
-          params: { per_page: limit }
-        }
-      );
+  async getCommits(owner: string, repo: string, branchOrSha?: string): Promise<Commit[]> {
+    let allCommits: Commit[] = [];
+    let url = `${this.baseURL}/repos/${owner}/${repo}/commits`;
+    let page = 1;
+    const params: { per_page: number; page: number; sha?: string } = { per_page: 100, page: page };
 
-      return response.data.map((commit: any) => ({
+    if (branchOrSha) {
+      params.sha = branchOrSha;
+    }
+
+    try {
+      while (url) {
+        const response = await axios.get(url, {
+          headers: this.getHeaders(),
+          // For the first request, use the initial URL with potential sha.
+          // For subsequent requests, the `url` will be from the Link header and won't need params.
+          params: page === 1 ? params : undefined,
+        });
+      
+        // Define a more specific type for the raw commit data from GitHub API
+      interface RawGitHubCommit {
+        sha: string;
+        commit: {
+          message: string;
+          author: {
+            name: string;
+            email: string;
+            date: string;
+          };
+          committer: { // Committer can be different from author
+            name: string;
+            email: string;
+            date: string;
+          };
+          tree: {
+            sha: string;
+            url: string;
+          };
+          url: string;
+          comment_count: number;
+          verification?: { // Optional verification details
+            verified: boolean;
+            reason: string;
+            signature: string | null;
+            payload: string | null;
+          };
+        };
+        url: string;
+        html_url: string;
+        comments_url: string;
+        author: RawGitHubUser | null; // User object for author
+        committer: RawGitHubUser | null; // User object for committer
+        parents: Array<{ sha: string; url: string; html_url: string; }>;
+      }
+
+      // Define a simple type for GitHub user associated with commit (can be expanded)
+      interface RawGitHubUser {
+        login: string;
+        id: number;
+        node_id: string;
+        avatar_url: string;
+        gravatar_id: string;
+        url: string;
+        html_url: string;
+        followers_url: string;
+        following_url: string;
+        gists_url: string;
+        starred_url: string;
+        subscriptions_url: string;
+        organizations_url: string;
+        repos_url: string;
+        events_url: string;
+        received_events_url: string;
+        type: string;
+        site_admin: boolean;
+      }
+      
+      const responseData = response.data as RawGitHubCommit[];
+      
+      const commitsOnPage: Commit[] = responseData.map((commit: RawGitHubCommit) => ({
         sha: commit.sha,
         message: commit.commit.message,
         author: {
-          name: commit.commit.author.name,
-          email: commit.commit.author.email,
-          date: commit.commit.author.date
+          name: commit.commit.author?.name || 'N/A', // Author might be null for some commits
+          email: commit.commit.author?.email || 'N/A',
+          date: commit.commit.author?.date || new Date().toISOString()
         }
+        // Add stats and files if needed later, currently not in Commit type
       }));
+
+      allCommits = allCommits.concat(commitsOnPage);
+
+      const linkHeader = response.headers['link'];
+      if (linkHeader) {
+        const nextLink = linkHeader.split(',').find((s: string) => s.includes('rel="next"'));
+        if (nextLink) {
+          url = (nextLink.match(/<(.*?)>/) || [])[1] || '';
+          // Increment page for the next direct request if URL parsing fails (fallback)
+          // and to ensure the params object is updated if we are not using the link header URL directly
+          page++; 
+        } else {
+          url = ''; // No next page
+        }
+      } else {
+         // If no link header, assume it's the last page (or only page)
+         if (commitsOnPage.length < 100 && page === 1 && allCommits.length === commitsOnPage.length) {
+            // This was likely the only page and had less than 100 results.
+          } else if (commitsOnPage.length === 0 && page > 1) {
+            // No more commits on subsequent pages
+          } else if (commitsOnPage.length < 100) {
+            // Fewer than 100 commits on this page, so it must be the last.
+          } else if (page === 1 && commitsOnPage.length === 100 && !linkHeader) {
+            // Potentially more pages, but no link header. This is unusual.
+          }
+        url = ''; // Stop pagination
+      }
+    }
+    return allCommits;
     } catch (error) {
-      console.warn('Error fetching commits:', error);
-      return [];
+      this.handleGitHubError(error, `fetch commits for ${owner}/${repo}${branchOrSha ? ` on branch/sha ${branchOrSha}` : ''}`);
     }
   }
 
@@ -176,10 +330,29 @@ export class GitHubService {
         { headers: this.getHeaders() }
       );
 
+      // Define a more specific type for raw file/directory item from GitHub API
+      interface RawGitHubContentItem {
+        name: string;
+        path: string;
+        sha: string;
+        size: number;
+        url: string;
+        html_url: string;
+        git_url: string;
+        download_url: string | null;
+        type: 'file' | 'dir' | 'symlink' | 'submodule'; // type can be other things too
+        _links: {
+          self: string;
+          git: string;
+          html: string;
+        };
+      }
+
       if (Array.isArray(response.data)) {
-        return response.data
-          .filter((item: any) => item.type === 'file')
-          .map((file: any) => ({
+        const responseData = response.data as RawGitHubContentItem[];
+        return responseData
+          .filter((item: RawGitHubContentItem) => item.type === 'file')
+          .map((file: RawGitHubContentItem) => ({
             name: file.name,
             path: file.path,
             size: file.size
@@ -193,7 +366,8 @@ export class GitHubService {
   }
 
   parseGitHubUrl(url: string): { owner: string; repo: string } | null {
-    const regex = /github\.com\/([^\/]+)\/([^\/]+)/;
+    // Removed unnecessary escapes for /
+    const regex = /github\.com\/([^/]+)\/([^/]+)/;
     const match = url.match(regex);
     
     if (match) {

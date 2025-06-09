@@ -1,17 +1,16 @@
 import React, { useState } from 'react';
+import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, BarChart, Bar, Cell } from 'recharts';
 import { 
-  Code, 
-  AlertTriangle, 
-  CheckCircle, 
   TrendingUp,
   Layers,
   Shield,
-  Zap,
   Target,
 } from 'lucide-react';
-import DependencyGraph from '../diagrams/DependencyGraph';
+import DependencyGraph, { DependencyNode, DependencyLink } from '../diagrams/DependencyGraph';
 import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
 import { ExtendedFileInfo } from '../../types';
+import { defaultDependencyConfig } from '../../config/dependencies.config';
+import { defaultSecurityConfig } from '../../config/security.config';
 
 interface ComplexityData {
   name: string;
@@ -34,16 +33,6 @@ interface Hotspot {
   explanation: string;
 }
 
-interface DependencyData {
-  source: string;
-  target: string;
-  type: string;
-  strength: number;
-  name?: string;
-  version?: string;
-  vulnerabilities: number;
-}
-
 interface ArchitecturePageProps {
   reportData: {
     hotspots: Hotspot[];
@@ -59,30 +48,18 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('treemap');
   const [useLLM, setUseLLM] = useState(true);
   
-  const { hotspots, keyFunctions, architectureAnalysis, files, metrics } = reportData;
+  const { hotspots, architectureAnalysis, metrics, files } = reportData;
 
-  // Generate complexity data from hotspots
-  const complexityData: ComplexityData[] = hotspots.map(hotspot => ({
-    name: hotspot.file,
-    size: hotspot.size,
-    complexity: hotspot.complexity,
-    dependencies: hotspot.dependencies,
-    contributors: hotspot.contributors,
-    commitCount: hotspot.commitCount
+  // Generate complexity data from all files
+  const complexityData: ComplexityData[] = files.map((file: ExtendedFileInfo) => ({
+    name: file.name,
+    size: file.size,
+    complexity: file.complexity || 0,
+    dependencies: file.dependencies || [],
+    contributors: file.contributors || [],
+    commitCount: file.commitCount || 0
   }));
 
-  // Generate dependency data from hotspots
-  const dependencyData: DependencyData[] = (reportData.hotspots || []).flatMap(hotspot => 
-    (hotspot.dependencies || []).map(dep => ({
-      source: hotspot.file,
-      target: dep,
-      type: 'production',
-      strength: 1,
-      name: dep,
-      version: 'N/A',
-      vulnerabilities: 0
-    }))
-  );
 
   const getComplexityColor = (complexity: number) => {
     if (complexity >= 80) return '#EF4444';
@@ -111,6 +88,16 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       id: 'architecture',
       title: 'Architecture Diagram',
       description: 'System architecture overview'
+    },
+    {
+      id: 'vulnerability',
+      title: 'Vulnerability Chart',
+      description: 'Vulnerability distribution by severity'
+    },
+    {
+      id: 'hotspot',
+      title: 'Hotspot Analysis',
+      description: 'Interactive hotspot visualization'
     }
   ];
 
@@ -124,14 +111,14 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       size: files.filter(f => f.path.startsWith('src/frontend')).reduce((acc, f) => acc + f.size, 0),
       content: undefined,
       language: 'TypeScript',
-      complexity: Math.round(files.filter(f => f.path.startsWith('src/frontend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/frontend')).length),
+      complexity: Math.round(files.filter(f => f.path.startsWith('src/frontend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / (files.filter(f => f.path.startsWith('src/frontend')).length || 1)),
       testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
       primaryAuthor: '',
       type: 'frontend',
-      dependencies: ['react', 'typescript', 'axios'],
+      dependencies: files.filter(f => f.path.startsWith('src/frontend')).flatMap(f => f.dependencies || []),
       contributors: [],
-      commitCount: reportData.metrics.totalCommits as number
+      commitCount: metrics.totalCommits as number
     };
 
     // Backend components
@@ -141,14 +128,14 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       size: files.filter(f => f.path.startsWith('src/backend')).reduce((acc, f) => acc + f.size, 0),
       content: undefined,
       language: 'TypeScript',
-      complexity: Math.round(files.filter(f => f.path.startsWith('src/backend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/backend')).length),
+      complexity: Math.round(files.filter(f => f.path.startsWith('src/backend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / (files.filter(f => f.path.startsWith('src/backend')).length || 1)),
       testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
       primaryAuthor: '',
       type: 'backend',
-      dependencies: ['express', 'typescript', 'mongoose'],
+      dependencies: files.filter(f => f.path.startsWith('src/backend')).flatMap(f => f.dependencies || []),
       contributors: [],
-      commitCount: reportData.metrics.totalCommits as number
+      commitCount: metrics.totalCommits as number
     };
 
     // Service components
@@ -158,14 +145,14 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       size: files.filter(f => f.path.startsWith('src/services')).reduce((acc, f) => acc + f.size, 0),
       content: undefined,
       language: 'TypeScript',
-      complexity: Math.round(files.filter(f => f.path.startsWith('src/services')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/services')).length),
+      complexity: Math.round(files.filter(f => f.path.startsWith('src/services')).reduce((acc, f) => acc + (f.complexity || 0), 0) / (files.filter(f => f.path.startsWith('src/services')).length || 1)),
       testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
       primaryAuthor: '',
       type: 'service',
-      dependencies: ['axios', 'typescript', 'redis'],
+      dependencies: files.filter(f => f.path.startsWith('src/services')).flatMap(f => f.dependencies || []),
       contributors: [],
-      commitCount: reportData.metrics.totalCommits as number
+      commitCount: metrics.totalCommits as number
     };
 
     // Storage components
@@ -175,14 +162,14 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       size: files.filter(f => f.path.startsWith('src/storage')).reduce((acc, f) => acc + f.size, 0),
       content: undefined,
       language: 'TypeScript',
-      complexity: Math.round(files.filter(f => f.path.startsWith('src/storage')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/storage')).length),
+      complexity: Math.round(files.filter(f => f.path.startsWith('src/storage')).reduce((acc, f) => acc + (f.complexity || 0), 0) / (files.filter(f => f.path.startsWith('src/storage')).length || 1)),
       testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
       primaryAuthor: '',
       type: 'storage',
-      dependencies: ['mongoose', 'redis', 'typescript'],
+      dependencies: files.filter(f => f.path.startsWith('src/storage')).flatMap(f => f.dependencies || []),
       contributors: [],
-      commitCount: reportData.metrics.totalCommits as number
+      commitCount: metrics.totalCommits as number
     };
 
     return info;
@@ -190,21 +177,23 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
 
   const renderDiagram = () => {
     switch (selectedDiagram) {
-      case 'treemap':
+      case 'treemap': {
+        const visibleFiles = complexityData.slice(0, 16);
+        const maxFileSize = Math.max(...visibleFiles.map(f => f.size), 1);
         return (
           <div>
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Directory Structure Treemap</h4>
             <div className="grid grid-cols-4 gap-2 h-80">
-              {complexityData.slice(0, 16).map((file, index) => (
+              {visibleFiles.map((file, index) => (
                 <div
                   key={`treemap-${file.name}-${index}`}
                   className="rounded-lg p-3 text-white text-xs font-medium flex flex-col justify-between transition-transform duration-200 hover:scale-105 cursor-pointer"
                   style={{
                     backgroundColor: getComplexityColor(file.complexity),
-                    height: `${Math.max(60, (file.size / 1000) * 100)}px`
+                    height: `${Math.max(60, (file.size / maxFileSize) * 120)}px`
                   }}
                 >
-                  <div className="font-semibold">{file.name}</div>
+                  <div className="font-semibold">{file.name.split('/').pop()}</div>
                   <div className="text-xs opacity-90">
                     <div>Size: {file.size}b</div>
                     <div>Complexity: {file.complexity}%</div>
@@ -217,117 +206,79 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
             </div>
           </div>
         );
+      }
 
-      case 'dependency':
+      case 'dependency': {
+        const nodes: DependencyNode[] = files.map(file => ({
+          id: file.path,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          metrics: {
+            complexity: file.complexity ?? 0,
+            dependencies: file.dependencies?.length ?? 0,
+            dependents: 0,
+            lastModified: file.lastModified ?? new Date().toISOString()
+          }
+        }));
+
+        const nodeMap = new Map(nodes.map(node => [node.id, node]));
+
+        const links: DependencyLink[] = [];
+        files.forEach(file => {
+          if (file.dependencies) {
+            file.dependencies.forEach(dep => {
+              const sourceNode = nodeMap.get(file.path);
+              const targetNode = nodeMap.get(dep);
+              if (sourceNode && targetNode) {
+                links.push({
+                  source: sourceNode,
+                  target: targetNode,
+                  type: 'depends-on',
+                  strength: 1
+                });
+              }
+            });
+          }
+        });
+
         return (
           <div className="w-full h-full min-h-[500px]">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Dependency Network</h4>
             <DependencyGraph
-              nodes={[...new Set(dependencyData.map(d => d.source))]
-                .map(id => ({
-                  id,
-                  name: id,
-                  type: 'file',
-                  size: 1,
-                  metrics: {
-                    complexity: 0,
-                    dependencies: 1,
-                    dependents: 0,
-                    lastModified: new Date().toISOString()
-                  }
-                }))}
-              links={dependencyData.map(dep => {
-                const vulnerabilities = dep.vulnerabilities ?? 0;
-                return {
-                  source: {
-                    id: dep.source,
-                    name: dep.source,
-                    type: 'file',
-                    size: 1
-                  },
-                  target: {
-                    id: dep.target,
-                    name: dep.target,
-                    type: 'file',
-                    size: 1
-                  },
-                  type: dep.type,
-                  strength: dep.strength,
-                  name: dep.name,
-                  version: dep.version,
-                  vulnerabilities
-                };
-              })}
-              width={800}
-              height={600}
+              nodes={nodes}
+              links={links}
             />
           </div>
         );
+      }
 
       case 'complexity':
         return (
           <div className="w-full h-full min-h-[500px]">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Complexity vs Size Scatter Plot</h4>
-            <div className="relative h-full bg-white rounded-lg border overflow-auto">
-              <svg
-                className="w-full h-full"
-                viewBox="0 0 1000 600"
-                preserveAspectRatio="xMidYMid meet"
+            <ResponsiveContainer width="100%" height={500}>
+              <ScatterChart
+                margin={{
+                  top: 20,
+                  right: 20,
+                  bottom: 20,
+                  left: 20,
+                }}
               >
-                {/* Background grid */}
-                <defs>
-                  <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
-                    <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#e5e7eb" strokeWidth="0.5"/>
-                  </pattern>
-                  <linearGradient id="complexityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" style={{ stopColor: '#10b981', stopOpacity: 0.2 }} />
-                    <stop offset="50%" style={{ stopColor: '#f59e0b', stopOpacity: 0.2 }} />
-                    <stop offset="100%" style={{ stopColor: '#ef4444', stopOpacity: 0.2 }} />
-                  </linearGradient>
-                </defs>
-
-                {/* Grid background */}
-                <rect width="100%" height="100%" fill="url(#grid)" />
-
-                {/* Plot points */}
-                {complexityData.map((file, index) => (
-                  <g key={`complexity-${file.name}-${index}`} transform={`translate(${(file.size / 1000) * 800},${600 - (file.complexity * 5)})`}>
-                    <circle
-                      r={5}
-                      fill={getComplexityColor(file.complexity)}
-                      stroke="#fff"
-                      strokeWidth={1}
-                    />
-                    <title>
-                      {file.name}
-                      Size: {file.size}b
-                      Complexity: {file.complexity}%
-                    </title>
-                  </g>
-                ))}
-
-                {/* Axes */}
-                <g className="axis">
-                  <line x1="0" y1="600" x2="1000" y2="600" stroke="#64748b" strokeWidth={1} />
-                  <line x1="0" y1="0" x2="0" y2="600" stroke="#64748b" strokeWidth={1} />
-                </g>
-
-                {/* Labels */}
-                <text x="500" y="580" textAnchor="middle" fill="#64748b" fontSize="12">
-                  File Size (KB)
-                </text>
-                <text
-                  x="-300"
-                  y="300"
-                  textAnchor="middle"
-                  fill="#64748b"
-                  fontSize="12"
-                  transform="rotate(-90, 0, 300)"
-                >
-                  Complexity (%)
-                </text>
-              </svg>
-            </div>
+                <CartesianGrid />
+                <XAxis type="number" dataKey="size" name="size" unit="b" />
+                <YAxis type="number" dataKey="complexity" name="complexity" unit="%" />
+                <ZAxis type="number" dataKey="size" range={[100, 1000]} name="size" />
+                <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<CustomTooltip />} />
+                <Legend />
+                <Scatter name="Files" data={complexityData} fill="#8884d8">
+                  {complexityData.map((entry, index) => (
+                    <circle key={`cell-${index}`} cx={entry.size} cy={entry.complexity} r={5} fill={getComplexityColor(entry.complexity)} />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
           </div>
         );
 
@@ -406,12 +357,65 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
               width={800}
               height={600}
               interactive={true}
-              fileInfo={fileInfo as any}
+              fileInfo={fileInfo}
               showDetails={true}
               useLLM={useLLM}
             />
           </div>
         );
+
+      case 'vulnerability': {
+        const vulnerabilityData = [
+          { name: 'Critical', value: metrics.criticalVulnerabilities as number || 0, color: '#DC2626' },
+          { name: 'High', value: metrics.highVulnerabilities as number || 0, color: '#F59E0B' },
+          { name: 'Medium', value: metrics.mediumVulnerabilities as number || 0, color: '#FBBF24' },
+          { name: 'Low', value: metrics.lowVulnerabilities as number || 0, color: '#3B82F6' }
+        ];
+        return (
+          <div className="w-full h-full min-h-[500px]">
+            <h4 className="text-lg font-semibold text-gray-900 mb-4">Vulnerability Distribution</h4>
+            <ResponsiveContainer width="100%" height={500}>
+              <BarChart data={vulnerabilityData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="value" fill="#8884d8">
+                  {vulnerabilityData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      }
+
+      case 'hotspot': {
+        const hotspotData = hotspots.map(h => ({
+          name: h.file,
+          complexity: h.complexity,
+          size: h.size,
+          changes: h.changes
+        }));
+        return (
+          <div className="w-full h-full min-h-[500px]">
+            <h4 className="text-lg font-semibold text-gray-900 mb-4">Code Hotspots</h4>
+            <ResponsiveContainer width="100%" height={500}>
+              <ScatterChart>
+                <CartesianGrid />
+                <XAxis type="number" dataKey="complexity" name="Complexity" unit="%" />
+                <YAxis type="number" dataKey="changes" name="Changes" />
+                <ZAxis type="number" dataKey="size" name="Size" range={[100, 1000]} />
+                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                <Legend />
+                <Scatter name="Hotspots" data={hotspotData} fill="#DC2626" />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      }
 
       default:
         return <div>Select a diagram to view</div>;
@@ -518,49 +522,81 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
           )}
         </div>
 
-        {/* Dependencies & Vulnerabilities */}
+        {/* Dependencies & Security */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
           <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
             <Shield className="w-6 h-6 text-green-500 mr-3" />
             Dependencies & Security
           </h3>
 
-          <div className="space-y-4">
-            {dependencyData.map((dep, index) => (
-              <div 
-                key={`dependency-${dep.name}-${index}`}
-                className="flex items-center justify-between p-3 border border-gray-200 rounded-lg"
-              >
-                <div className="flex-1">
-                  <div className="flex items-center space-x-2">
-                    <h4 className="font-medium text-gray-900">{dep.name}</h4>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      dep.type === 'production' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
-                    }`}>
-                      {dep.type}
-                    </span>
-                  </div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Version: {dep.version}
-                  </div>
+          <div className="space-y-6">
+            <div>
+              <h4 className="text-lg font-semibold text-gray-800 mb-3">Dependency Rules</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Package Manager:</span>
+                  <span className="ml-2 text-gray-900">{defaultDependencyConfig.packageManager}</span>
                 </div>
-                <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    <div className="text-sm font-medium text-gray-900">
-                      {dep.vulnerabilities} vulnerabilities
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      Strength: {dep.strength}
-                    </div>
-                  </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Max Dependencies:</span>
+                  <span className="ml-2 text-gray-900">{defaultDependencyConfig.rules.maxDependencies}</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Auto Update:</span>
+                  <span className="ml-2 text-gray-900">{defaultDependencyConfig.versioning.autoUpdate ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Allowed Licenses:</span>
+                  <span className="ml-2 text-gray-900">{defaultDependencyConfig.rules.allowedLicenses.join(', ')}</span>
                 </div>
               </div>
-            ))}
+            </div>
+            <div>
+              <h4 className="text-lg font-semibold text-gray-800 mb-3">Security Configuration</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Rate Limiting:</span>
+                  <span className="ml-2 text-gray-900">{defaultSecurityConfig.rateLimit.max} reqs / {defaultSecurityConfig.rateLimit.windowMs / 60000} min</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Min Password Length:</span>
+                  <span className="ml-2 text-gray-900">{defaultSecurityConfig.password.minLength}</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">API Key Required:</span>
+                  <span className="ml-2 text-gray-900">{defaultSecurityConfig.api.requireApiKey ? 'Yes' : 'No'}</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <span className="font-medium text-gray-600">Max File Upload Size:</span>
+                  <span className="ml-2 text-gray-900">{defaultSecurityConfig.fileUpload.maxSize / (1024*1024)}MB</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
+};
+
+import { NameType, ValueType } from 'recharts/types/component/DefaultTooltipContent';
+
+const CustomTooltip = ({ active, payload }: TooltipProps<ValueType, NameType>) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload as ComplexityData;
+    return (
+      <div className="p-4 bg-white rounded-lg border shadow-lg">
+        <p className="text-sm text-gray-900 font-bold">{data.name}</p>
+        <p className="text-sm text-gray-600">Size: {data.size}b</p>
+        <p className="text-sm text-gray-600">Complexity: {data.complexity}%</p>
+        {data.dependencies && <p className="text-sm text-gray-600">Dependencies: {data.dependencies.length}</p>}
+        {data.contributors && <p className="text-sm text-gray-600">Contributors: {data.contributors.length}</p>}
+        {data.commitCount && <p className="text-sm text-gray-600">Commits: {data.commitCount}</p>}
+      </div>
+    );
+  }
+
+  return null;
 };
 
 const generateDetailedArchitectureDiagram = (mermaidCode: string) => {

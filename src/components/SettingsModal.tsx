@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Key, Settings, Eye, EyeOff, Zap, Clock, DollarSign, AlertTriangle, CheckCircle } from 'lucide-react';
+import { X, Key, Settings, Eye, EyeOff, Zap, Clock, AlertTriangle, CheckCircle } from 'lucide-react'; // Removed DollarSign
 import { LLMConfig } from '../types';
 
 interface SettingsModalProps {
@@ -11,7 +11,7 @@ interface SettingsModalProps {
 }
 
 const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubToken }: SettingsModalProps) => {
-  const [provider, setProvider] = useState<'openai' | 'claude'>('openai');
+  const [provider, setProvider] = useState<'openai' | 'claude' | 'gemini'>('openai'); // Consolidated
   const [apiKey, setApiKey] = useState(currentConfig?.apiKey || '');
   const [model, setModel] = useState(currentConfig?.model || '');
   const [githubToken, setGithubToken] = useState(currentGithubToken || '');
@@ -20,7 +20,14 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
 
   useEffect(() => {
     if (currentConfig) {
-      setProvider(currentConfig.provider === 'google' ? 'openai' : currentConfig.provider);
+      const currentProvider = currentConfig.provider;
+      if (currentProvider === 'openai' || currentProvider === 'claude' || currentProvider === 'gemini') {
+        setProvider(currentProvider);
+      } else if (currentProvider === 'google') { // Map old 'google' to 'gemini'
+        setProvider('gemini'); 
+      } else {
+        setProvider('openai'); // Default
+      }
       setApiKey(currentConfig.apiKey);
       setModel(currentConfig.model || '');
     }
@@ -47,9 +54,9 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
 
   const getDefaultModel = (provider: string) => {
     switch (provider) {
-      case 'openai': return 'gpt-4.5';
-      case 'google': return 'gemini-2.0-flash';
-      case 'claude': return 'claude-opus-4';
+      case 'openai': return 'gpt-4.1-nano';
+      case 'gemini': return 'gemini-2.5-flash-preview-05-20';
+      case 'claude': return 'claude-sonnet-4';
       default: return '';
     }
   };
@@ -58,47 +65,33 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
     switch (provider) {
       case 'openai':
         return [
-          { 
-            value: 'gpt-4.5', 
-            label: 'GPT-4.5 (Research Preview)', 
+          {
+            value: 'gpt-4.5',
+            label: 'GPT-4.5 (Pro)',
             context: '1M+ tokens',
             pros: 'Latest model, massive context',
             cons: 'Research preview, may have limited availability'
           },
-          { 
-            value: 'gpt-4.1', 
-            label: 'GPT-4.1 (Stable)', 
-            context: '1M+ tokens',
-            pros: 'Stable release, massive context',
-            cons: 'Higher cost than mini version'
-          },
-          { 
-            value: 'gpt-4.1-mini', 
-            label: 'GPT-4.1 Mini (Efficient)', 
-            context: '128K tokens',
-            pros: 'Great balance of speed and cost',
-            cons: 'Smaller context than full version'
-          },
-          { 
-            value: 'gpt-4.1-nano', 
-            label: 'GPT-4.1 Nano (Compact)', 
+          {
+            value: 'gpt-4.1-nano',
+            label: 'GPT-4.1 Nano (Flash)',
             context: '128K tokens',
             pros: 'Most cost-effective option',
             cons: 'Limited capabilities for complex tasks'
           }
         ];
-      case 'google':
+      case 'gemini':
         return [
-          { 
-            value: 'gemini-2.0-pro', 
-            label: 'Gemini 2.0 Pro (Latest)', 
+          {
+            value: 'gemini-2.5-pro-preview-06-05',
+            label: 'Gemini 2.5 Pro',
             context: '1M tokens',
             pros: 'Flagship model, massive context, multimodal',
             cons: 'Higher cost than Flash'
           },
-          { 
-            value: 'gemini-2.0-flash', 
-            label: 'Gemini 2.0 Flash (Latest)', 
+          {
+            value: 'gemini-2.5-flash-preview-05-20',
+            label: 'Gemini 2.5 Flash',
             context: '1M tokens',
             pros: 'Very fast and cost-effective, great for most tasks',
             cons: 'Slightly less capable than Pro for complex reasoning'
@@ -106,16 +99,16 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
         ];
       case 'claude':
         return [
-          { 
-            value: 'claude-opus-4', 
-            label: 'Claude Opus 4', 
+          {
+            value: 'claude-opus-4',
+            label: 'Claude Opus 4 (Pro)',
             context: '200K tokens',
             pros: 'Most capable model, excellent reasoning',
             cons: 'Most expensive, smaller context'
           },
-          { 
-            value: 'claude-sonnet-4', 
-            label: 'Claude Sonnet 4', 
+          {
+            value: 'claude-sonnet-4',
+            label: 'Claude Sonnet 4 (Flash)',
             context: '200K tokens',
             pros: 'Efficient yet solid analysis',
             cons: 'Less capable than Opus for complex tasks'
@@ -135,6 +128,14 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
           keyUrl: 'https://platform.openai.com/api-keys',
           maxContext: 'Up to 1M tokens',
           strengths: 'Best overall performance, reliable API'
+        };
+      case 'gemini': 
+        return {
+          name: 'Google Gemini',
+          description: 'Access Google\'s Gemini models for advanced AI capabilities.',
+          keyUrl: 'https://aistudio.google.com/app/apikey',
+          maxContext: 'Up to 1M tokens (Pro/Flash)',
+          strengths: 'Fast, cost-effective, multimodal capabilities'
         };
       case 'claude':
         return {
@@ -249,7 +250,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
               AI Provider (Optional - for enhanced insights)
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(['openai', 'claude'] as const).map((p) => {
+              {(['openai', 'claude', 'gemini'] as const).map((p) => { // Consolidated list
                 const info = getProviderInfo(p);
                 return (
                   <button
@@ -332,7 +333,6 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
               ))}
             </select>
             
-            {/* Model Details */}
             {selectedModelInfo && (
               <div className="mt-3 p-4 bg-gray-50 rounded-lg">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -360,21 +360,20 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
             )}
           </div>
 
-          {/* Model Comparison */}
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4">
             <h4 className="font-medium text-gray-900 mb-3">Latest Model Recommendations</h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-600">Whole-repo analysis:</span>
-                <span className="font-medium">GPT-4.5, Gemini 2.0 Pro</span>
+                <span className="font-medium">GPT-4.5, Gemini 2.5 Pro</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Most cost-effective:</span>
-                <span className="font-medium">GPT-4.1 Nano, Gemini 2.0 Flash</span>
+                <span className="font-medium">GPT-4.1 Nano, Gemini 2.5 Flash</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Largest context:</span>
-                <span className="font-medium">Gemini 2.0 Pro (1M tokens)</span>
+                <span className="font-medium">Gemini 2.5 Pro (1M tokens)</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Best reasoning:</span>
@@ -383,7 +382,6 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
             </div>
           </div>
 
-          {/* Context Size Notice */}
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <div className="flex items-start">
               <div className="flex-shrink-0">
@@ -401,7 +399,6 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
             </div>
           </div>
 
-          {/* Security Notice */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <div className="flex items-start">
               <div className="flex-shrink-0">

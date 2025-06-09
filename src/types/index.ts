@@ -23,6 +23,7 @@ export interface FileInfo {
   name: string;
   path: string;
   size: number;
+  type?: 'file' | 'dir' | 'symlink' | string; // Added type property
   content?: string;
   language?: string;
   complexity?: number;
@@ -162,7 +163,7 @@ export interface AnalysisResult {
 }
 
 export interface LLMConfig {
-  provider: 'openai' | 'google' | 'claude';
+  provider: 'openai' | 'claude' | 'gemini'; // Consolidated to single 'gemini' for Google
   apiKey: string;
   model?: string;
 }
@@ -187,4 +188,16 @@ export interface SavedReport {
   isPublic: boolean;
   tags: string[];
   summary: string;
+}
+
+export interface Vulnerability {
+  id: string;
+  cveId: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  packageName: string;
+  version: string;
+  description: string;
+  remediation: string;
+  recommendation: string;
+  file: string;
 }

@@ -3,7 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { 
   Search, 
   Github, 
-  Zap, 
   Shield, 
   TrendingUp, 
   Code, 
@@ -210,8 +209,10 @@ const AnalyzePage = () => {
 
       // Store the result for the report page
       const reportId = Date.now().toString();
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { files, commits, ...reportToStore } = result;
       localStorage.setItem(`report_${reportId}`, JSON.stringify({
-        ...result,
+        ...reportToStore,
         category: selectedCategory,
         createdAt: new Date().toISOString()
       }));

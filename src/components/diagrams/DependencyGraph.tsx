@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { GitCommit, Calendar } from 'lucide-react';
+import './DependencyGraph.css';
 
 interface GitCommit {
   hash: string;
@@ -12,17 +12,7 @@ interface GitCommit {
   deletions: number;
 }
 
-interface DailyCommits {
-  date: Date;
-  commits: GitCommit[];
-  count: number;
-  authors: Set<string>;
-  totalAdditions: number;
-  totalDeletions: number;
-  totalFiles: number;
-}
-
-interface DependencyNode {
+export interface DependencyNode extends d3.SimulationNodeDatum {
   id: string;
   name: string;
   type: string;
@@ -30,10 +20,10 @@ interface DependencyNode {
   cluster?: string;
   gitHistory?: GitCommit[];
   metrics?: {
-    complexity?: number;
-    dependencies?: number;
-    dependents?: number;
-    lastModified?: string;
+    complexity: number;
+    dependencies: number;
+    dependents: number;
+    lastModified: string;
     linesOfCode?: number;
     testCoverage?: number;
     bugCount?: number;
@@ -69,7 +59,7 @@ interface DependencyNode {
   fy?: number | null;
 }
 
-interface DependencyLink {
+export interface DependencyLink extends d3.SimulationLinkDatum<DependencyNode> {
   source: DependencyNode;
   target: DependencyNode;
   type: string;
@@ -98,242 +88,324 @@ interface DependencyLink {
 interface DependencyGraphProps {
   nodes: DependencyNode[];
   links: DependencyLink[];
-  width: number;
-  height: number;
 }
 
-const DependencyGraph: React.FC<DependencyGraphProps> = ({
-  nodes,
-  width = 800,
-  height = 600
-}) => {
+export const DependencyGraph = ({ nodes, links }: DependencyGraphProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [timeRange, setTimeRange] = useState<[Date, Date]>([
-    new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // 90 days ago
-    new Date()
-  ]);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [dailyCommits, setDailyCommits] = useState<DailyCommits[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [selectedNode, setSelectedNode] = useState<DependencyNode | null>(null);
 
-  // Process git history into daily commits
   useEffect(() => {
-    const allCommits = nodes.flatMap(node => node.gitHistory || []);
-    const commitsByDay = new Map<string, GitCommit[]>();
-
-    allCommits.forEach(commit => {
-      const date = new Date(commit.date).toISOString().split('T')[0];
-      if (!commitsByDay.has(date)) {
-        commitsByDay.set(date, []);
+    const resizeObserver = new ResizeObserver(entries => {
+      if (!entries || entries.length === 0) {
+        return;
       }
-      commitsByDay.get(date)?.push(commit);
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
     });
 
-    const processedCommits: DailyCommits[] = Array.from(commitsByDay.entries())
-      .map(([date, commits]) => ({
-        date: new Date(date),
-        commits,
-        count: commits.length,
-        authors: new Set(commits.map(c => c.author)),
-        totalAdditions: commits.reduce((sum, c) => sum + c.additions, 0),
-        totalDeletions: commits.reduce((sum, c) => sum + c.deletions, 0),
-        totalFiles: commits.reduce((sum, c) => sum + c.files.length, 0)
-      }))
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
 
-    setDailyCommits(processedCommits);
-  }, [nodes]);
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
-    if (!svgRef.current || !dailyCommits.length) return;
+    if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0) return;
+
+    const { width, height } = dimensions;
+
+    // Clear previous graph
+    d3.select(svgRef.current).selectAll("*").remove();
 
     const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+    const innerWidth = width - 40;
+    const innerHeight = height - 40;
 
-    const margin = { top: 40, right: 40, bottom: 60, left: 60 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+    // Create main group with margins
+    const g = svg.append("g")
+      .attr("transform", `translate(20, 20)`);
 
-    const g = svg
-      .attr("width", width)
-      .attr("height", height)
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
+    // Create color scale for node types
+    const color = d3.scaleOrdinal<string>()
+      .domain(['frontend', 'backend', 'service', 'storage', 'dependency', 'unknown'])
+      .range(['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#6B7280', '#9CA3AF']);
 
-    // Create scales
-    const x = d3.scaleTime()
-      .domain(d3.extent(dailyCommits, d => d.date) as [Date, Date])
-      .range([0, innerWidth]);
+    // Create force simulation
+    const simulation = d3.forceSimulation<DependencyNode>(nodes)
+      .force("link", d3.forceLink<DependencyNode, DependencyLink>(links)
+        .id(d => d.id)
+        .distance(d => {
+          if (d.source.type === 'dependency' || d.target.type === 'dependency') {
+            return 150;
+          }
+          return 200;
+        })
+        .strength(d => {
+          if (d.source.type === 'dependency' || d.target.type === 'dependency') {
+            return 0.3;
+          }
+          return 0.5;
+        }))
+      .force("charge", d3.forceManyBody<DependencyNode>().strength(d => {
+        if (d.type === 'dependency') {
+          return -100;
+        }
+        return -300;
+      }))
+      .force("center", d3.forceCenter(innerWidth / 2, innerHeight / 2))
+      .force("collision", d3.forceCollide<DependencyNode>().radius(d => {
+        return Math.sqrt(d.size) * 5 + 20;
+      }));
 
-    const y = d3.scaleLinear()
-      .domain([0, d3.max(dailyCommits, d => d.count) || 0])
-      .range([innerHeight, 0])
-      .nice();
-
-    // Create axes
-    const xAxis = d3.axisBottom(x)
-      .ticks(d3.timeDay.every(7))
-      .tickFormat(d3.timeFormat("%b %d") as (domainValue: Date | d3.NumberValue, index: number) => string);
-
-    const yAxis = d3.axisLeft(y)
-      .ticks(5);
-
-    g.append("g")
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(xAxis)
-      .selectAll("text")
-      .attr("transform", "rotate(-45)")
-      .style("text-anchor", "end");
-
-    g.append("g")
-      .call(yAxis);
-
-    // Add axis labels
-    g.append("text")
-      .attr("transform", `translate(${innerWidth / 2}, ${innerHeight + 40})`)
-      .style("text-anchor", "middle")
-      .text("Date");
-
-    g.append("text")
-      .attr("transform", "rotate(-90)")
-      .attr("y", -40)
-      .attr("x", -innerHeight / 2)
-      .style("text-anchor", "middle")
-      .text("Number of Commits");
-
-    // Create the line
-    const line = d3.line<DailyCommits>()
-      .x(d => x(d.date))
-      .y(d => y(d.count))
-      .curve(d3.curveMonotoneX);
-
-    // Add the line path
-    g.append("path")
-      .datum(dailyCommits)
-      .attr("fill", "none")
-      .attr("stroke", "#4299e1")
-      .attr("stroke-width", 2)
-      .attr("d", line(dailyCommits) as string);
-
-    // Add dots for each data point
-    const dots = g.selectAll(".dot")
-      .data(dailyCommits)
+    // Create links
+    const link = g.append("g")
+      .attr("class", "links")
+      .selectAll<SVGLineElement, DependencyLink>("line")
+      .data(links)
       .enter()
-      .append("circle")
-      .attr("class", "dot")
-      .attr("cx", d => x(d.date))
-      .attr("cy", d => y(d.count))
-      .attr("r", d => Math.sqrt(d.count) * 2 + 4)
-      .attr("fill", "#4299e1")
-      .attr("opacity", 0.7)
-      .style("cursor", "pointer")
-      .on("mouseover", function(event, d: unknown) {
-        const dailyCommit = d as DailyCommits;
-        d3.select(this)
-          .attr("opacity", 1)
-          .attr("r", Math.sqrt(dailyCommit.count) * 2 + 6);
+      .append("line")
+      .attr("class", "link")
+      .attr("stroke", d => color(d.source.type || 'unknown'))
+      .attr("stroke-opacity", 0.4)
+      .attr("stroke-width", d => Math.sqrt(d.strength) * 2);
 
-        // Show tooltip
-        const tooltip = d3.select("#tooltip");
-        tooltip
-          .style("display", "block")
-          .html(`
-            <div class="tooltip-date">${dailyCommit.date.toLocaleDateString()}</div>
-            <div class="tooltip-commits">${dailyCommit.count} commits</div>
-            <div class="tooltip-authors">${dailyCommit.authors.size} authors</div>
-            <div class="tooltip-changes">
-              <span class="additions">+${dailyCommit.totalAdditions}</span>
-              <span class="deletions">-${dailyCommit.totalDeletions}</span>
-            </div>
-          `)
-          .style("left", (event.pageX + 10) + "px")
-          .style("top", (event.pageY - 28) + "px");
-      })
-      .on("mouseout", function(event, d: unknown) {
-        const dailyCommit = d as DailyCommits;
-        d3.select(this)
-          .attr("opacity", 0.7)
-          .attr("r", Math.sqrt(dailyCommit.count) * 2 + 4);
+    // Add link interactions
+    link.on("mouseover", function(event: MouseEvent, d: DependencyLink) {
+      d3.select(this)
+        .attr("stroke-opacity", 0.8)
+        .attr("stroke-width", Math.sqrt(d.strength) * 3);
 
-        d3.select("#tooltip")
-          .style("display", "none");
-      })
-      .on("click", (event, d: unknown) => {
-        const dailyCommit = d as DailyCommits;
-        setSelectedDate(dailyCommit.date);
+      const tooltip = d3.select("body").append("div")
+        .attr("class", "tooltip")
+        .style("opacity", 0);
+
+      tooltip.transition()
+        .duration(200)
+        .style("opacity", 1);
+
+      tooltip.html(`
+        <div><strong>${d.source.name}</strong> → <strong>${d.target.name}</strong></div>
+        <div>Type: ${d.type}</div>
+        <div>Strength: ${d.strength}</div>
+      `)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 28) + "px");
+    })
+    .on("mouseout", function(_event: MouseEvent, d: DependencyLink) {
+      d3.select(this)
+        .attr("stroke-opacity", 0.4)
+        .attr("stroke-width", Math.sqrt(d.strength) * 2);
+
+      d3.selectAll(".tooltip").remove();
+    });
+
+    // Create nodes
+    const node = g.append("g")
+      .attr("class", "nodes")
+      .selectAll<SVGGElement, DependencyNode>("g")
+      .data(nodes)
+      .enter()
+      .append("g")
+      .attr("class", "node")
+      .call(d3.drag<SVGGElement, DependencyNode>()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended));
+
+    // Add circles to nodes
+    const circles = node.append("circle")
+      .attr("r", d => Math.sqrt(d.size) * 5 + 10)
+      .attr("fill", d => color(d.type || 'unknown'))
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .style("cursor", "pointer");
+
+    // Add node interactions
+    circles.on("mouseover", function(event: MouseEvent, d: DependencyNode) {
+      d3.select(this)
+        .transition()
+        .duration(200)
+        .attr("stroke-width", 3)
+        .attr("r", Math.sqrt(d.size) * 5 + 12);
+
+      const tooltip = d3.select("body").append("div")
+        .attr("class", "tooltip")
+        .style("opacity", 0);
+
+      tooltip.transition()
+        .duration(200)
+        .style("opacity", 1);
+
+      tooltip.html(`
+        <div><strong>${d.name}</strong></div>
+        <div>Type: ${d.type}</div>
+        <div>Size: ${d.size} bytes</div>
+        ${d.metrics ? `
+          <div>Complexity: ${d.metrics.complexity}%</div>
+          <div>Dependencies: ${d.metrics.dependencies}</div>
+        ` : ''}
+      `)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 28) + "px");
+    })
+    .on("mouseout", function(_event: MouseEvent, d: DependencyNode) {
+      d3.select(this)
+        .transition()
+        .duration(200)
+        .attr("stroke-width", 2)
+        .attr("r", Math.sqrt(d.size) * 5 + 10);
+
+      d3.selectAll(".tooltip").remove();
+    })
+    .on("click", function(_event: MouseEvent, d: DependencyNode) {
+      setSelectedNode(d);
+      const connectedNodes = new Set([d.id]);
+      links.forEach(link => {
+        if (link.source.id === d.id) connectedNodes.add(link.target.id);
+        if (link.target.id === d.id) connectedNodes.add(link.source.id);
       });
+      
+      node.selectAll("circle")
+        .transition()
+        .duration(200)
+        .attr("opacity", n => connectedNodes.has((n as DependencyNode).id) ? 1 : 0.6);
+      
+      link
+        .transition()
+        .duration(200)
+        .attr("opacity", l => 
+          connectedNodes.has((l.source as DependencyNode).id) && connectedNodes.has((l.target as DependencyNode).id) ? 0.8 : 0.3);
+    });
+
+    // Add labels to nodes
+    node.append("text")
+      .text(d => d.name)
+      .attr("x", 8)
+      .attr("y", "0.31em")
+      .attr("font-size", d => d.type === 'dependency' ? "11px" : "12px")
+      .attr("fill", "#2d3748")
+      .attr("font-weight", d => d.type === 'dependency' ? "400" : "500");
+
+    // Update positions on each tick
+    simulation.on("tick", () => {
+      link
+        .attr("x1", d => (d.source as DependencyNode).x!)
+        .attr("y1", d => (d.source as DependencyNode).y!)
+        .attr("x2", d => (d.target as DependencyNode).x!)
+        .attr("y2", d => (d.target as DependencyNode).y!);
+
+      node.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
 
     // Add zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.5, 5])
+      .scaleExtent([0.1, 4])
       .on("zoom", (event) => {
-        const newX = event.transform.rescaleX(x);
-        const newY = event.transform.rescaleY(y);
-
-        g.select<SVGGElement>(".x-axis").call(xAxis.scale(newX));
-        g.select<SVGGElement>(".y-axis").call(yAxis.scale(newY));
-
-        g.select("path")
-          .attr("d", line.x(d => newX(d.date)).y(d => newY(d.count))(dailyCommits) as string);
-
-        dots
-          .attr("cx", d => newX(d.date))
-          .attr("cy", d => newY(d.count));
+        g.attr("transform", event.transform);
       });
 
     svg.call(zoom);
 
-  }, [dailyCommits, width, height, timeRange]);
+    // Add legend
+    const legend = svg.append("g")
+      .attr("class", "legend")
+      .attr("transform", `translate(${width - 150}, 20)`);
+
+    const nodeTypes = Array.from(new Set(nodes.map(n => n.type))).filter(Boolean) as string[];
+    nodeTypes.forEach((type, i) => {
+      const legendRow = legend.append("g")
+        .attr("transform", `translate(0, ${i * 24})`)
+        .style("cursor", "pointer")
+        .on("mouseover", function() {
+          node.selectAll("circle")
+            .transition()
+            .duration(200)
+            .attr("opacity", d => ((d as DependencyNode).type || 'unknown') === type ? 1 : 0.1);
+        })
+        .on("mouseout", function() {
+          node.selectAll("circle")
+            .transition()
+            .duration(200)
+            .attr("opacity", 1);
+        });
+
+      legendRow.append("circle")
+        .attr("r", 6)
+        .attr("fill", color(type));
+
+      legendRow.append("text")
+        .attr("x", 12)
+        .attr("y", 4)
+        .text(type.charAt(0).toUpperCase() + type.slice(1))
+        .style("font-size", "12px");
+    });
+
+    // Drag functions
+    function dragstarted(event: d3.D3DragEvent<SVGGElement, DependencyNode, DependencyNode>, d: DependencyNode) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event: d3.D3DragEvent<SVGGElement, DependencyNode, DependencyNode>, d: DependencyNode) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragended(event: d3.D3DragEvent<SVGGElement, DependencyNode, DependencyNode>, d: DependencyNode) {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    return () => {
+      simulation.stop();
+    };
+  }, [nodes, links, dimensions]);
 
   return (
-    <div className="dependency-graph-container">
-      <div className="graph-controls">
-        <div className="control-group">
-          <button onClick={() => {}}>
-            <Calendar />
-            Timeline View
-          </button>
-          <input
-            type="date"
-            value={timeRange[0].toISOString().split('T')[0]}
-            onChange={(e) => setTimeRange([new Date(e.target.value), timeRange[1]])}
-          />
-          <input
-            type="date"
-            value={timeRange[1].toISOString().split('T')[0]}
-            onChange={(e) => setTimeRange([timeRange[0], new Date(e.target.value)])}
-          />
-        </div>
-      </div>
-      <div className="graph-content">
-        <svg ref={svgRef} />
-        <div id="tooltip" className="tooltip" style={{ display: 'none' }}></div>
-        {selectedDate && (
-          <div className="commit-details-panel">
-            <h3>Commits for {selectedDate.toLocaleDateString()}</h3>
-            <div className="commit-list">
-              {dailyCommits
-                .find(d => d.date.toDateString() === selectedDate.toDateString())
-                ?.commits.map(commit => (
-                  <div key={commit.hash} className="commit-item">
-                    <div className="commit-header">
-                      <span className="commit-hash">{commit.hash.substring(0, 7)}</span>
-                      <span className="commit-author">{commit.author}</span>
-                      <span className="commit-time">
-                        {new Date(commit.date).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <div className="commit-message">{commit.message}</div>
-                    <div className="commit-stats">
-                      <span className="additions">+{commit.additions}</span>
-                      <span className="deletions">-{commit.deletions}</span>
-                      <span className="files">{commit.files.length} files</span>
-                    </div>
-                  </div>
-                ))}
+    <div ref={containerRef} className="dependency-graph-container">
+      <svg ref={svgRef} width={dimensions.width} height={dimensions.height} />
+      {selectedNode && (
+        <div className="node-details">
+          <h3>{selectedNode.name}</h3>
+          <div className="metrics">
+            <div className="metric">
+              <span className="label">Type:</span>
+              <span className="value">{selectedNode.type}</span>
             </div>
+            <div className="metric">
+              <span className="label">Size:</span>
+              <span className="value">{selectedNode.size} bytes</span>
+            </div>
+            {selectedNode.metrics && (
+              <>
+                <div className="metric">
+                  <span className="label">Complexity:</span>
+                  <span className="value">{selectedNode.metrics.complexity}%</span>
+                </div>
+                <div className="metric">
+                  <span className="label">Dependencies:</span>
+                  <span className="value">{selectedNode.metrics.dependencies}</span>
+                </div>
+                <div className="metric">
+                  <span className="label">Dependents:</span>
+                  <span className="value">{selectedNode.metrics.dependents}</span>
+                </div>
+                <div className="metric">
+                  <span className="label">Last Modified:</span>
+                  <span className="value">{selectedNode.metrics.lastModified}</span>
+                </div>
+              </>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

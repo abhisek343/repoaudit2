@@ -4,8 +4,9 @@
   height: 100%;
   position: relative;
   background: #f8fafc;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
 }
 
 .graph-content {
@@ -101,15 +102,20 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   pointer-events: none;
   user-select: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  fill: #2d3748;
 }
 
 /* Link styles */
 .link {
-  transition: stroke-opacity 0.3s ease;
+  transition: all 0.3s ease;
+  stroke-linecap: round;
 }
 
 .link:hover {
   stroke-opacity: 0.8;
+  stroke-width: 2.5;
 }
 
 /* Git history panel */
@@ -276,13 +282,28 @@
 
 .tooltip {
   position: absolute;
-  background: white;
-  padding: 0.75rem;
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
   pointer-events: none;
   z-index: 1000;
-  min-width: 200px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  max-width: 300px;
+}
+
+.tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.8) transparent transparent transparent;
 }
 
 .tooltip-date {
@@ -502,4 +523,67 @@
   .tooltip {
     display: none !important;
   }
+}
+
+.node-details {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: white;
+  padding: 1.25rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  max-width: 320px;
+  z-index: 1000;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.node-details h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.25rem;
+  color: #1a202c;
+  font-weight: 600;
+}
+
+.node-details p {
+  margin: 0.5rem 0;
+  font-size: 0.95rem;
+  color: #4a5568;
+  line-height: 1.5;
+}
+
+.metrics {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.metrics p {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  background: #f8fafc;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.metrics p:hover {
+  background: #edf2f7;
+  transform: translateX(4px);
+}
+
+.legend {
+  background: white;
+  padding: 1rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+}
+
+.legend text {
+  font-size: 0.875rem;
+  fill: #4a5568;
+  font-weight: 500;
 } 

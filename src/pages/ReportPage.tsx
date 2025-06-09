@@ -35,6 +35,11 @@ import DiagramsPage from '../components/report/DiagramsPage';
 
 import { AnalysisResult } from '../types';
 
+// Define the expected props type for each page component
+type PageComponentProps = {
+  reportData: AnalysisResult;
+};
+
 const ReportPage = () => {
   const { repoId } = useParams();
   const [reportData, setReportData] = useState<AnalysisResult | null>(null);
@@ -184,6 +189,55 @@ const ReportPage = () => {
 
   const CurrentPageComponent = pages[currentPage].component;
 
+  // Transform the data to match the expected types for each page component
+  const transformedData = {
+    ...reportData,
+    hotspots: (reportData.hotspots || []).map(hotspot => ({
+      file: hotspot.file,
+      complexity: hotspot.complexity,
+      size: hotspot.size || 0,
+      dependencies: [], // Default empty array since this isn't provided in the original data
+      contributors: [], // Default empty array since this isn't provided in the original data
+      commitCount: 0, // Default to 0 since this isn't provided in the original data
+      changes: hotspot.changes,
+      explanation: hotspot.explanation || ''
+    })),
+    keyFunctions: reportData.keyFunctions || [],
+    architectureAnalysis: reportData.architectureAnalysis || "No architecture analysis available.",
+    files: (reportData.files || []).map(file => ({
+      ...file,
+      type: file.type || 'file',
+      dependencies: [],
+      contributors: [],
+      commitCount: 0,
+      functions: []
+    })),
+    languages: reportData.languages || {},
+    metrics: {
+      ...reportData.metrics,
+      codeQuality: reportData.metrics.codeQuality || 0,
+      testCoverage: reportData.metrics.testCoverage || 0,
+      technicalDebtScore: reportData.metrics.technicalDebtScore || 0,
+      performanceScore: reportData.metrics.performanceScore || 0,
+      totalCommits: reportData.metrics.totalCommits || 0,
+      totalContributors: reportData.metrics.totalContributors || 0,
+      linesOfCode: reportData.metrics.linesOfCode || 0,
+      busFactor: reportData.metrics.busFactor || 0
+    }
+  };
+
+  // Create a separate transformed data object for the ArchitecturePage
+  const architecturePageData = {
+    ...transformedData,
+    languages: Object.entries(reportData.languages || {}).map(([name, value]) => ({
+      name,
+      value
+    }))
+  };
+
+  // Type assertion to handle both AnalysisResult and ArchitecturePageProps
+  const pageData = currentPage === 1 ? architecturePageData as any : transformedData;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
@@ -276,7 +330,7 @@ const ReportPage = () => {
 
       {/* Page Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <CurrentPageComponent reportData={reportData} />
+        <CurrentPageComponent reportData={pageData} />
       </div>
 
       {/* Page Navigation */}
