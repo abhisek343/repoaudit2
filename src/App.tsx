@@ -5,6 +5,7 @@ import AnalyzePage from './pages/AnalyzePage';
 import ReportPage from './pages/ReportPage';
 import DashboardPage from './pages/DashboardPage';
 import GitHistoryPage from './pages/GitHistoryPage';
+import ContributorStatsPage from './pages/ContributorStatsPage';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/report/:repoId" element={<ReportPage />} />
           <Route path="/git-history/:reportId" element={<GitHistoryPage />} />
+          <Route path="/contributors" element={<ContributorStatsPage />} />
         </Routes>
       </div>
     </Router>

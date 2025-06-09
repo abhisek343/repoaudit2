@@ -60,11 +60,8 @@ export function generateFunctionConnections(fileInfo: Record<string, ExtendedFil
         // Add function node
         connections.push(`${fileId}_${func.name}["${func.name}<br/>${func.complexity}% complex"]`);
 
-        // Add function dependencies
-        func.dependencies.forEach((dep: string) => {
-const safeName = func.name.replace(/[^\w]/g, '_');
-const nodeId = `${fileId}_${safeName}`;
-        });
+// Add function dependencies
+// (No operation for dependencies yet)
 
         // Add function calls
         func.calls.forEach((call: string) => {

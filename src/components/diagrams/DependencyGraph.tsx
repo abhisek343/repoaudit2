@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { Search, Filter, ZoomIn, ZoomOut, RefreshCw, Info, BarChart2, GitBranch, Clock, AlertCircle, FileText, Layers, GitCommit, GitPullRequest, GitMerge, Calendar } from 'lucide-react';
+import { GitCommit, Calendar } from 'lucide-react';
 
 interface GitCommit {
   hash: string;
@@ -104,85 +104,16 @@ interface DependencyGraphProps {
 
 const DependencyGraph: React.FC<DependencyGraphProps> = ({
   nodes,
-  links,
   width = 800,
   height = 600
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(['module', 'package', 'file']);
-  const [selectedClusters, setSelectedClusters] = useState<string[]>([]);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [highlightedNode, setHighlightedNode] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<DependencyNode | null>(null);
-  const [showMetrics, setShowMetrics] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
-  const [viewMode, setViewMode] = useState<'standard' | 'metrics' | 'complexity' | 'security' | 'git'>('git');
   const [timeRange, setTimeRange] = useState<[Date, Date]>([
     new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // 90 days ago
     new Date()
   ]);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [dailyCommits, setDailyCommits] = useState<DailyCommits[]>([]);
-  const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
-  const [showGitHistory, setShowGitHistory] = useState(false);
-  const [gitFilter, setGitFilter] = useState({
-    showMerges: true,
-    showCommits: true,
-    showBranches: true,
-    minContributions: 0,
-  });
-  const [filterMetrics, setFilterMetrics] = useState({
-    minComplexity: 0,
-    maxComplexity: 100,
-    minDependencies: 0,
-    maxDependencies: 100,
-    minSecurityScore: 0,
-    maxSecurityScore: 100,
-  });
-
-  // Calculate advanced graph statistics
-  const stats = {
-    totalNodes: nodes.length,
-    totalLinks: links.length,
-    avgComplexity: d3.mean(nodes.map(n => n.metrics?.complexity || 0)) || 0,
-    avgDependencies: d3.mean(nodes.map(n => n.metrics?.dependencies || 0)) || 0,
-    criticalNodes: nodes.filter(n => (n.metrics?.complexity || 0) > 80).length,
-    highDependencyNodes: nodes.filter(n => (n.metrics?.dependencies || 0) > 10).length,
-    clusters: Array.from(new Set(nodes.map(n => n.cluster || 'default'))).length,
-    securityIssues: nodes.filter(n => (n.metrics?.securityScore || 0) < 50).length,
-    maintainabilityIssues: nodes.filter(n => (n.metrics?.maintainabilityScore || 0) < 50).length,
-    performanceIssues: nodes.filter(n => (n.metrics?.performanceScore || 0) < 50).length,
-    totalTechnicalDebt: d3.sum(nodes.map(n => n.metrics?.technicalDebt || 0)) || 0,
-    avgTestCoverage: d3.mean(nodes.map(n => n.metrics?.testCoverage || 0)) || 0,
-    totalBugs: d3.sum(nodes.map(n => n.metrics?.bugCount || 0)) || 0,
-    totalCodeSmells: d3.sum(nodes.map(n => n.metrics?.codeSmells || 0)) || 0,
-    totalVulnerabilities: d3.sum(nodes.map(n => n.metrics?.vulnerabilities || 0)) || 0,
-    totalHotspots: d3.sum(nodes.map(n => n.metrics?.hotspots || 0)) || 0,
-  };
-
-  // Create color scales
-  const nodeColor = d3.scaleOrdinal<string>()
-    .domain(['module', 'package', 'file'])
-    .range(['#4299e1', '#48bb78', '#ed8936']);
-
-  const linkColor = d3.scaleOrdinal<string>()
-    .domain(['import', 'require', 'dependency'])
-    .range(['#4299e1', '#48bb78', '#ed8936']);
-
-  const clusterColor = d3.scaleOrdinal<string>()
-    .domain(Array.from(new Set(nodes.map(n => n.cluster || 'default'))))
-    .range(d3.schemeSet3);
-
-  const complexityColor = d3.scaleSequential(d3.interpolateRdYlGn)
-    .domain([0, 100]);
-
-  // Add git-specific color scales
-  const gitActivityColor = d3.scaleSequential(d3.interpolateYlOrRd)
-    .domain([0, 100]);
-
-  const commitFrequencyColor = d3.scaleSequential(d3.interpolateBlues)
-    .domain([0, 50]);
 
   // Process git history into daily commits
   useEffect(() => {
@@ -241,7 +172,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
     // Create axes
     const xAxis = d3.axisBottom(x)
       .ticks(d3.timeDay.every(7))
-      .tickFormat(d3.timeFormat("%b %d"));
+      .tickFormat(d3.timeFormat("%b %d") as (domainValue: Date | d3.NumberValue, index: number) => string);
 
     const yAxis = d3.axisLeft(y)
       .ticks(5);
@@ -281,7 +212,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
       .attr("fill", "none")
       .attr("stroke", "#4299e1")
       .attr("stroke-width", 2)
-      .attr("d", line);
+      .attr("d", line(dailyCommits) as string);
 
     // Add dots for each data point
     const dots = g.selectAll(".dot")
@@ -295,58 +226,61 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
       .attr("fill", "#4299e1")
       .attr("opacity", 0.7)
       .style("cursor", "pointer")
-      .on("mouseover", function(event, d) {
+      .on("mouseover", function(event, d: unknown) {
+        const dailyCommit = d as DailyCommits;
         d3.select(this)
           .attr("opacity", 1)
-          .attr("r", Math.sqrt(d.count) * 2 + 6);
+          .attr("r", Math.sqrt(dailyCommit.count) * 2 + 6);
 
         // Show tooltip
         const tooltip = d3.select("#tooltip");
         tooltip
           .style("display", "block")
           .html(`
-            <div class="tooltip-date">${d.date.toLocaleDateString()}</div>
-            <div class="tooltip-commits">${d.count} commits</div>
-            <div class="tooltip-authors">${d.authors.size} authors</div>
+            <div class="tooltip-date">${dailyCommit.date.toLocaleDateString()}</div>
+            <div class="tooltip-commits">${dailyCommit.count} commits</div>
+            <div class="tooltip-authors">${dailyCommit.authors.size} authors</div>
             <div class="tooltip-changes">
-              <span class="additions">+${d.totalAdditions}</span>
-              <span class="deletions">-${d.totalDeletions}</span>
+              <span class="additions">+${dailyCommit.totalAdditions}</span>
+              <span class="deletions">-${dailyCommit.totalDeletions}</span>
             </div>
           `)
           .style("left", (event.pageX + 10) + "px")
           .style("top", (event.pageY - 28) + "px");
       })
-      .on("mouseout", function() {
+      .on("mouseout", function(event, d: unknown) {
+        const dailyCommit = d as DailyCommits;
         d3.select(this)
           .attr("opacity", 0.7)
-          .attr("r", d => Math.sqrt(d.count) * 2 + 4);
+          .attr("r", Math.sqrt(dailyCommit.count) * 2 + 4);
 
         d3.select("#tooltip")
           .style("display", "none");
       })
-      .on("click", (event, d) => {
-        setSelectedDate(d.date);
+      .on("click", (event, d: unknown) => {
+        const dailyCommit = d as DailyCommits;
+        setSelectedDate(dailyCommit.date);
       });
 
     // Add zoom behavior
-    const zoom = d3.zoom()
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.5, 5])
       .on("zoom", (event) => {
         const newX = event.transform.rescaleX(x);
         const newY = event.transform.rescaleY(y);
 
-        g.select(".x-axis").call(xAxis.scale(newX));
-        g.select(".y-axis").call(yAxis.scale(newY));
+        g.select<SVGGElement>(".x-axis").call(xAxis.scale(newX));
+        g.select<SVGGElement>(".y-axis").call(yAxis.scale(newY));
 
         g.select("path")
-          .attr("d", line.x(d => newX(d.date)).y(d => newY(d.count)));
+          .attr("d", line.x(d => newX(d.date)).y(d => newY(d.count))(dailyCommits) as string);
 
         dots
           .attr("cx", d => newX(d.date))
           .attr("cy", d => newY(d.count));
       });
 
-    svg.call(zoom as any);
+    svg.call(zoom);
 
   }, [dailyCommits, width, height, timeRange]);
 
@@ -354,7 +288,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
     <div className="dependency-graph-container">
       <div className="graph-controls">
         <div className="control-group">
-          <button onClick={() => setViewMode('git')}>
+          <button onClick={() => {}}>
             <Calendar />
             Timeline View
           </button>
@@ -404,4 +338,4 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({
   );
 };
 
-export default DependencyGraph; 
+export default DependencyGraph;

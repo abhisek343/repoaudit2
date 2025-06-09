@@ -246,22 +246,36 @@ const OverviewPage = ({ reportData }: OverviewPageProps) => {
               <div className="space-y-3">
                 <h4 className="font-semibold text-gray-900">Areas for Improvement</h4>
                 <div className="space-y-2">
+                  {/* Always show these recommendations */}
+                  <div className="flex items-center text-sm text-yellow-700">
+                    <AlertTriangle className="w-4 h-4 mr-2" />
+                    Consider increasing test coverage (current: {metrics.testCoverage}%)
+                  </div>
+                  <div className="flex items-center text-sm text-yellow-700">
+                    <AlertTriangle className="w-4 h-4 mr-2" />
+                    Monitor bus factor (current: {metrics.busFactor})
+                  </div>
+                  <div className="flex items-center text-sm text-yellow-700">
+                    <AlertTriangle className="w-4 h-4 mr-2" />
+                    Review code quality metrics (current: {metrics.codeQuality}/10)
+                  </div>
+                  {/* Conditional recommendations */}
                   {metrics.busFactor <= 2 && (
                     <div className="flex items-center text-sm text-yellow-700">
                       <AlertTriangle className="w-4 h-4 mr-2" />
-                      Low bus factor ({metrics.busFactor})
+                      Low bus factor ({metrics.busFactor}) - Consider knowledge sharing
                     </div>
                   )}
                   {metrics.testCoverage < 70 && (
                     <div className="flex items-center text-sm text-yellow-700">
                       <AlertTriangle className="w-4 h-4 mr-2" />
-                      Test coverage could be improved
+                      Test coverage could be improved (target: 70%)
                     </div>
                   )}
                   {!repository.license && (
                     <div className="flex items-center text-sm text-yellow-700">
                       <AlertTriangle className="w-4 h-4 mr-2" />
-                      No license specified
+                      No license specified - Consider adding one
                     </div>
                   )}
                 </div>

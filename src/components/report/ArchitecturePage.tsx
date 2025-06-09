@@ -1,19 +1,14 @@
 import React, { useState } from 'react';
 import { 
   Code, 
-  FileText, 
   AlertTriangle, 
   CheckCircle, 
   TrendingUp,
   Layers,
-  GitBranch,
   Shield,
   Zap,
   Target,
-  Database,
-  Globe
 } from 'lucide-react';
-import { AnalysisResult, FileInfo } from '../../types';
 import DependencyGraph from '../diagrams/DependencyGraph';
 import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
 import { ExtendedFileInfo } from '../../types';
@@ -49,32 +44,22 @@ interface DependencyData {
   vulnerabilities: number;
 }
 
-interface Contributor {
-  name: string;
-  email: string;
-  login: string;
-  commits: number;
-  lastCommit: string;
-}
-
 interface ArchitecturePageProps {
   reportData: {
     hotspots: Hotspot[];
-    keyFunctions: any[];
+    keyFunctions: Record<string, unknown>[];
     architectureAnalysis: string;
     files: ExtendedFileInfo[];
-    languages: any[];
-    metrics: any;
-    contributors: Contributor[];
+    languages: Record<string, unknown>[];
+    metrics: Record<string, unknown>;
   };
 }
 
 const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('treemap');
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [useLLM, setUseLLM] = useState(true);
   
-  const { hotspots, keyFunctions, architectureAnalysis, files, languages, metrics, contributors } = reportData;
+  const { hotspots, keyFunctions, architectureAnalysis, files, metrics } = reportData;
 
   // Generate complexity data from hotspots
   const complexityData: ComplexityData[] = hotspots.map(hotspot => ({
@@ -92,7 +77,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       source: hotspot.file,
       target: dep,
       type: 'production',
-       strength: 1,
+      strength: 1,
       name: dep,
       version: 'N/A',
       vulnerabilities: 0
@@ -130,7 +115,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
   ];
 
   const fileInfo = React.useMemo(() => {
-    const info: Record<string, ExtendedFileInfo> = {};
+    const info: Record<string, ExtendedFileInfo> = {} as Record<string, ExtendedFileInfo>;
     
     // Frontend components
     info['frontend'] = {
@@ -140,13 +125,13 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       content: undefined,
       language: 'TypeScript',
       complexity: Math.round(files.filter(f => f.path.startsWith('src/frontend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/frontend')).length),
-      testCoverage: metrics.testCoverage,
+      testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
-      primaryAuthor: reportData.contributors[0]?.login,
+      primaryAuthor: '',
       type: 'frontend',
       dependencies: ['react', 'typescript', 'axios'],
-      contributors: reportData.contributors.slice(0, 3).map(c => c.login),
-      commitCount: reportData.metrics.totalCommits
+      contributors: [],
+      commitCount: reportData.metrics.totalCommits as number
     };
 
     // Backend components
@@ -157,13 +142,13 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       content: undefined,
       language: 'TypeScript',
       complexity: Math.round(files.filter(f => f.path.startsWith('src/backend')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/backend')).length),
-      testCoverage: metrics.testCoverage,
+      testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
-      primaryAuthor: reportData.contributors[0]?.login,
+      primaryAuthor: '',
       type: 'backend',
       dependencies: ['express', 'typescript', 'mongoose'],
-      contributors: reportData.contributors.slice(0, 3).map(c => c.login),
-      commitCount: reportData.metrics.totalCommits
+      contributors: [],
+      commitCount: reportData.metrics.totalCommits as number
     };
 
     // Service components
@@ -174,13 +159,13 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       content: undefined,
       language: 'TypeScript',
       complexity: Math.round(files.filter(f => f.path.startsWith('src/services')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/services')).length),
-      testCoverage: metrics.testCoverage,
+      testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
-      primaryAuthor: reportData.contributors[0]?.login,
+      primaryAuthor: '',
       type: 'service',
       dependencies: ['axios', 'typescript', 'redis'],
-      contributors: reportData.contributors.slice(0, 3).map(c => c.login),
-      commitCount: reportData.metrics.totalCommits
+      contributors: [],
+      commitCount: reportData.metrics.totalCommits as number
     };
 
     // Storage components
@@ -191,22 +176,17 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       content: undefined,
       language: 'TypeScript',
       complexity: Math.round(files.filter(f => f.path.startsWith('src/storage')).reduce((acc, f) => acc + (f.complexity || 0), 0) / files.filter(f => f.path.startsWith('src/storage')).length),
-      testCoverage: metrics.testCoverage,
+      testCoverage: metrics.testCoverage as number,
       lastModified: new Date().toISOString(),
-      primaryAuthor: reportData.contributors[0]?.login,
+      primaryAuthor: '',
       type: 'storage',
       dependencies: ['mongoose', 'redis', 'typescript'],
-      contributors: reportData.contributors.slice(0, 3).map(c => c.login),
-      commitCount: reportData.metrics.totalCommits
+      contributors: [],
+      commitCount: reportData.metrics.totalCommits as number
     };
 
     return info;
-  }, [files, metrics, reportData.contributors, reportData.metrics.totalCommits]);
-
-  const handleNodeClick = (nodeId: string, nodeInfo: ExtendedFileInfo) => {
-    console.log('Clicked node:', nodeId, nodeInfo);
-    setSelectedNode(nodeId);
-  };
+  }, [files, metrics]);
 
   const renderDiagram = () => {
     switch (selectedDiagram) {
@@ -217,7 +197,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
             <div className="grid grid-cols-4 gap-2 h-80">
               {complexityData.slice(0, 16).map((file, index) => (
                 <div
-                  key={index}
+                  key={`treemap-${file.name}-${index}`}
                   className="rounded-lg p-3 text-white text-xs font-medium flex flex-col justify-between transition-transform duration-200 hover:scale-105 cursor-pointer"
                   style={{
                     backgroundColor: getComplexityColor(file.complexity),
@@ -311,7 +291,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
 
                 {/* Plot points */}
                 {complexityData.map((file, index) => (
-                  <g key={index} transform={`translate(${(file.size / 1000) * 800},${600 - (file.complexity * 5)})`}>
+                  <g key={`complexity-${file.name}-${index}`} transform={`translate(${(file.size / 1000) * 800},${600 - (file.complexity * 5)})`}>
                     <circle
                       r={5}
                       fill={getComplexityColor(file.complexity)}
@@ -422,11 +402,11 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
                   class API,Auth,Cache backend
                   class UserSvc,DataSvc,FileSvc service
                   class DB,S3 storage
-              `, Object.values(fileInfo))}
+              `)}
               width={800}
               height={600}
               interactive={true}
-              fileInfo={fileInfo}
+              fileInfo={fileInfo as any}
               showDetails={true}
               useLLM={useLLM}
             />
@@ -436,58 +416,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       default:
         return <div>Select a diagram to view</div>;
     }
-  };
-
-  const renderContributorStats = () => {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-100">
-          <h4 className="text-sm font-medium text-gray-900 mb-2">Top Contributors</h4>
-          <div className="space-y-2">
-            {contributors.slice(0, 5).map((c: Contributor) => (
-              <div key={c.email} className="flex justify-between items-center text-sm">
-                <span className="text-gray-600">{c.name}</span>
-                <span className="text-gray-900 font-medium">{c.commits} commits</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-100">
-          <h4 className="text-sm font-medium text-gray-900 mb-2">Recent Activity</h4>
-          <div className="space-y-2">
-            {contributors
-              .sort((a: Contributor, b: Contributor) => 
-                new Date(b.lastCommit).getTime() - new Date(a.lastCommit).getTime()
-              )
-              .slice(0, 5)
-              .map((c: Contributor) => (
-                <div key={c.email} className="flex justify-between items-center text-sm">
-                  <span className="text-gray-600">{c.name}</span>
-                  <span className="text-gray-900 font-medium">
-                    {new Date(c.lastCommit).toLocaleDateString()}
-                  </span>
-                </div>
-              ))}
-          </div>
-        </div>
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-100">
-          <h4 className="text-sm font-medium text-gray-900 mb-2">Commit Distribution</h4>
-          <div className="space-y-2">
-            {contributors
-              .sort((a: Contributor, b: Contributor) => b.commits - a.commits)
-              .slice(0, 5)
-              .map((c: Contributor) => (
-                <div key={c.email} className="flex justify-between items-center text-sm">
-                  <span className="text-gray-600">{c.name}</span>
-                  <span className="text-gray-900 font-medium">
-                    {((c.commits / contributors.reduce((sum, c) => sum + c.commits, 0)) * 100).toFixed(1)}%
-                  </span>
-                </div>
-              ))}
-          </div>
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -520,7 +448,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
         <div className="flex flex-wrap gap-2 mb-6">
           {diagrams.map((diagram) => (
             <button
-              key={diagram.id}
+              key={`diagram-${diagram.id}`}
               onClick={() => setSelectedDiagram(diagram.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
                 selectedDiagram === diagram.id
@@ -553,7 +481,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
             <div className="space-y-4">
               {hotspots.slice(0, 5).map((hotspot, index) => (
                 <div 
-                  key={index}
+                  key={`hotspot-${hotspot.file}-${index}`}
                   className="p-4 border border-gray-200 rounded-lg hover:border-red-300 transition-colors duration-200"
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -600,7 +528,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
           <div className="space-y-4">
             {dependencyData.map((dep, index) => (
               <div 
-                key={index}
+                key={`dependency-${dep.name}-${index}`}
                 className="flex items-center justify-between p-3 border border-gray-200 rounded-lg"
               >
                 <div className="flex-1">
@@ -612,205 +540,30 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
                       {dep.type}
                     </span>
                   </div>
-                  <p className="text-sm text-gray-600">{dep.version}</p>
+                  <div className="text-sm text-gray-600 mt-1">
+                    Version: {dep.version}
+                  </div>
                 </div>
-                
-                <div className="flex items-center space-x-2">
-                  {dep.vulnerabilities > 0 ? (
-                    <div className="flex items-center space-x-1 text-red-600">
-                      <AlertTriangle className="w-4 h-4" />
-                      <span className="text-sm font-medium">{dep.vulnerabilities}</span>
+                <div className="flex items-center space-x-4">
+                  <div className="text-right">
+                    <div className="text-sm font-medium text-gray-900">
+                      {dep.vulnerabilities} vulnerabilities
                     </div>
-                  ) : (
-                    <CheckCircle className="w-4 h-4 text-green-600" />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-            <div className="flex items-center space-x-2 mb-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-600" />
-              <h4 className="font-medium text-yellow-800">Security Summary</h4>
-            </div>
-            <p className="text-sm text-yellow-700">
-              Found {dependencyData.reduce((sum, dep) => sum + dep.vulnerabilities, 0)} vulnerabilities 
-              across {dependencyData.length} dependencies. Consider updating vulnerable packages.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Key Functions Analysis */}
-      {keyFunctions && keyFunctions.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-            <Code className="w-6 h-6 text-purple-500 mr-3" />
-            Critical Function Analysis
-          </h3>
-
-          <div className="grid lg:grid-cols-2 gap-6">
-            {keyFunctions.slice(0, 2).map((func, index) => (
-              <div key={index} className="border border-gray-200 rounded-xl p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-lg font-semibold text-gray-900">
-                    <code className="text-purple-600">{func.name}</code>
-                  </h4>
-                  <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    func.complexity >= 70 ? 'bg-red-100 text-red-800' :
-                    func.complexity >= 50 ? 'bg-orange-100 text-orange-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
-                    {func.complexity}% complex
-                  </div>
-                </div>
-                
-                <p className="text-sm text-gray-600 mb-4">
-                  in <span className="font-mono">{func.file}</span>
-                </p>
-                
-                <div className="prose prose-sm max-w-none">
-                  <p className="text-gray-700 leading-relaxed">
-                    {func.explanation.substring(0, 200)}...
-                  </p>
-                </div>
-
-                {/* Simple flow diagram */}
-                <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                  <h5 className="font-medium text-gray-900 mb-3 text-sm">Logic Flow</h5>
-                  <div className="flex items-center space-x-2 text-xs">
-                    <div className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">1</div>
-                    <div className="flex-1 h-px bg-gray-300"></div>
-                    <div className="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold">2</div>
-                    <div className="flex-1 h-px bg-gray-300"></div>
-                    <div className="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">3</div>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-600 mt-2">
-                    <span>Input</span>
-                    <span>Process</span>
-                    <span>Output</span>
+                    <div className="text-xs text-gray-500">
+                      Strength: {dep.strength}
+                    </div>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      )}
-
-      {/* Code Quality Metrics */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <Zap className="w-6 h-6 text-yellow-500 mr-3" />
-          Code Quality Metrics
-        </h3>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          <div className="text-center">
-            <div className="w-20 h-20 mx-auto mb-4 relative">
-              <svg className="w-20 h-20 transform -rotate-90">
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  className="text-gray-200"
-                />
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  strokeLinecap="round"
-                  className="text-green-500"
-                  strokeDasharray={`${(reportData.metrics.testCoverage / 100) * 201.06} 201.06`}
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-gray-900">{reportData.metrics.testCoverage}%</span>
-              </div>
-            </div>
-            <h4 className="font-semibold text-gray-900">Test Coverage</h4>
-            <p className="text-sm text-gray-600">Code covered by tests</p>
-          </div>
-
-          <div className="text-center">
-            <div className="w-20 h-20 mx-auto mb-4 relative">
-              <svg className="w-20 h-20 transform -rotate-90">
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  className="text-gray-200"
-                />
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  strokeLinecap="round"
-                  className="text-blue-500"
-                  strokeDasharray={`${(reportData.metrics.codeQuality / 10) * 201.06} 201.06`}
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-gray-900">{reportData.metrics.codeQuality}/10</span>
-              </div>
-            </div>
-            <h4 className="font-semibold text-gray-900">Code Quality</h4>
-            <p className="text-sm text-gray-600">Overall quality score</p>
-          </div>
-
-          <div className="text-center">
-            <div className="w-20 h-20 mx-auto mb-4 relative">
-              <svg className="w-20 h-20 transform -rotate-90">
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  className="text-gray-200"
-                />
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="32"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="none"
-                  strokeLinecap="round"
-                  className={reportData.metrics.busFactor <= 2 ? 'text-red-500' : 'text-green-500'}
-                  strokeDasharray={`${Math.min(100, (reportData.metrics.busFactor / 5) * 100) * 2.01} 201.06`}
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-gray-900">{reportData.metrics.busFactor}</span>
-              </div>
-            </div>
-            <h4 className="font-semibold text-gray-900">Bus Factor</h4>
-            <p className="text-sm text-gray-600">Key contributor risk</p>
-          </div>
-        </div>
       </div>
-
-      {/* Contributor Statistics */}
-      {renderContributorStats()}
     </div>
   );
 };
 
-const generateDetailedArchitectureDiagram = (mermaidCode: string, fileInfo: ExtendedFileInfo[]) => {
+const generateDetailedArchitectureDiagram = (mermaidCode: string) => {
   // Process the mermaid code and file info to generate a detailed diagram
   return mermaidCode;
 };

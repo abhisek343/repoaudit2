@@ -1,21 +1,7 @@
-import React, { useEffect, useRef, useState, useId } from 'react';
+import React, { useEffect, useRef, useState, useId, useCallback } from 'react';
 import mermaid from 'mermaid';
-import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Info, Layers, FileText, GitBranch, Brain, AlertTriangle } from 'lucide-react';
+import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Brain, AlertTriangle } from 'lucide-react';
 import { ExtendedFileInfo } from '../../types';
-
-export interface ExtendedFileInfo extends BaseFileInfo {
-  type: string;
-  dependencies: string[];
-  contributors: string[];
-  commitCount: number;
-  functions?: {
-    name: string;
-    complexity: number;
-    dependencies: string[];
-    calls: string[];
-    description?: string;
-  }[];
-}
 
 interface ArchitectureDiagramProps {
   diagram: string;
@@ -35,9 +21,6 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   diagram,
   title,
   description,
-  width = 800,
-  height = 600,
-  theme = 'default',
   interactive = true,
   fileInfo = {},
   showDetails = true,
@@ -51,7 +34,6 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [diagramSvg, setDiagramSvg] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<ExtendedFileInfo | null>(null);
-  const [showMetrics, setShowMetrics] = useState(true);
   const [isLLMAvailable, setIsLLMAvailable] = useState(true);
   const [detailedView, setDetailedView] = useState(false);
   const uniqueId = useId();
@@ -120,7 +102,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   }, [useLLM]);
 
   // Generate detailed diagram with LLM
-  const generateDetailedDiagram = async (baseDiagram: string) => {
+  const generateDetailedDiagram = useCallback(async (baseDiagram: string) => {
     if (!useLLM || !isLLMAvailable) {
       return baseDiagram;
     }
@@ -143,7 +125,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
       console.warn('Failed to enhance diagram with LLM:', error);
       return baseDiagram;
     }
-  };
+  }, [useLLM, isLLMAvailable, fileInfo]);
 
   // Render diagram
   useEffect(() => {
@@ -183,7 +165,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
           diagramWithClicks;
         
         // Expose the click handler to the global scope
-        (window as any)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`] = (nodeId: string) => {
+        (window as unknown as Record<string, unknown>)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`] = (nodeId: string) => {
           const nodeInfo = fileInfo[nodeId];
           if (nodeInfo) {
             setSelectedNode(nodeInfo);
@@ -239,9 +221,9 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
     return () => {
       isMounted = false;
       // Remove the global click handler
-      delete (window as any)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`];
+      delete (window as unknown as Record<string, unknown>)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`];
     };
-  }, [diagram, interactive, fileInfo, onNodeClick, uniqueId, detailedView, useLLM, isLLMAvailable]);
+  }, [diagram, interactive, fileInfo, onNodeClick, uniqueId, detailedView, useLLM, isLLMAvailable, generateDetailedDiagram]);
 
   // Handle zoom
   const handleZoom = (delta: number) => {
@@ -408,7 +390,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
             </div>
             <div>
               <p className="text-sm text-gray-600">Complexity</p>
-              <p className="font-medium">{selectedNode.complexity}</p>
+              <p className="font-medium">{selectedNode.complexity ?? 'N/A'}</p>
             </div>
             <div>
               <p className="text-sm text-gray-600">Last Modified</p>
@@ -452,11 +434,11 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
                     <div className="flex items-center justify-between">
                       <code className="text-sm font-medium text-purple-600">{func.name}</code>
                       <span className={`px-2 py-1 rounded text-xs ${
-                        func.complexity >= 70 ? 'bg-red-100 text-red-800' :
-                        func.complexity >= 50 ? 'bg-orange-100 text-orange-800' :
+                        (func.complexity || 0) >= 70 ? 'bg-red-100 text-red-800' :
+                        (func.complexity || 0) >= 50 ? 'bg-orange-100 text-orange-800' :
                         'bg-green-100 text-green-800'
                       }`}>
-                        {func.complexity}% complex
+                        {(func.complexity || 0)}% complex
                       </span>
                     </div>
                     {func.description && (
@@ -497,4 +479,4 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   );
 };
 
-export default ArchitectureDiagram; 
+export default ArchitectureDiagram;
