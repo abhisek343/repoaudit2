@@ -243,16 +243,19 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
           <div className="w-full h-full min-h-[500px]">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Dependency Network</h4>
             <DependencyGraph
- nodes={[...new Set(dependencyData.map(d => d.source))]
-   .map(id => ({ id, name: id, type: 'file', size: 1, metrics: {/* … */} }))}
-                size: 1,
-                metrics: {
-                  complexity: 0,
-                  dependencies: 1,
-                  dependents: 0,
-                  lastModified: new Date().toISOString()
-                }
-              }))}
+              nodes={[...new Set(dependencyData.map(d => d.source))]
+                .map(id => ({
+                  id,
+                  name: id,
+                  type: 'file',
+                  size: 1,
+                  metrics: {
+                    complexity: 0,
+                    dependencies: 1,
+                    dependents: 0,
+                    lastModified: new Date().toISOString()
+                  }
+                }))}
               links={dependencyData.map(dep => {
                 const vulnerabilities = dep.vulnerabilities ?? 0;
                 return {
@@ -419,7 +422,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
                   class API,Auth,Cache backend
                   class UserSvc,DataSvc,FileSvc service
                   class DB,S3 storage
-              `, fileInfo)}
+              `, Object.values(fileInfo))}
               width={800}
               height={600}
               interactive={true}
@@ -805,6 +808,11 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
       {renderContributorStats()}
     </div>
   );
+};
+
+const generateDetailedArchitectureDiagram = (mermaidCode: string, fileInfo: ExtendedFileInfo[]) => {
+  // Process the mermaid code and file info to generate a detailed diagram
+  return mermaidCode;
 };
 
 export default ArchitecturePage;

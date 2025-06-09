@@ -21,7 +21,8 @@ import {
   BarChart3,
   FileText,
   Settings,
-  Layers
+  Layers,
+  Github
 } from 'lucide-react';
 
 // Import page components
@@ -48,6 +49,14 @@ const ReportPage = () => {
     { id: 'community', title: 'Community & Contributors', icon: <Users className="w-5 h-5" />, component: CommunityPage },
     { id: 'onboarding', title: 'Onboarding & Contribution Guide', icon: <BookOpen className="w-5 h-5" />, component: OnboardingPage }
   ];
+
+  // Add Git History link
+  const gitHistoryLink = {
+    id: 'git-history',
+    title: 'Git History',
+    icon: <GitCommit className="w-5 h-5" />,
+    href: `/git-history/${repoId}`
+  };
 
   useEffect(() => {
     // Load report data from localStorage
@@ -250,6 +259,17 @@ const ReportPage = () => {
                 <span>{page.title}</span>
               </button>
             ))}
+            
+            {/* Add Git History link */}
+            <Link
+              to={gitHistoryLink.href}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors duration-200"
+            >
+              <div className="flex items-center space-x-2">
+                {gitHistoryLink.icon}
+                <span>{gitHistoryLink.title}</span>
+              </div>
+            </Link>
           </div>
         </div>
       </div>

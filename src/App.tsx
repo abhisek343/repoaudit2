@@ -4,6 +4,7 @@ import HomePage from './pages/HomePage';
 import AnalyzePage from './pages/AnalyzePage';
 import ReportPage from './pages/ReportPage';
 import DashboardPage from './pages/DashboardPage';
+import GitHistoryPage from './pages/GitHistoryPage';
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/report/:repoId" element={<ReportPage />} />
+          <Route path="/git-history/:reportId" element={<GitHistoryPage />} />
         </Routes>
       </div>
     </Router>
