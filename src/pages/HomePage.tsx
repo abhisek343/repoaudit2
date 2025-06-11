@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Github, Zap, BarChart3, Users, Code2, Settings, ArrowRight, CheckCircle, Shield, TrendingUp, Clock, Cpu } from 'lucide-react';
+import { Github, Zap, BarChart3, Users, Code2, ArrowRight, CheckCircle, Shield, TrendingUp, Clock, Cpu } from 'lucide-react';
 
 const HomePage = () => {
   const features = [
@@ -63,23 +62,23 @@ const HomePage = () => {
   const aiModels = [
     {
       provider: "OpenAI",
-      model: "GPT-4.5",
-      context: "1M+ tokens",
-      strengths: "Latest research preview, excellent reasoning",
+      model: "GPT-4o",
+      context: "128K tokens",
+      strengths: "Flagship model, fast, multimodal",
       icon: <Cpu className="w-5 h-5 text-green-500" />
     },
     {
       provider: "Google",
-      model: "Gemini 2.0 Pro",
+      model: "Gemini 1.5 Pro",
       context: "1M tokens",
-      strengths: "Flagship model, massive context",
+      strengths: "Massive context, strong reasoning",
       icon: <Clock className="w-5 h-5 text-blue-500" />
     },
     {
       provider: "Anthropic",
-      model: "Claude Opus 4",
+      model: "Claude 3.5 Sonnet",
       context: "200K tokens",
-      strengths: "Most capable model, excellent reasoning",
+      strengths: "Fast, intelligent, industry-leading vision",
       icon: <Shield className="w-5 h-5 text-purple-500" />
     }
   ];

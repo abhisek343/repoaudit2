@@ -1,20 +1,30 @@
 import React, { useEffect, useRef, useState, useId, useCallback } from 'react';
 import mermaid from 'mermaid';
-import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Brain, AlertTriangle } from 'lucide-react';
-import { ExtendedFileInfo } from '../../types';
+import { ZoomIn, ZoomOut, RefreshCw, Download, Copy, Maximize2, Minimize2, Brain, AlertTriangle, Loader2 } from 'lucide-react';
+import { FileInfo } from '../../types'; // Changed ExtendedFileInfo to FileInfo
+// Import client-side LLM helpers, these will call the backend
+import { checkLLMAvailability as checkLLMAvailabilityClient, enhanceDiagram as enhanceDiagramClient } from '../../api/llm';
+
+// Extend the Window interface to include our dynamic Mermaid click handlers
+declare global {
+  interface Window {
+    [key: `handleMermaidClick_${string}`]: (nodeId: string) => void;
+  }
+}
+
 
 interface ArchitectureDiagramProps {
   diagram: string;
   title?: string;
   description?: string;
-  width?: number;
-  height?: number;
-  theme?: 'default' | 'dark' | 'forest' | 'neutral';
+  width?: number; // These might not be directly used if SVG is responsive
+  height?: number; // These might not be directly used if SVG is responsive
   interactive?: boolean;
-  fileInfo?: Record<string, ExtendedFileInfo>;
+  fileInfo?: Record<string, FileInfo>; // Path to FileInfo - Changed ExtendedFileInfo
   showDetails?: boolean;
-  onNodeClick?: (nodeId: string, nodeInfo: ExtendedFileInfo) => void;
+  onNodeClick?: (nodeId: string, nodeInfo?: FileInfo) => void; // nodeInfo can be undefined - Changed ExtendedFileInfo
   useLLM?: boolean;
+  llmConfig?: Record<string, unknown>; // Pass LLM config for backend calls, changed any to Record<string, unknown>
 }
 
 const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
@@ -25,215 +35,181 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
   fileInfo = {},
   showDetails = true,
   onNodeClick,
-  useLLM = true
+  useLLM = true,
+  llmConfig // Receive LLM config from props
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const svgContainerRef = useRef<HTMLDivElement>(null); // For the div holding the SVG
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isEnhancing, setIsEnhancing] = useState(false); // For LLM enhancement loading
   const [error, setError] = useState<string | null>(null);
   const [diagramSvg, setDiagramSvg] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<ExtendedFileInfo | null>(null);
-  const [isLLMAvailable, setIsLLMAvailable] = useState(true);
-  const [detailedView, setDetailedView] = useState(false);
+  const [selectedNodeInfo, setSelectedNodeInfo] = useState<FileInfo | null>(null); // Changed ExtendedFileInfo
+  const [isLLMServiceAvailable, setIsLLMServiceAvailable] = useState(true); // Renamed for clarity
+  const [detailedViewActive, setDetailedViewActive] = useState(false); // Renamed for clarity
   const uniqueId = useId();
   const mermaidInitialized = useRef(false);
 
-  // Initialize mermaid
   useEffect(() => {
     if (!mermaidInitialized.current) {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'loose',
-        flowchart: {
-          htmlLabels: true,
-          curve: 'basis',
-          padding: 20,
-          useMaxWidth: false,
-        },
-        sequence: {
-          diagramMarginX: 50,
-          diagramMarginY: 10,
-          actorMargin: 50,
-          width: 150,
-          height: 65,
-          boxMargin: 10,
-          boxTextMargin: 5,
-          noteMargin: 10,
-          messageMargin: 35,
-        },
-        gantt: {
-          titleTopMargin: 25,
-          barHeight: 20,
-          barGap: 4,
-          topPadding: 50
-        },
+        flowchart: { htmlLabels: true, curve: 'basis', useMaxWidth: false },
+        // ... other mermaid configs
         themeVariables: {
           fontFamily: 'Inter, system-ui, sans-serif',
-          fontSize: '16px',
-          primaryColor: '#4299e1',
-          primaryTextColor: '#fff',
-          primaryBorderColor: '#2b6cb0',
-          lineColor: '#e2e8f0',
-          secondaryColor: '#48bb78',
-          tertiaryColor: '#ed8936',
+          fontSize: '14px', // Slightly smaller default for complex diagrams
+          // ... other theme vars
         },
       });
       mermaidInitialized.current = true;
     }
   }, []);
 
-  // Check LLM availability
   useEffect(() => {
-    if (useLLM) {
-      // Simulate LLM availability check
-      const checkLLM = async () => {
+    const checkService = async () => {
+      if (useLLM) {
         try {
-          // Replace with actual LLM availability check
-          const response = await fetch('/api/llm/check');
-          setIsLLMAvailable(response.ok);
-        } catch (error) {
-          console.warn('LLM service not available:', error);
-          setIsLLMAvailable(false);
+          // Pass llmConfig to the check if your backend /api/llm/check now requires it
+          // For now, assuming /api/llm/check doesn't need specific config for a simple ping
+          const available = await checkLLMAvailabilityClient();
+          setIsLLMServiceAvailable(available);
+        } catch (err) {
+          console.warn('LLM service availability check failed:', err);
+          setIsLLMServiceAvailable(false);
         }
-      };
-      checkLLM();
-    }
+      } else {
+        setIsLLMServiceAvailable(false);
+      }
+    };
+    checkService();
   }, [useLLM]);
 
-  // Generate detailed diagram with LLM
-  const generateDetailedDiagram = useCallback(async (baseDiagram: string) => {
-    if (!useLLM || !isLLMAvailable) {
+  const enhanceDiagramWithLLM = useCallback(async (baseDiagram: string) => {
+    if (!useLLM || !isLLMServiceAvailable || !llmConfig || !fileInfo || Object.keys(fileInfo).length === 0) {
       return baseDiagram;
     }
-
+    setIsEnhancing(true);
     try {
-      // Replace with actual LLM API call
-      const response = await fetch('/api/llm/enhance-diagram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ diagram: baseDiagram, fileInfo })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to enhance diagram with LLM');
+      // Call the client-side helper which in turn calls the backend
+      const response = await enhanceDiagramClient(baseDiagram, fileInfo); // Removed llmConfig
+      if (response.error) {
+        console.warn('Failed to enhance diagram with LLM:', response.error);
+        setError(`LLM Enhancement Failed: ${response.error}`);
+        return baseDiagram;
       }
-
-      const { enhancedDiagram } = await response.json();
-      return enhancedDiagram;
-    } catch (error) {
-      console.warn('Failed to enhance diagram with LLM:', error);
+      return response.enhancedDiagram;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error enhancing diagram';
+      console.warn('Error enhancing diagram with LLM:', errorMessage);
+      setError(`LLM Enhancement Error: ${errorMessage}`);
       return baseDiagram;
+    } finally {
+      setIsEnhancing(false);
     }
-  }, [useLLM, isLLMAvailable, fileInfo]);
+  }, [useLLM, isLLMServiceAvailable, fileInfo, llmConfig]);
 
-  // Render diagram
   useEffect(() => {
     let isMounted = true;
-    const renderDiagram = async () => {
+    const render = async () => {
+      if (!svgContainerRef.current || !diagram) {
+        setIsLoading(false);
+        return;
+      }
+      
+      setIsLoading(true);
+      setError(null);
+      setSelectedNodeInfo(null);
+
       try {
-        setIsLoading(true);
-        setError(null);
-
-        // Clean and validate diagram syntax
         const cleanDiagram = diagram.trim();
-        if (!cleanDiagram) {
-          throw new Error('Empty diagram');
-        }
+        if (!cleanDiagram) throw new Error('Diagram code is empty.');
 
-        // Generate unique ID for this diagram instance
-        const diagramId = `architecture-diagram-${uniqueId.replace(/:/g, '-')}`;
+        const diagramId = `arch-diag-${uniqueId.replace(/:/g, '-')}`;
         
-        // Add click directives to the diagram if interactive
-        let diagramWithClicks = cleanDiagram;
-        if (interactive) {
-          // Extract node IDs from the diagram
-          const nodeMatches = cleanDiagram.match(/[A-Za-z0-9]+\["[^"]+"\]/g) || [];
-          const nodeIds = nodeMatches.map(match => match.split('[')[0]);
-          
-          // Add click directives for each node
-          const clickDirectives = nodeIds.map(nodeId => 
-            `click ${nodeId} call handleMermaidClick_${uniqueId.replace(/:/g, '-')}("${nodeId}") "Click for details"`
-          ).join('\n');
-          
-          diagramWithClicks = `${cleanDiagram}\n\n${clickDirectives}`;
+        let finalDiagram = cleanDiagram;
+        if (detailedViewActive) {
+            finalDiagram = await enhanceDiagramWithLLM(cleanDiagram);
         }
-
-        // Generate detailed diagram if requested
-        const finalDiagram = detailedView ? 
-          await generateDetailedDiagram(diagramWithClicks) : 
-          diagramWithClicks;
         
-        // Expose the click handler to the global scope
-        (window as unknown as Record<string, unknown>)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`] = (nodeId: string) => {
-          const nodeInfo = fileInfo[nodeId];
-          if (nodeInfo) {
-            setSelectedNode(nodeInfo);
-            if (onNodeClick) {
-              onNodeClick(nodeId, nodeInfo);
+        // Add click handlers if interactive
+        let diagramWithClicks = finalDiagram;
+        if (interactive && Object.keys(fileInfo).length > 0) {
+            const nodeIds = Object.keys(fileInfo); // Use fileInfo keys as potential node IDs
+            const clickDirectives = nodeIds
+                .filter(nodeId => finalDiagram.includes(`"${nodeId}"`) || finalDiagram.includes(`${nodeId}[`) || finalDiagram.includes(` ${nodeId} `) || finalDiagram.includes(`(${nodeId})`)) // More robust check for node presence
+                .map(nodeId => `click ${nodeId} call handleMermaidClick_${uniqueId.replace(/:/g, '-')}("${nodeId}") "Details for ${fileInfo[nodeId]?.name || nodeId}"`)
+                .join('\n');
+            if (clickDirectives) {
+                diagramWithClicks = `${finalDiagram}\n\n%% Click Handlers\n${clickDirectives}`;
+            }
+        }
+        
+        window[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`] = (nodeId: string) => {
+          const nodeData = fileInfo[nodeId]; // nodeId should be the file path
+          if (nodeData) {
+            setSelectedNodeInfo(nodeData);
+            onNodeClick?.(nodeId, nodeData);
+          } else {
+            // If not found by path, maybe it's a conceptual node name
+            const conceptualNode = Object.values(fileInfo).find(fi => fi.name === nodeId);
+            if (conceptualNode) {
+                setSelectedNodeInfo(conceptualNode);
+                onNodeClick?.(nodeId, conceptualNode);
+            } else {
+                console.warn(`No FileInfo found for node ID: ${nodeId}`); // Changed ExtendedFileInfo
+                onNodeClick?.(nodeId, undefined);
+                setSelectedNodeInfo({ name: nodeId, path: 'N/A', size: 0, type: 'unknown' } as FileInfo); // Basic fallback - Changed ExtendedFileInfo
             }
           }
         };
-        
-        // Render diagram
-        const { svg } = await mermaid.render(diagramId, finalDiagram);
-        
+
+        const { svg } = await mermaid.render(diagramId, diagramWithClicks);
         if (!isMounted) return;
-        
-        // Create a temporary container to parse the SVG
+
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = svg;
         const svgElement = tempDiv.querySelector('svg');
-        
-        if (!svgElement) {
-          throw new Error('Failed to parse rendered SVG');
-        }
+        if (!svgElement) throw new Error('Failed to parse rendered SVG from Mermaid.');
 
-        // Set SVG attributes for proper display
         svgElement.setAttribute('width', '100%');
         svgElement.setAttribute('height', '100%');
-        svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-        
-        // Fix self-closing tags in the SVG
-        const fixedSvg = svgElement.outerHTML
-          .replace(/<br>/g, '<br/>')
-          .replace(/<br\s*>/g, '<br/>')
-          .replace(/<br\s*\/>/g, '<br/>');
-        
-        // Update the diagram SVG state
-        setDiagramSvg(fixedSvg);
+        svgElement.style.maxWidth = '100%'; // Ensure it scales down
+        // svgElement.style.maxHeight = 'calc(100vh - 200px)'; // Example constraint
+
+        setDiagramSvg(svgElement.outerHTML);
 
       } catch (err) {
         if (isMounted) {
-          console.error('Error rendering diagram:', err);
-          setError(err instanceof Error ? err.message : 'Failed to render diagram');
+          console.error('Error rendering Mermaid diagram:', err);
+          const errorMessage = err instanceof Error ? err.message : 'Failed to render diagram';
+          setError(errorMessage.length > 200 ? errorMessage.substring(0,200) + "..." : errorMessage); // Truncate long errors
+          setDiagramSvg(null); // Clear previous SVG on error
         }
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
-    renderDiagram();
+    render();
 
-    // Cleanup function
     return () => {
       isMounted = false;
-      // Remove the global click handler
-      delete (window as unknown as Record<string, unknown>)[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`];
+      delete window[`handleMermaidClick_${uniqueId.replace(/:/g, '-')}`];
     };
-  }, [diagram, interactive, fileInfo, onNodeClick, uniqueId, detailedView, useLLM, isLLMAvailable, generateDetailedDiagram]);
+  }, [diagram, interactive, fileInfo, onNodeClick, uniqueId, detailedViewActive, enhanceDiagramWithLLM]); // Add enhanceDiagramWithLLM
 
-  // Handle zoom
-  const handleZoom = (delta: number) => {
-    setZoomLevel(prev => Math.max(0.5, Math.min(2, prev + delta)));
-  };
-
-  // Handle fullscreen
+  const handleZoom = (delta: number) => setZoomLevel(prev => Math.max(0.5, Math.min(3, prev + delta)));
+  
   const toggleFullscreen = () => {
+    if (!containerRef.current) return;
     if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
+      containerRef.current.requestFullscreen().catch(err => {
+        alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
       setIsFullscreen(true);
     } else {
       document.exitFullscreen();
@@ -241,242 +217,143 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
     }
   };
 
-  // Handle download
   const handleDownload = () => {
-    if (!diagramSvg) return;
-
-    const blob = new Blob([diagramSvg], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${title || 'architecture'}-diagram.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    if (diagramSvg) {
+      const blob = new Blob([diagramSvg], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title || 'architecture-diagram'}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
-  // Handle copy
   const handleCopy = () => {
-    navigator.clipboard.writeText(diagram);
+    navigator.clipboard.writeText(diagram)
+      .then(() => alert('Diagram code copied to clipboard!'))
+      .catch(err => console.error('Failed to copy diagram code: ', err));
+  };
+  
+  const handleToggleDetailedView = () => {
+    if (isLLMServiceAvailable) {
+        setDetailedViewActive(!detailedViewActive); // This will trigger re-render via useEffect
+    }
   };
 
   return (
-    <div className="flex flex-col items-center w-full">
-      {/* Title and Description */}
+    <div className="flex flex-col items-center w-full bg-gray-50 p-4 rounded-lg shadow">
       {title && (
-        <div className="w-full mb-4 text-center">
-          <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
-          {description && (
-            <p className="mt-2 text-gray-600">{description}</p>
-          )}
+        <div className="w-full mb-3 text-center">
+          <h2 className="text-xl font-semibold text-gray-800">{title}</h2>
+          {description && <p className="mt-1 text-sm text-gray-600">{description}</p>}
         </div>
       )}
 
-      {/* Controls */}
-      <div className="w-full mb-4 flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleZoom(0.1)}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Zoom in"
-          >
-            <ZoomIn className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => handleZoom(-0.1)}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Zoom out"
-          >
-            <ZoomOut className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => setZoomLevel(1)}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Reset zoom"
-          >
-            <RefreshCw className="w-5 h-5" />
-          </button>
+      <div className="w-full mb-3 flex flex-wrap justify-between items-center gap-2 text-xs">
+        <div className="flex items-center gap-1">
+          <ControlButton onClick={() => handleZoom(0.1)} title="Zoom In"><ZoomIn /></ControlButton>
+          <ControlButton onClick={() => handleZoom(-0.1)} title="Zoom Out"><ZoomOut /></ControlButton>
+          <ControlButton onClick={() => setZoomLevel(1)} title="Reset Zoom"><RefreshCw /></ControlButton>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           {useLLM && (
-            <button
-              onClick={() => setDetailedView(!detailedView)}
-              className={`p-2 rounded-lg transition-colors duration-200 ${
-                detailedView 
-                  ? 'bg-purple-100 text-purple-600' 
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-              }`}
-              title={detailedView ? "Disable detailed view" : "Enable detailed view"}
-              disabled={!isLLMAvailable}
+            <ControlButton
+              onClick={handleToggleDetailedView}
+              active={detailedViewActive}
+              title={detailedViewActive ? "Disable AI Enhanced View" : "Enable AI Enhanced View"}
+              disabled={!isLLMServiceAvailable || isLoading || isEnhancing}
             >
-              <Brain className="w-5 h-5" />
-            </button>
+              <Brain /> {isEnhancing && <Loader2 className="animate-spin ml-1" />}
+            </ControlButton>
           )}
-          <button
-            onClick={handleDownload}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Download SVG"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <button
-            onClick={handleCopy}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title="Copy diagram code"
-          >
-            <Copy className="w-5 h-5" />
-          </button>
-          <button
-            onClick={toggleFullscreen}
-            className="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
-            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-          >
-            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
-          </button>
+          <ControlButton onClick={handleDownload} title="Download SVG"><Download /></ControlButton>
+          <ControlButton onClick={handleCopy} title="Copy Diagram Code"><Copy /></ControlButton>
+          <ControlButton onClick={toggleFullscreen} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
+            {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+          </ControlButton>
         </div>
       </div>
 
-      {/* LLM Status */}
-      {useLLM && !isLLMAvailable && (
-        <div className="w-full mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-yellow-500" />
-          <p className="text-sm text-yellow-700">
-            LLM service is not available. Using basic diagram view.
-          </p>
+      {useLLM && !isLLMServiceAvailable && (
+        <div className="w-full mb-3 p-2.5 bg-yellow-100 border border-yellow-300 rounded-md flex items-center gap-2 text-yellow-700 text-xs">
+          <AlertTriangle className="w-4 h-4" />
+          LLM service is not available for AI enhancements. Displaying basic diagram.
         </div>
       )}
 
-      {/* Diagram Container */}
       <div
-        ref={containerRef}
-        className="w-full h-full flex justify-center items-center bg-white rounded-lg border overflow-auto"
-        style={{
-          transform: `scale(${zoomLevel})`,
-          transformOrigin: 'center',
-          transition: 'transform 0.2s ease-in-out'
-        }}
+        ref={containerRef} // This ref is for fullscreen
+        className="w-full h-full flex justify-center items-center bg-white rounded-md border border-gray-200 overflow-hidden shadow-inner"
+        style={{ minHeight: '400px', maxHeight: isFullscreen ? '100vh' : '70vh' }} 
       >
-        {isLoading ? (
-          <div className="flex items-center justify-center w-full h-full">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          </div>
-        ) : error ? (
-          <div className="text-red-500 p-4">{error}</div>
-        ) : (
-          <div 
-            className="mermaid-container w-full h-full"
-            dangerouslySetInnerHTML={{ __html: diagramSvg || '' }}
-          />
-        )}
+        <div 
+            ref={svgContainerRef} // This ref for the SVG itself to apply zoom
+            className="w-full h-full transition-transform duration-200 ease-out flex items-center justify-center"
+            style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center' }}
+        >
+            {isLoading || isEnhancing ? (
+            <div className="flex flex-col items-center justify-center text-gray-500">
+                <Loader2 className="w-10 h-10 animate-spin text-indigo-500 mb-3" />
+                <p>{isEnhancing ? 'Enhancing diagram with AI...' : 'Rendering diagram...'}</p>
+            </div>
+            ) : error ? (
+            <div className="p-4 text-red-600 bg-red-50 rounded-md text-sm w-full max-w-lg text-center">
+                <AlertTriangle className="w-6 h-6 mx-auto mb-2 text-red-500" />
+                <strong>Error Rendering Diagram:</strong>
+                <p className="mt-1 text-xs break-all">{error}</p>
+                <p className="mt-2 text-xs">Try simplifying the diagram code or check console for details.</p>
+            </div>
+            ) : diagramSvg ? (
+            <div 
+                className="mermaid-diagram-wrapper w-full h-full" // Ensure this div takes up space for mermaid
+                dangerouslySetInnerHTML={{ __html: diagramSvg }}
+            />
+            ) : (
+                 <div className="text-gray-400">No diagram to display.</div>
+            )}
+        </div>
       </div>
 
-      {/* Node Details Panel */}
-      {selectedNode && showDetails && (
-        <div className="w-full mt-4 p-4 bg-white rounded-lg border shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{selectedNode.name}</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-gray-600">Path</p>
-              <p className="font-medium">{selectedNode.path}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Type</p>
-              <p className="font-medium">{selectedNode.type}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Size</p>
-              <p className="font-medium">{selectedNode.size} bytes</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Complexity</p>
-              <p className="font-medium">{selectedNode.complexity ?? 'N/A'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Last Modified</p>
-              <p className="font-medium">{selectedNode.lastModified ? new Date(selectedNode.lastModified).toLocaleDateString() : 'N/A'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Commit Count</p>
-              <p className="font-medium">{selectedNode.commitCount}</p>
-            </div>
+      {selectedNodeInfo && showDetails && (
+        <div className="w-full mt-4 p-4 bg-white rounded-lg border border-gray-200 shadow-sm text-xs">
+          <h3 className="text-sm font-semibold text-gray-800 mb-2">{selectedNodeInfo.name}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <DetailItem label="Path" value={selectedNodeInfo.path} />
+            <DetailItem label="Type" value={selectedNodeInfo.type || 'N/A'} />
+            <DetailItem label="Size" value={`${selectedNodeInfo.size.toLocaleString()} bytes`} />
+            <DetailItem label="Complexity" value={`${selectedNodeInfo.complexity || 'N/A'}%`} />
+            {selectedNodeInfo.lastModified && <DetailItem label="Last Modified" value={new Date(selectedNodeInfo.lastModified).toLocaleDateString()} />}
+            {selectedNodeInfo.commitCount !== undefined && <DetailItem label="Commit Count" value={selectedNodeInfo.commitCount.toString()} />}
           </div>
-          {selectedNode.dependencies && selectedNode.dependencies.length > 0 && (
-            <div className="mt-4">
-              <p className="text-sm text-gray-600 mb-2">Dependencies</p>
-              <div className="flex flex-wrap gap-2">
-                {selectedNode.dependencies.map((dep, index) => (
-                  <span key={index} className="px-2 py-1 bg-gray-100 rounded text-sm">
-                    {dep}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {selectedNode.contributors && selectedNode.contributors.length > 0 && (
-            <div className="mt-4">
-              <p className="text-sm text-gray-600 mb-2">Contributors</p>
-              <div className="flex flex-wrap gap-2">
-                {selectedNode.contributors.map((contributor, index) => (
-                  <span key={index} className="px-2 py-1 bg-gray-100 rounded text-sm">
-                    {contributor}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {selectedNode.functions && selectedNode.functions.length > 0 && (
-            <div className="mt-4">
-              <p className="text-sm text-gray-600 mb-2">Functions</p>
-              <div className="space-y-2">
-                {selectedNode.functions.map((func, index) => (
-                  <div key={index} className="p-2 bg-gray-50 rounded">
-                    <div className="flex items-center justify-between">
-                      <code className="text-sm font-medium text-purple-600">{func.name}</code>
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        (func.complexity || 0) >= 70 ? 'bg-red-100 text-red-800' :
-                        (func.complexity || 0) >= 50 ? 'bg-orange-100 text-orange-800' :
-                        'bg-green-100 text-green-800'
-                      }`}>
-                        {(func.complexity || 0)}% complex
-                      </span>
-                    </div>
-                    {func.description && (
-                      <p className="text-sm text-gray-600 mt-1">{func.description}</p>
-                    )}
-                    {func.dependencies && func.dependencies.length > 0 && (
-                      <div className="mt-1">
-                        <p className="text-xs text-gray-500">Dependencies:</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {func.dependencies.map((dep, i) => (
-                            <span key={i} className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">
-                              {dep}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {func.calls && func.calls.length > 0 && (
-                      <div className="mt-1">
-                        <p className="text-xs text-gray-500">Calls:</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {func.calls.map((call, i) => (
-                            <span key={i} className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">
-                              {call}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Add more details like dependencies, contributors, functions if needed */}
         </div>
       )}
     </div>
   );
 };
+
+const ControlButton: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> & {active?: boolean; children: React.ReactNode}> = 
+({ children, active, ...props }) => (
+    <button
+        {...props}
+        className={`p-1.5 rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1
+            ${active ? 'bg-indigo-100 text-indigo-600' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}
+            ${props.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+    >
+        {React.Children.map(children, child => 
+            React.isValidElement(child) ? React.cloneElement(child as React.ReactElement, { className: "w-4 h-4" }) : child
+        )}
+    </button>
+);
+
+const DetailItem: React.FC<{label:string; value:string | number}> = ({label, value}) => (
+    <div>
+        <p className="text-gray-500">{label}</p>
+        <p className="font-medium text-gray-700 truncate" title={String(value)}>{value}</p>
+    </div>
+);
 
 export default ArchitectureDiagram;

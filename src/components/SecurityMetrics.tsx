@@ -1,84 +1,109 @@
 import React from 'react';
-import { SecurityConfig } from '../config/security';
-import { defaultSecurityConfig } from '../config/security';
+import { SecurityConfig } from '../config/security.config';
+// We'll derive metrics from AnalysisResult, not pass currentMetrics directly
+import { AnalysisResult } from '../types'; 
+import { ShieldAlert, Server, Lock, FileWarning } from 'lucide-react'; // Removed ShieldCheck, Clock, ListChecks
 
 interface SecurityMetricsProps {
-  config: SecurityConfig;
-  currentMetrics: {
-    activeConnections: number;
-    blockedRequests: number;
-    totalRequests: number;
-    averageResponseTime: number;
-    lastSecurityScan: Date;
-  };
+  config: SecurityConfig; // Default config for display of rules
+  reportData: Pick<AnalysisResult, 'securityIssues' | 'metrics'>; // Pass necessary parts of reportData
 }
 
-export const SecurityMetricsDisplay: React.FC<SecurityMetricsProps> = ({ config, currentMetrics }) => {
-  const getStatusColor = (value: number, threshold: number, isLowerBetter: boolean = false) => {
-    if (isLowerBetter) {
-      return value <= threshold ? 'text-green-500' : 'text-yellow-500';
-    }
-    return value >= threshold ? 'text-green-500' : 'text-yellow-500';
-  };
+export const SecurityMetricsDisplay: React.FC<SecurityMetricsProps> = ({ config, reportData }) => {
+  const { securityIssues, metrics } = reportData;
 
-  const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    }).format(date);
+  const criticalIssues = securityIssues?.filter(issue => issue.severity === 'critical').length || 0;
+  const highIssues = securityIssues?.filter(issue => issue.severity === 'high').length || 0;
+  const mediumIssues = securityIssues?.filter(issue => issue.severity === 'medium').length || 0;
+  const lowIssues = securityIssues?.filter(issue => issue.severity === 'low').length || 0;
+  // const totalIssues = criticalIssues + highIssues + mediumIssues + lowIssues; // Removed unused variable
+  
+  // securityScore from metrics is the overall score
+  const securityScore = metrics.securityScore || 0;
+
+  const getScoreColor = (score: number): string => {
+    if (score >= 8) return 'text-green-600';
+    if (score >= 5) return 'text-yellow-600';
+    return 'text-red-600';
   };
+  const scoreColor = getScoreColor(securityScore);
+
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-md">
-      <h2 className="text-xl font-bold mb-4">Security Metrics</h2>
+    <div className="p-6 bg-white rounded-xl shadow-lg border border-gray-100">
+      <h2 className="text-xl font-bold mb-6 text-gray-800 flex items-center">
+        <ShieldAlert className="w-6 h-6 mr-3 text-red-500" />
+        Security Posture
+      </h2>
       
-      <div className="grid grid-cols-2 gap-4">
-        <div className="p-3 bg-gray-50 rounded">
-          <h3 className="font-semibold">Rate Limiting</h3>
-          <p className={getStatusColor(currentMetrics.activeConnections, config.rateLimit, true)}>
-            Active Connections: {currentMetrics.activeConnections} / {config.rateLimit}
-          </p>
-          <p className="text-sm text-gray-600">
-            Blocked Requests: {currentMetrics.blockedRequests}
-          </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 mb-6">
+        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="font-semibold text-sm text-gray-700 mb-2">Overall Security Score</h3>
+            <div className="flex items-center">
+                <p className={`text-4xl font-bold ${scoreColor}`}>{securityScore.toFixed(1)}</p>
+                <span className={`text-sm ml-1 ${scoreColor}`}>/ 10</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Based on identified issues and configuration.</p>
         </div>
 
-        <div className="p-3 bg-gray-50 rounded">
-          <h3 className="font-semibold">Request Statistics</h3>
-          <p>Total Requests: {currentMetrics.totalRequests}</p>
-          <p>Average Response Time: {currentMetrics.averageResponseTime}ms</p>
-        </div>
-
-        <div className="p-3 bg-gray-50 rounded">
-          <h3 className="font-semibold">File Upload Security</h3>
-          <p>Max File Size: {(config.maxFileSize / (1024 * 1024)).toFixed(2)} MB</p>
-          <p>Allowed Types: {config.allowedFileTypes.join(', ')}</p>
-        </div>
-
-        <div className="p-3 bg-gray-50 rounded">
-          <h3 className="font-semibold">Session Security</h3>
-          <p>Session Timeout: {config.sessionTimeout / (60 * 1000)} minutes</p>
-          <p>Last Security Scan: {formatDate(currentMetrics.lastSecurityScan)}</p>
-        </div>
-
-        <div className="p-3 bg-gray-50 rounded col-span-2">
-          <h3 className="font-semibold">CORS Configuration</h3>
-          <p>Allowed Origins:</p>
-          <ul className="list-disc list-inside text-sm text-gray-600">
-            {config.corsOrigins.map((origin: string, index: number) => (
-              <li key={index}>{origin}</li>
-            ))}
-          </ul>
+        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h3 className="font-semibold text-sm text-gray-700 mb-2">Identified Issues</h3>
+           <div className="space-y-1 text-xs">
+                <IssuePill count={criticalIssues} label="Critical" color="bg-red-600" />
+                <IssuePill count={highIssues} label="High" color="bg-orange-500" />
+                <IssuePill count={mediumIssues} label="Medium" color="bg-yellow-500" />
+                <IssuePill count={lowIssues} label="Low" color="bg-blue-500" />
+           </div>
         </div>
       </div>
 
-      <div className="mt-4 text-sm text-gray-600">
-        <p>Legend:</p>
-        <ul className="list-disc list-inside">
-          <li className="text-green-500">Within acceptable range</li>
-          <li className="text-yellow-500">Approaching threshold</li>
-        </ul>
+      <div className="space-y-4">
+        <ConfigSection title="Rate Limiting (Default Config)" icon={<Server className="w-4 h-4 text-indigo-500"/>}>
+          <ConfigItem label="Max Requests" value={`${config.rateLimit.max} / ${config.rateLimit.windowMs / 60000} min`} />
+        </ConfigSection>
+
+        <ConfigSection title="File Upload Security (Default Config)" icon={<FileWarning className="w-4 h-4 text-indigo-500"/>}>
+          <ConfigItem label="Max File Size" value={`${(config.fileUpload.maxSize / (1024 * 1024)).toFixed(1)} MB`} />
+          <ConfigItem label="Allowed Types" value={config.fileUpload.allowedTypes.join(', ')} truncate />
+        </ConfigSection>
+
+        <ConfigSection title="Password Policy (Default Config)" icon={<Lock className="w-4 h-4 text-indigo-500"/>}>
+          <ConfigItem label="Min Length" value={config.password.minLength.toString()} />
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
+            {config.password.requireUppercase && <span>Uppercase</span>}
+            {config.password.requireLowercase && <span>Lowercase</span>}
+            {config.password.requireNumbers && <span>Numbers</span>}
+            {config.password.requireSpecialChars && <span>Special Chars</span>}
+          </div>
+        </ConfigSection>
+      </div>
+
+      <div className="mt-6 text-xs text-gray-500">
+        <p>Displayed configurations are defaults. Actual runtime security depends on implementation.</p>
       </div>
     </div>
   );
-}; 
+};
+
+const ConfigSection: React.FC<{title: string; icon: React.ReactNode; children: React.ReactNode}> = ({title, icon, children}) => (
+    <div className="p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
+        <h4 className="font-medium text-xs text-indigo-700 mb-2 flex items-center">
+            {icon} <span className="ml-1.5">{title}</span>
+        </h4>
+        <div className="space-y-1">{children}</div>
+    </div>
+);
+
+const ConfigItem: React.FC<{label: string; value: string; truncate?: boolean}> = ({label, value, truncate}) => (
+    <div className="flex justify-between items-center text-xs">
+        <span className="text-gray-600">{label}:</span>
+        <span className={`font-medium text-gray-800 ${truncate ? 'truncate max-w-[50%]' : ''}`} title={truncate ? value : undefined}>{value}</span>
+    </div>
+);
+
+const IssuePill: React.FC<{count:number; label:string; color:string}> = ({count, label, color}) => (
+    <div className="flex justify-between items-center">
+        <span className="text-gray-600">{label}:</span>
+        <span className={`px-2 py-0.5 text-white rounded-full text-[0.65rem] font-semibold ${color}`}>{count}</span>
+    </div>
+);

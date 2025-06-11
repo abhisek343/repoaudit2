@@ -1,13 +1,9 @@
-import React from 'react';
-import { Code2, ArrowRight, GitBranch, TrendingUp } from 'lucide-react';
+import { Code2, Info, Cpu } from 'lucide-react'; // Added Info, Cpu, removed ArrowRight, GitBranch, TrendingUp
+import { AnalysisResult } from '../types'; // Import AnalysisResult
 
 interface KeyFunctionAnalysisProps {
-  keyFunctions?: Array<{
-    name: string;
-    file: string;
-    explanation: string;
-    complexity: number;
-  }>;
+  // Pass only the relevant part of reportData
+  keyFunctions?: AnalysisResult['keyFunctions'];
 }
 
 const KeyFunctionAnalysis = ({ keyFunctions }: KeyFunctionAnalysisProps) => {
@@ -18,12 +14,12 @@ const KeyFunctionAnalysis = ({ keyFunctions }: KeyFunctionAnalysisProps) => {
           <Code2 className="w-6 h-6 text-purple-500 mr-3" />
           Key Function Analysis
         </h3>
-
-        <div className="text-center py-12">
-          <Code2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h4 className="text-lg font-medium text-gray-500 mb-2">No Functions Analyzed</h4>
-          <p className="text-gray-400">
-            Configure an AI provider in settings to enable detailed function analysis.
+        <div className="text-center py-12 text-gray-500">
+          <Info className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h4 className="text-lg font-medium mb-2">No Key Functions Identified</h4>
+          <p className="text-sm">
+            AI-powered key function analysis was not performed or did not identify specific functions.
+            This may require LLM configuration.
           </p>
         </div>
       </div>
@@ -31,140 +27,74 @@ const KeyFunctionAnalysis = ({ keyFunctions }: KeyFunctionAnalysisProps) => {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-100">
+    <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-gray-100">
       <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
         <Code2 className="w-6 h-6 text-purple-500 mr-3" />
-        Key Function Analysis
+        AI-Identified Key Functions & Modules
       </h3>
 
-      <div className="space-y-8">
+      <div className="space-y-6">
         {keyFunctions.map((func, index) => (
-          <div key={index} className="border border-gray-200 rounded-xl p-6 hover:border-purple-300 transition-colors duration-200">
-            <div className="grid lg:grid-cols-2 gap-8">
-              {/* Function Description */}
-              <div>
-                <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-6 mb-6 border-l-4 border-purple-500">
-                  <h4 className="text-lg font-semibold text-gray-900 mb-2">
-                    <code className="text-purple-600">{func.name}</code>
-                  </h4>
-                  <p className="text-sm text-gray-600 mb-2">
-                    in <span className="font-mono text-gray-800">{func.file}</span>
-                  </p>
-                  <div className="flex items-center space-x-4 text-sm">
-                    <div className="flex items-center">
-                      <span className="text-gray-600">Complexity:</span>
-                      <span className={`ml-2 font-semibold ${
-                        func.complexity >= 70 ? 'text-red-600' :
-                        func.complexity >= 50 ? 'text-orange-600' :
-                        'text-green-600'
-                      }`}>
-                        {func.complexity}%
-                      </span>
+          <div key={index} className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition-shadow duration-200 bg-gray-50/50">
+            <div className="grid lg:grid-cols-3 gap-6">
+              {/* Function Info & Explanation */}
+              <div className="lg:col-span-2">
+                <div className="flex items-start space-x-3 mb-3">
+                    <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+                        <Cpu className="w-5 h-5" />
                     </div>
-                  </div>
+                    <div>
+                        <h4 className="text-md font-semibold text-gray-800">
+                            <code className="text-purple-700 bg-purple-50 px-1 rounded">{func.name}</code>
+                        </h4>
+                        <p className="text-xs text-gray-500 truncate" title={func.path || func.file}>
+                            In: <span className="font-mono">{func.path || func.file}</span>
+                        </p>
+                    </div>
                 </div>
 
-                <div className="prose prose-sm max-w-none">
-                  <h5 className="font-semibold text-gray-900 mb-3">AI Analysis:</h5>
-                  <div className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                    {func.explanation}
-                  </div>
+                <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
+                  <p className="line-clamp-4" title={func.explanation}>{func.explanation}</p>
                 </div>
               </div>
 
-              {/* Complexity Visualization */}
-              <div>
-                <h5 className="text-lg font-semibold text-gray-900 mb-4">
-                  Complexity Breakdown
+              {/* Complexity & Metrics */}
+              <div className="lg:col-span-1">
+                <h5 className="text-sm font-semibold text-gray-700 mb-2">
+                  Metrics
                 </h5>
-                
-                <div className="space-y-4">
-                  {/* Complexity Score */}
-                  <div className="relative">
-                    <div className="flex justify-between text-sm mb-2">
-                      <span className="text-gray-600">Overall Complexity</span>
-                      <span className="font-semibold">{func.complexity}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div 
-                        className={`h-3 rounded-full transition-all duration-500 ${
-                          func.complexity >= 70 ? 'bg-red-500' :
-                          func.complexity >= 50 ? 'bg-orange-500' :
-                          'bg-green-500'
-                        }`}
-                        style={{ width: `${func.complexity}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* Risk Assessment */}
-                  <div className={`p-4 rounded-lg border-l-4 ${
-                    func.complexity >= 70 ? 'bg-red-50 border-red-400' :
-                    func.complexity >= 50 ? 'bg-yellow-50 border-yellow-400' :
-                    'bg-green-50 border-green-400'
-                  }`}>
-                    <h6 className={`font-medium mb-2 ${
-                      func.complexity >= 70 ? 'text-red-800' :
-                      func.complexity >= 50 ? 'text-yellow-800' :
-                      'text-green-800'
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between p-2 bg-white rounded-md border">
+                    <span className="text-gray-600">Complexity Score:</span>
+                    <span className={`font-bold ${
+                      func.complexity >= 70 ? 'text-red-600' :
+                      func.complexity >= 50 ? 'text-orange-600' :
+                      'text-green-600'
                     }`}>
-                      {func.complexity >= 70 ? 'High Complexity' :
-                       func.complexity >= 50 ? 'Medium Complexity' :
-                       'Low Complexity'}
-                    </h6>
-                    <p className={`text-sm ${
-                      func.complexity >= 70 ? 'text-red-700' :
-                      func.complexity >= 50 ? 'text-yellow-700' :
-                      'text-green-700'
-                    }`}>
-                      {func.complexity >= 70 ? 
-                        'This function may benefit from refactoring to improve maintainability.' :
-                       func.complexity >= 50 ? 
-                        'Consider monitoring this function for potential improvements.' :
-                        'This function appears well-structured and maintainable.'}
-                    </p>
+                      {func.complexity}%
+                    </span>
                   </div>
-
-                  {/* Simple Flow Diagram */}
-                  <div className="bg-gray-50 rounded-xl p-4">
-                    <h6 className="font-medium text-gray-900 mb-3">Function Flow</h6>
-                    <div className="space-y-3">
-                      <div className="flex items-center p-2 bg-white rounded-lg shadow-sm">
-                        <div className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3">
-                          1
-                        </div>
-                        <span className="text-sm text-gray-800">Input Processing</span>
-                      </div>
-                      
-                      <div className="flex justify-center">
-                        <ArrowRight className="w-4 h-4 text-gray-400" />
-                      </div>
-
-                      <div className="flex items-center p-2 bg-white rounded-lg shadow-sm">
-                        <div className="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3">
-                          2
-                        </div>
-                        <span className="text-sm text-gray-800">Core Logic</span>
-                      </div>
-
-                      <div className="flex justify-center">
-                        <ArrowRight className="w-4 h-4 text-gray-400" />
-                      </div>
-
-                      <div className="flex items-center p-2 bg-white rounded-lg shadow-sm">
-                        <div className="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3">
-                          3
-                        </div>
-                        <span className="text-sm text-gray-800">Return Result</span>
-                      </div>
+                  {func.linesOfCode && (
+                    <div className="flex justify-between p-2 bg-white rounded-md border">
+                        <span className="text-gray-600">Lines of Code:</span>
+                        <span className="font-medium text-gray-800">{func.linesOfCode}</span>
                     </div>
-                  </div>
+                  )}
+                  {func.performance && (
+                     <div className="p-2 bg-white rounded-md border">
+                        <p className="text-gray-600"><span className="font-medium">Est. Runtime:</span> {func.performance.estimatedRuntime}</p>
+                        <p className="text-gray-600"><span className="font-medium">Big O:</span> {func.performance.complexity}</p>
+                     </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         ))}
       </div>
+       {keyFunctions.length === 0 && (
+            <p className="text-center text-gray-500 py-5">LLM did not identify specific key functions from the provided data.</p>
+        )}
     </div>
   );
 };

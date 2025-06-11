@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X, Key, Settings, Eye, EyeOff, Zap, Clock, AlertTriangle, CheckCircle } from 'lucide-react'; // Removed DollarSign
+import { useState, useEffect, useCallback } from 'react';
+import { X, Key, Settings, Eye, EyeOff, Zap, Clock, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react'; // Removed DollarSign, Added Loader2
 import { LLMConfig } from '../types';
+import { debounce } from 'lodash';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -18,13 +19,94 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
   const [showApiKey, setShowApiKey] = useState(false);
   const [showGithubToken, setShowGithubToken] = useState(false);
 
+  const [githubTokenStatus, setGithubTokenStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
+  const [githubTokenError, setGithubTokenError] = useState<string | null>(null);
+  const [llmConfigStatus, setLlmConfigStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
+  const [llmConfigError, setLlmConfigError] = useState<string | null>(null);
+
+  const validateGithubToken = useCallback(async (token: string) => {
+    if (!token.trim()) {
+      setGithubTokenStatus('idle');
+      setGithubTokenError(null);
+      return;
+    }
+    setGithubTokenStatus('validating');
+    setGithubTokenError(null);
+    try {
+      const response = await fetch('/api/validate-github-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await response.json();
+      if (response.ok && data.isValid) {
+        setGithubTokenStatus('valid');
+      } else {
+        setGithubTokenStatus('invalid');
+        setGithubTokenError(data.error || 'Invalid GitHub token.');
+      }
+    } catch (error) {
+      setGithubTokenStatus('invalid');
+      setGithubTokenError('Failed to validate GitHub token.');
+      console.error('GitHub token validation error:', error);
+    }
+  }, []);
+
+  const validateLlmConfig = useCallback(async (config: LLMConfig) => {
+    if (!config.apiKey.trim()) {
+      setLlmConfigStatus('idle');
+      setLlmConfigError(null);
+      return;
+    }
+    setLlmConfigStatus('validating');
+    setLlmConfigError(null);
+    try {
+      const response = await fetch('/api/validate-llm-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ llmConfig: config }),
+      });
+      const data = await response.json();
+      if (response.ok && data.isValid) {
+        setLlmConfigStatus('valid');
+      } else {
+        setLlmConfigStatus('invalid');
+        setLlmConfigError(data.error || `Invalid API key for ${config.provider}.`);
+      }
+    } catch (error) {
+      setLlmConfigStatus('invalid');
+      setLlmConfigError(`Failed to validate API key for ${config.provider}.`);
+      console.error('LLM key validation error:', error);
+    }
+  }, []);
+
+  const debouncedValidateGithubToken = useCallback(debounce(validateGithubToken, 500), [validateGithubToken]);
+  const debouncedValidateLlmConfig = useCallback(debounce(validateLlmConfig, 500), [validateLlmConfig]);
+
+  useEffect(() => {
+    if (githubToken) {
+      debouncedValidateGithubToken(githubToken);
+    } else {
+      setGithubTokenStatus('idle');
+      setGithubTokenError(null);
+    }
+  }, [githubToken, debouncedValidateGithubToken]);
+
+  useEffect(() => {
+    if (apiKey && provider) {
+      debouncedValidateLlmConfig({ provider, apiKey, model: model || getDefaultModel(provider) });
+    } else {
+      setLlmConfigStatus('idle');
+      setLlmConfigError(null);
+    }
+  }, [apiKey, provider, model, debouncedValidateLlmConfig]);
+
+
   useEffect(() => {
     if (currentConfig) {
       const currentProvider = currentConfig.provider;
       if (currentProvider === 'openai' || currentProvider === 'claude' || currentProvider === 'gemini') {
         setProvider(currentProvider);
-      } else if (currentProvider === 'google') { // Map old 'google' to 'gemini'
-        setProvider('gemini'); 
       } else {
         setProvider('openai'); // Default
       }
@@ -45,7 +127,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
     const config: LLMConfig = {
       provider,
       apiKey: apiKey.trim(),
-      model: model.trim() || undefined
+      model: model.trim() || getDefaultModel(provider) // Ensure a default model is always set
     };
 
     onSave(config, githubToken.trim() || undefined);
@@ -61,90 +143,38 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
     }
   };
 
-  const getModelOptions = (provider: string) => {
-    switch (provider) {
-      case 'openai':
-        return [
-          {
-            value: 'gpt-4.5',
-            label: 'GPT-4.5 (Pro)',
-            context: '1M+ tokens',
-            pros: 'Latest model, massive context',
-            cons: 'Research preview, may have limited availability'
-          },
-          {
-            value: 'gpt-4.1-nano',
-            label: 'GPT-4.1 Nano (Flash)',
-            context: '128K tokens',
-            pros: 'Most cost-effective option',
-            cons: 'Limited capabilities for complex tasks'
-          }
-        ];
-      case 'gemini':
-        return [
-          {
-            value: 'gemini-2.5-pro-preview-06-05',
-            label: 'Gemini 2.5 Pro',
-            context: '1M tokens',
-            pros: 'Flagship model, massive context, multimodal',
-            cons: 'Higher cost than Flash'
-          },
-          {
-            value: 'gemini-2.5-flash-preview-05-20',
-            label: 'Gemini 2.5 Flash',
-            context: '1M tokens',
-            pros: 'Very fast and cost-effective, great for most tasks',
-            cons: 'Slightly less capable than Pro for complex reasoning'
-          }
-        ];
-      case 'claude':
-        return [
-          {
-            value: 'claude-opus-4',
-            label: 'Claude Opus 4 (Pro)',
-            context: '200K tokens',
-            pros: 'Most capable model, excellent reasoning',
-            cons: 'Most expensive, smaller context'
-          },
-          {
-            value: 'claude-sonnet-4',
-            label: 'Claude Sonnet 4 (Flash)',
-            context: '200K tokens',
-            pros: 'Efficient yet solid analysis',
-            cons: 'Less capable than Opus for complex tasks'
-          }
-        ];
-      default:
-        return [];
-    }
-  };
+const getModelOptions = (provider: string) => {
+  switch (provider) {
+    case 'openai':
+      return [
+        { value: 'gpt-4o', label: 'GPT-4o (Recommended)', context: '128K tokens', pros: 'Flagship model, fast, multimodal', cons: 'Slightly higher cost' },
+        { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', context: '128K tokens', pros: 'High accuracy, good for complex tasks', cons: 'Slower than GPT-4o' },
+        { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', context: '16K tokens', pros: 'Very fast and cost-effective', cons: 'Less capable for complex reasoning' }
+      ];
+    case 'gemini':
+      return [
+        { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (Recommended)', context: '1M tokens', pros: 'Massive context, multimodal, strong reasoning', cons: 'Higher latency' },
+        { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash', context: '1M tokens', pros: 'Very fast and cost-effective, large context', cons: 'Slightly less capable than Pro' }
+      ];
+    case 'claude':
+      return [
+        { value: 'claude-3-5-sonnet-20240620', label: 'Claude 3.5 Sonnet (Recommended)', context: '200K tokens', pros: 'Fast, intelligent, industry-leading vision', cons: 'Newer model' },
+        { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', context: '200K tokens', pros: 'Most powerful model for complex analysis', cons: 'Higher cost and latency' },
+        { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku', context: '200K tokens', pros: 'Fastest and most compact model', cons: 'Best for simpler, quick tasks' }
+      ];
+    default:
+      return [];
+  }
+};
 
   const getProviderInfo = (provider: string) => {
     switch (provider) {
       case 'openai':
-        return {
-          name: 'OpenAI',
-          description: 'GPT models for high-quality text generation and analysis',
-          keyUrl: 'https://platform.openai.com/api-keys',
-          maxContext: 'Up to 1M tokens',
-          strengths: 'Best overall performance, reliable API'
-        };
-      case 'gemini': 
-        return {
-          name: 'Google Gemini',
-          description: 'Access Google\'s Gemini models for advanced AI capabilities.',
-          keyUrl: 'https://aistudio.google.com/app/apikey',
-          maxContext: 'Up to 1M tokens (Pro/Flash)',
-          strengths: 'Fast, cost-effective, multimodal capabilities'
-        };
+        return { name: 'OpenAI', description: 'Access GPT models for high-quality text generation.', keyUrl: 'https://platform.openai.com/api-keys', maxContext: '128K tokens', strengths: 'Strong overall performance' };
+      case 'gemini':
+        return { name: 'Google Gemini', description: 'Access Gemini models for advanced AI capabilities.', keyUrl: 'https://aistudio.google.com/app/apikey', maxContext: 'Up to 1M tokens', strengths: 'Large context, multimodal' };
       case 'claude':
-        return {
-          name: 'Anthropic Claude',
-          description: 'Claude models for safe, helpful, and honest AI assistance',
-          keyUrl: 'https://console.anthropic.com/account/keys',
-          maxContext: '200K tokens',
-          strengths: 'Excellent for code analysis, safety-focused'
-        };
+        return { name: 'Anthropic Claude', description: 'Access Claude models for safe, helpful AI assistance.', keyUrl: 'https://console.anthropic.com/account/keys', maxContext: '200K tokens', strengths: 'Excellent for code analysis' };
       default:
         return { name: '', description: '', keyUrl: '', maxContext: '', strengths: '' };
     }
@@ -216,8 +246,13 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
                     value={githubToken}
                     onChange={(e) => setGithubToken(e.target.value)}
                     placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 pr-12"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 pr-20"
                   />
+                  <div className="absolute right-10 top-1/2 transform -translate-y-1/2">
+                    {githubTokenStatus === 'validating' && <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />}
+                    {githubTokenStatus === 'valid' && <CheckCircle className="w-5 h-5 text-green-500" />}
+                    {githubTokenStatus === 'invalid' && <AlertTriangle className="w-5 h-5 text-red-500" />}
+                  </div>
                   <button
                     type="button"
                     onClick={() => setShowGithubToken(!showGithubToken)}
@@ -226,6 +261,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
                     {showGithubToken ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
+                {githubTokenError && <p className="text-xs text-red-500 mt-1">{githubTokenError}</p>}
                 
                 <div className="mt-3 text-xs text-gray-600">
                   <p className="mb-2">
@@ -292,9 +328,14 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="Enter your API key..."
-                className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full pl-10 pr-20 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 required
               />
+              <div className="absolute right-10 top-1/2 transform -translate-y-1/2">
+                {llmConfigStatus === 'validating' && <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />}
+                {llmConfigStatus === 'valid' && <CheckCircle className="w-5 h-5 text-green-500" />}
+                {llmConfigStatus === 'invalid' && <AlertTriangle className="w-5 h-5 text-red-500" />}
+              </div>
               <button
                 type="button"
                 onClick={() => setShowApiKey(!showApiKey)}
@@ -314,6 +355,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
                 {providerInfo.name} dashboard
               </a>
             </p>
+            {llmConfigError && <p className="text-xs text-red-500 mt-1">{llmConfigError}</p>}
           </div>
 
           {/* Model Selection */}

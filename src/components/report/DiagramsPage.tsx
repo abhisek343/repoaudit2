@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   BarChart3, 
   GitBranch, 
@@ -8,9 +8,19 @@ import {
   Network,
   FileText,
   Activity,
-  Zap
+  Shuffle, 
+  Users, 
+  Route, 
+  GitCommit, 
+  GitMerge, 
+  ListChecks,
+  LayoutList,
+  AlertTriangle,
+  ShieldCheck,
+  Eye
 } from 'lucide-react';
-import { AnalysisResult } from '../../types';
+import { AnalysisResult, PRPhase, ChurnNode as GlobalChurnNode, FileNode } from '../../types';
+import { RouteNode } from '../diagrams/APIRouteTree'; // Import RouteNode
 
 // Import diagram components
 import ComponentDependencyWheel from '../diagrams/ComponentDependencyWheel';
@@ -19,300 +29,299 @@ import APIRouteTree from '../diagrams/APIRouteTree';
 import FeatureFileMatrix from '../diagrams/FeatureFileMatrix';
 import CodeChurnSunburst from '../diagrams/CodeChurnSunburst';
 import TemporalCouplingGraph from '../diagrams/TemporalCouplingGraph';
-import ContributorStreamgraph from '../diagrams/ContributorStreamgraph';
+import ContributorStreamgraph from '../diagrams/ContributorStreamgraph'; 
 import DataTransformationSankey from '../diagrams/DataTransformationSankey';
 import PRLifecycleGantt from '../diagrams/PRLifecycleGantt';
+import { CheckCircle } from 'lucide-react'; 
 
 interface DiagramsPageProps {
   reportData: AnalysisResult;
 }
 
+// Helper to get icon component from string name
+const getIconComponent = (iconName: string | React.ReactNode): React.ReactNode => {
+  if (React.isValidElement(iconName)) return iconName;
+  switch (iconName as string) {
+    case 'FileText': return <FileText className="w-4 h-4" />;
+    case 'Users': return <Users className="w-4 h-4" />;
+    case 'GitBranch': return <GitBranch className="w-4 h-4" />;
+    case 'BarChart3': return <BarChart3 className="w-4 h-4" />;
+    case 'Layers': return <Layers className="w-4 h-4" />;
+    case 'Shuffle': return <Shuffle className="w-4 h-4" />;
+    case 'TrendingUp': return <TrendingUp className="w-4 h-4" />;
+    case 'LayoutList': return <LayoutList className="w-4 h-4" />;
+    case 'Clock': return <Clock className="w-4 h-4" />;
+    case 'Activity': return <Activity className="w-4 h-4" />;
+    case 'AlertTriangle': return <AlertTriangle className="w-4 h-4" />;
+    case 'ShieldCheck': return <ShieldCheck className="w-4 h-4" />;
+    case 'Eye': return <Eye className="w-4 h-4" />;
+    case 'Network': return <Network className="w-4 h-4" />;
+    case 'Route': return <Route className="w-4 h-4" />;
+    case 'GitCommit': return <GitCommit className="w-4 h-4" />;
+    case 'GitMerge': return <GitMerge className="w-4 h-4" />;
+    case 'ListChecks': return <ListChecks className="w-4 h-4" />;
+    case 'CheckCircle': return <CheckCircle className="w-4 h-4" />;
+    default: return <LayoutList className="w-4 h-4" />;
+  }
+};
+
 const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
   const [selectedDiagram, setSelectedDiagram] = useState('dependency-wheel');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  // Use actual data from reportData with proper fallbacks
+  const {
+    dependencyWheelData = [],
+    fileSystemTree,
+    apiEndpoints = [],
+    featureFileMatrixData,
+    churnSunburstData,
+    temporalCouplingData,
+    contributorStreamData = [],
+    dataTransformationSankey,
+    prLifecycleData,
+    files = [],
+    dependencies = { dependencies: {}, devDependencies: {} }
+  } = reportData;
+
+  // Generate fallback data if not provided by backend
+  const apiRoutesTreeData = useMemo(() => {
+    if (apiEndpoints.length === 0) {
+      // Generate from file analysis
+      const apiFiles = files.filter(f => 
+        f.path.includes('api') || 
+        f.path.includes('route') || 
+        f.path.includes('controller')
+      );
+      
+      if (apiFiles.length === 0) {
+        return { name: 'API', path: '/api', children: [] };
+      }
+      
+      // Create basic structure from file paths
+      const root: RouteNode = { name: 'API', path: '/api', children: [] };
+      apiFiles.forEach(file => {
+        const pathParts = file.path.split('/');
+        let current = root;
+        
+        pathParts.forEach((part, index) => {
+          if (!current.children) current.children = [];
+          
+          let child = current.children.find(c => c.name === part);
+          if (!child) {
+            child = {
+              name: part,
+              path: `/${pathParts.slice(0, index + 1).join('/')}`,
+              children: []
+            };
+            current.children.push(child);
+          }
+          current = child;
+        });
+      });
+      
+      return root;
+    }
+
+    // Original logic for when apiEndpoints exist
+    const root: RouteNode = { name: 'API', path: '/api', children: [] };
+    apiEndpoints.forEach(endpoint => {
+      const pathParts = endpoint.path.replace(/^\//, '').split('/').filter(p => p);
+      let currentNode = root;
+      pathParts.forEach((part, index) => {
+          let childNode = (currentNode.children || []).find(child => child.name === part && child.path === `/${pathParts.slice(0, index + 1).join('/')}`);
+          if (!childNode) {
+              childNode = { 
+                  name: part, 
+                  path: `/${pathParts.slice(0, index + 1).join('/')}`, 
+                  children: [] 
+              };
+              if (!currentNode.children) {
+                  currentNode.children = [];
+              }
+              currentNode.children.push(childNode);
+          }
+
+          if (index === pathParts.length - 1) {
+              const methodNode = { 
+                  name: endpoint.method, 
+                  path: endpoint.path,
+                  method: endpoint.method, 
+                  file: endpoint.file,
+                  children: [] 
+              };
+              if (!childNode.children) { 
+                  childNode.children = [];
+              }
+              childNode.children.push(methodNode);
+          }
+          currentNode = childNode;
+      });
+    });
+    return root;
+  }, [apiEndpoints, files]);
+
+  // Add fallback data generation for missing diagram data
+  const fallbackDependencyWheelData = useMemo(() => {
+    if (dependencyWheelData.length > 0) return dependencyWheelData;
+    
+    // Generate from dependencies
+    return Object.keys(dependencies.dependencies).slice(0, 20).map(dep => ({
+      source: 'main',
+      target: dep,
+      value: 1
+    }));
+  }, [dependencyWheelData, dependencies]);
+
+  const fallbackFileSystemTree = useMemo(() => {
+    if (fileSystemTree) return fileSystemTree;
+    
+    // Generate from files
+    const root: FileNode = { name: 'root', path: '/', type: 'directory', size: 0, children: [] };
+    
+    files.slice(0, 100).forEach(file => {
+      const parts = file.path.split('/');
+      let current = root;
+      
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const isLast = i === parts.length - 1;
+        
+        if (!current.children) current.children = [];
+        
+        let child = current.children.find(c => c.name === part);
+        if (!child) {
+          child = {
+            name: part,
+            path: parts.slice(0, i + 1).join('/'),
+            size: isLast ? file.size : 0,
+            type: isLast ? 'file' : 'directory',
+            children: isLast ? undefined : []
+          };
+          current.children.push(child);
+        }
+        
+        current = child;
+      }
+    });
+    
+    return root;
+  }, [fileSystemTree, files]);
 
   const diagrams = [
-    {
-      id: 'dependency-wheel',
-      title: 'Component Dependency Wheel',
-      description: 'Chord diagram showing module dependencies',
-      icon: <Network className="w-5 h-5" />,
-      category: 'Architecture'
-    },
-    {
-      id: 'filesystem-icicle',
-      title: 'File System Icicle Chart',
-      description: 'Hierarchical view of directory structure',
-      icon: <Layers className="w-5 h-5" />,
-      category: 'Architecture'
-    },
-    {
-      id: 'api-routes',
-      title: 'API Route Tree',
-      description: 'Tree diagram of API endpoints',
-      icon: <GitBranch className="w-5 h-5" />,
-      category: 'Architecture'
-    },
-    {
-      id: 'feature-matrix',
-      title: 'Feature-File Matrix',
-      description: 'Heatmap of feature to file relationships',
-      icon: <BarChart3 className="w-5 h-5" />,
-      category: 'Architecture'
-    },
-    {
-      id: 'churn-sunburst',
-      title: 'Code Churn Sunburst',
-      description: 'Radial view of code change frequency',
-      icon: <Activity className="w-5 h-5" />,
-      category: 'Temporal'
-    },
-    {
-      id: 'temporal-coupling',
-      title: 'Temporal Coupling Graph',
-      description: 'Files frequently changed together',
-      icon: <Network className="w-5 h-5" />,
-      category: 'Temporal'
-    },
-    {
-      id: 'contributor-stream',
-      title: 'Contributor Streamgraph',
-      description: 'Team activity evolution over time',
-      icon: <TrendingUp className="w-5 h-5" />,
-      category: 'Temporal'
-    },
-    {
-      id: 'data-pipeline',
-      title: 'Data Transformation Pipeline',
-      description: 'Sankey diagram of data flow',
-      icon: <Zap className="w-5 h-5" />,
-      category: 'Data Flow'
-    },
-    {
-      id: 'pr-lifecycle',
-      title: 'PR Lifecycle Gantt',
-      description: 'Pull request process timeline',
-      icon: <Clock className="w-5 h-5" />,
-      category: 'Process'
-    }
+    { id: 'dependency-wheel', title: 'Module Dependency Wheel', description: 'Visualizes inter-dependencies between high-level modules or directories.', icon: <Network /> , category: 'Architecture'},
+    { id: 'filesystem-icicle', title: 'File System Icicle', description: 'Hierarchical view of files and folders, sized by lines of code or complexity.', icon: <Layers /> , category: 'Architecture'},
+    { id: 'api-routes', title: 'API Route Tree', description: 'Shows the structure of defined API endpoints.', icon: <Route /> , category: 'Architecture'},
+    { id: 'feature-matrix', title: 'Feature-File Matrix', description: 'Maps features to the files that implement them.', icon: <ListChecks /> , category: 'Architecture'},
+    { id: 'churn-sunburst', title: 'Code Churn Sunburst', description: 'Visualizes file churn rates in a hierarchical manner.', icon: <GitCommit /> , category: 'Temporal'},
+    { id: 'temporal-coupling', title: 'Temporal Coupling Graph', description: 'Shows files that are frequently changed together in commits.', icon: <GitMerge /> , category: 'Temporal'},
+    { id: 'contributor-stream', title: 'Contributor Streamgraph', description: 'Illustrates contributor activity over time.', icon: <Users /> , category: 'Temporal'},
+    { id: 'data-pipeline', title: 'Data Transformation Sankey', description: 'Visualizes data flow and transformations within the application.', icon: <Shuffle /> , category: 'Data Flow'},
+    { id: 'pr-lifecycle', title: 'PR Lifecycle Gantt', description: 'Shows typical phases and durations of pull requests.', icon: <GitBranch /> , category: 'Process'}
   ];
+  
+  if (!reportData) {
+    return <div className="p-6 bg-white rounded-lg shadow">Loading diagram data...</div>;
+  }
+  
+  const EmptyState: React.FC<{message: string}> = ({message}) => (
+    <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-gray-500">
+        <Layers className="w-16 h-16 mb-4 text-gray-300" />
+        <p className="text-lg">{message}</p>
+        <p className="text-sm">Please ensure the analysis has sufficient data for this visualization.</p>
+    </div>
+  );
 
-  // Generate mock data for demonstrations
-  const generateMockData = () => {
-    const { files, contributors, commits, repository } = reportData;
-
-    // Component dependencies (simplified)
-    const dependencies = [
-      { source: 'components', target: 'utils', value: 15 },
-      { source: 'pages', target: 'components', value: 25 },
-      { source: 'services', target: 'types', value: 12 },
-      { source: 'components', target: 'hooks', value: 8 },
-      { source: 'pages', target: 'services', value: 18 }
-    ];
-
-    // File system hierarchy
-    const fileSystemData = {
-      name: repository.name,
-      path: '/',
-      type: 'directory' as const,
-      size: 0,
-      children: [
-        {
-          name: 'src',
-          path: '/src',
-          type: 'directory' as const,
-          size: 0,
-          children: files.slice(0, 10).map(f => ({
-            name: f.name,
-            path: f.path,
-            type: 'file' as const,
-            size: f.size
-          }))
-        }
-      ]
-    };
-
-    // API routes
-    const apiRoutes = {
-      name: 'API',
-      path: '/api',
-      children: [
-        {
-          name: 'users',
-          path: '/api/users',
-          children: [
-            { name: 'GET', path: '/api/users', method: 'GET', file: 'users.js' },
-            { name: 'POST', path: '/api/users', method: 'POST', file: 'users.js' }
-          ]
-        },
-        {
-          name: 'auth',
-          path: '/api/auth',
-          children: [
-            { name: 'POST login', path: '/api/auth/login', method: 'POST', file: 'auth.js' },
-            { name: 'POST logout', path: '/api/auth/logout', method: 'POST', file: 'auth.js' }
-          ]
-        }
-      ]
-    };
-
-    // Feature-file matrix
-    const features = ['Authentication', 'User Management', 'Data Processing', 'UI Components'];
-    const matrixFiles = files.slice(0, 8).map(f => f.name);
-    const matrix = features.map(() => 
-      matrixFiles.map(() => Math.random())
-    );
-
-    // Code churn data
-    const churnData = {
-      name: 'root',
-      path: '/',
-      type: 'directory' as const,
-      churnRate: 0,
-      children: [
-        {
-          name: 'src',
-          path: '/src',
-          type: 'directory' as const,
-          churnRate: 0,
-          children: files.slice(0, 8).map(f => ({
-            name: f.name,
-            path: f.path,
-            type: 'file' as const,
-            churnRate: Math.random() * 10
-          }))
-        }
-      ]
-    };
-
-    // Temporal coupling
-    const couplingNodes = files.slice(0, 12).map((f, i) => ({
-      id: f.path,
-      name: f.name,
-      path: f.path,
-      group: Math.floor(i / 3)
-    }));
-
-    const couplingLinks = [
-      { source: couplingNodes[0].id, target: couplingNodes[1].id, strength: 0.8, commits: 15 },
-      { source: couplingNodes[1].id, target: couplingNodes[2].id, strength: 0.6, commits: 12 },
-      { source: couplingNodes[3].id, target: couplingNodes[4].id, strength: 0.9, commits: 20 }
-    ];
-
-    // Contributor stream data
-    const streamData = Array.from({ length: 12 }, (_, i) => {
-      const date = new Date();
-      date.setMonth(date.getMonth() - (11 - i));
-      
-      const contributorData: { [key: string]: number } = {};
-      contributors.slice(0, 6).forEach(c => {
-        contributorData[c.login] = Math.floor(Math.random() * 20) + 1;
-      });
-
-      return {
-        date: date.toISOString(),
-        contributors: contributorData
-      };
-    });
-
-    // Data pipeline
-    const pipelineNodes = [
-      { id: 'raw-data', name: 'Raw Data', category: 'Input' },
-      { id: 'validation', name: 'Validation', category: 'Processing' },
-      { id: 'transformation', name: 'Transform', category: 'Processing' },
-      { id: 'storage', name: 'Storage', category: 'Output' }
-    ];
-
-    const pipelineLinks = [
-      { source: 'raw-data', target: 'validation', value: 100 },
-      { source: 'validation', target: 'transformation', value: 95 },
-      { source: 'transformation', target: 'storage', value: 90 }
-    ];
-
-    // PR lifecycle phases
-    const prPhases = [
-      { name: 'Open', duration: 2, color: '#3B82F6', icon: <FileText className="w-4 h-4" /> },
-      { name: 'Review', duration: 24, color: '#F59E0B', icon: <Clock className="w-4 h-4" /> },
-      { name: 'Changes', duration: 8, color: '#EF4444', icon: <Activity className="w-4 h-4" /> },
-      { name: 'Approval', duration: 4, color: '#10B981', icon: <Clock className="w-4 h-4" /> },
-      { name: 'Merge', duration: 1, color: '#8B5CF6', icon: <GitBranch className="w-4 h-4" /> }
-    ];
-
-    return {
-      dependencies,
-      fileSystemData,
-      apiRoutes,
-      features,
-      matrixFiles,
-      matrix,
-      churnData,
-      couplingNodes,
-      couplingLinks,
-      streamData,
-      pipelineNodes,
-      pipelineLinks,
-      prPhases
-    };
-  };
-
-  const mockData = generateMockData();
-
-  const renderDiagram = () => {
+  // Update renderDiagramComponent to use fallback data
+  const renderDiagramComponent = () => {
     switch (selectedDiagram) {
       case 'dependency-wheel':
-        return <ComponentDependencyWheel dependencies={mockData.dependencies} />;
-      
+        return fallbackDependencyWheelData.length > 0 ? 
+          <ComponentDependencyWheel dependencies={fallbackDependencyWheelData} width={700} height={700} /> : 
+          <EmptyState message="No dependency data available." />;
+          
       case 'filesystem-icicle':
-        return <FileSystemIcicle data={mockData.fileSystemData} />;
+        return (fallbackFileSystemTree.children && fallbackFileSystemTree.children.length > 0) ?
+          <FileSystemIcicle data={fallbackFileSystemTree} width={700} height={500} /> : 
+          <EmptyState message="No file system data to display." />;
       
-      case 'api-routes':
-        return <APIRouteTree routes={mockData.apiRoutes} />;
-      
-      case 'feature-matrix':
-        return (
+      case 'api-routes': {
+        return (apiRoutesTreeData.children && apiRoutesTreeData.children.length > 0) ?
+            <APIRouteTree routes={apiRoutesTreeData} width={700} height={500} /> :
+            <EmptyState message="No API endpoint data available." />;
+      }
+      case 'feature-matrix': {
+        const fmData = featureFileMatrixData || { features: [], files: [], matrix: [] };
+        return (fmData.features.length > 0) ? (
           <FeatureFileMatrix 
-            features={mockData.features}
-            files={mockData.matrixFiles}
-            matrix={mockData.matrix}
+            features={fmData.features}
+            files={fmData.files}
+            matrix={fmData.matrix}
+            width={700} height={500}
           />
-        );
-      
-      case 'churn-sunburst':
-        return <CodeChurnSunburst data={mockData.churnData} />;
-      
-      case 'temporal-coupling':
-        return (
+        ) : <EmptyState message="No feature matrix data available." />;
+      }
+      case 'churn-sunburst': {
+        const csData = churnSunburstData || {name: 'root', path:'/', type: 'directory', churnRate: 0, children: []};
+        return (csData.children && csData.children.length > 0 && csData.churnRate > 0) ?
+            <CodeChurnSunburst data={csData as GlobalChurnNode} width={600} height={600} /> : 
+            <EmptyState message="No code churn data to display." />;
+      }
+      case 'temporal-coupling': {
+        const tcData = temporalCouplingData || { nodes: [], links: [] };
+        return (tcData.nodes.length > 0) ? (
           <TemporalCouplingGraph 
-            nodes={mockData.couplingNodes}
-            links={mockData.couplingLinks}
+            nodes={tcData.nodes}
+            links={tcData.links}
+            width={700} height={500}
           />
-        );
-      
-      case 'contributor-stream':
-        return <ContributorStreamgraph data={mockData.streamData} />;
-      
-      case 'data-pipeline':
-        return (
+        ) : <EmptyState message="Not enough data for Temporal Coupling Graph." />;
+      }
+      case 'contributor-stream': {
+        return (contributorStreamData && contributorStreamData.length > 0) ?
+            <ContributorStreamgraph data={contributorStreamData} width={700} height={400} /> :
+            <EmptyState message="No contributor activity stream data available." />;
+      }
+      case 'data-pipeline': {
+        const dpData = dataTransformationSankey || { nodes: [], links: [] };
+        return (dpData.nodes.length > 0) ? (
           <DataTransformationSankey 
-            nodes={mockData.pipelineNodes}
-            links={mockData.pipelineLinks}
+            nodes={dpData.nodes}
+            links={dpData.links}
+            width={700} height={400}
           />
-        );
-      
-      case 'pr-lifecycle':
-        return (
+        ) : <EmptyState message="No data pipeline data available." />;
+      }
+      case 'pr-lifecycle': {
+        const defaultPhases: PRPhase[] = [ 
+          { name: 'Open', duration: 2, color: '#3B82F6', icon: getIconComponent('FileText') },
+          { name: 'Review', duration: 24, color: '#F59E0B', icon: getIconComponent('Clock') },
+          { name: 'Changes', duration: 8, color: '#EF4444', icon: getIconComponent('Activity') },
+          { name: 'Approval', duration: 4, color: '#10B981', icon: getIconComponent('CheckCircle') },
+          { name: 'Merge', duration: 1, color: '#8B5CF6', icon: getIconComponent('GitBranch') }
+        ];
+        
+        const currentPrData = prLifecycleData || { phases: defaultPhases, totalDuration: defaultPhases.reduce((s,p)=>s+p.duration,0) };
+        const phasesToUse = currentPrData.phases.map(p => ({
+            ...p,
+            icon: getIconComponent(p.icon as string) 
+        }));
+        const totalDurationToUse = currentPrData.totalDuration;
+
+        return (phasesToUse.length > 0) ? (
           <PRLifecycleGantt 
-            phases={mockData.prPhases}
-            totalDuration={39}
+            phases={phasesToUse}
+            totalDuration={totalDurationToUse}
+            width={700} height={350}
           />
-        );
-      
+        ) : <EmptyState message="No PR lifecycle data available." />;
+      }
       default:
-        return <div>Select a diagram to view</div>;
+        return <EmptyState message="Select a diagram to view." />;
     }
   };
-
-  const categories = ['All', 'Architecture', 'Temporal', 'Data Flow', 'Process'];
-  const [selectedCategory, setSelectedCategory] = useState('All');
+  
+  const categories = ['All', ...new Set(diagrams.map(d => d.category))];
 
   const filteredDiagrams = diagrams.filter(diagram => 
     selectedCategory === 'All' || diagram.category === selectedCategory
@@ -320,28 +329,26 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-4 flex items-center">
+      <header className="bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-100">
+        <h3 className="text-2xl font-bold text-gray-900 mb-3 flex items-center">
           <BarChart3 className="w-6 h-6 text-purple-500 mr-3" />
-          Advanced Visualizations & Diagrams
+          Advanced Visualizations Gallery
         </h3>
         <p className="text-gray-600">
-          Explore your repository through interactive diagrams and advanced visualizations 
-          that reveal architectural patterns, temporal relationships, and data flows.
+          Explore various aspects of your repository through these specialized diagrams. 
+          Select a category or diagram type below.
         </p>
-      </div>
+      </header>
 
-      {/* Category Filter */}
-      <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+      <div className="bg-white rounded-xl shadow-lg p-4 md:p-6 border border-gray-100">
         <div className="flex flex-wrap gap-2">
           {categories.map(category => (
             <button
               key={category}
               onClick={() => setSelectedCategory(category)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-400 ${
                 selectedCategory === category
-                  ? 'bg-purple-600 text-white'
+                  ? 'bg-indigo-600 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -351,87 +358,53 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-4 gap-8">
-        {/* Diagram Selection */}
-        <div className="lg:col-span-1">
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 sticky top-4">
+      <div className="grid lg:grid-cols-12 gap-8">
+        <aside className="lg:col-span-3">
+          <div className="bg-white rounded-xl shadow-lg p-4 md:p-6 border border-gray-100 sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Available Diagrams</h4>
-            <div className="space-y-2">
+            <nav className="space-y-1.5">
               {filteredDiagrams.map(diagram => (
                 <button
                   key={diagram.id}
                   onClick={() => setSelectedDiagram(diagram.id)}
-                  className={`w-full text-left p-3 rounded-lg transition-colors duration-200 ${
+                  className={`w-full text-left p-3 rounded-lg transition-all duration-200 group hover:bg-indigo-50 ${
                     selectedDiagram === diagram.id
-                      ? 'bg-purple-100 border-purple-300 border'
-                      : 'hover:bg-gray-50 border border-transparent'
+                      ? 'bg-indigo-100 border-indigo-400 border-l-4 font-semibold text-indigo-700'
+                      : 'text-gray-600 hover:text-indigo-600 border-l-4 border-transparent'
                   }`}
                 >
                   <div className="flex items-center space-x-3">
-                    <div className={`p-2 rounded-lg ${
-                      selectedDiagram === diagram.id ? 'bg-purple-200 text-purple-600' : 'bg-gray-100 text-gray-600'
+                    <div className={`p-1.5 rounded-md ${
+                      selectedDiagram === diagram.id ? 'bg-indigo-200 text-indigo-700' : 'bg-gray-100 text-gray-500 group-hover:bg-indigo-100 group-hover:text-indigo-600'
                     }`}>
-                      {diagram.icon}
+                      {React.cloneElement(diagram.icon as React.ReactElement, {className: "w-4 h-4"})}
                     </div>
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900 text-sm">{diagram.title}</div>
-                      <div className="text-xs text-gray-600 mt-1">{diagram.description}</div>
-                      <div className="text-xs text-purple-600 mt-1">{diagram.category}</div>
+                      <div className="text-sm">{diagram.title}</div>
+                      <div className="text-xs text-gray-500 group-hover:text-gray-600 mt-0.5 line-clamp-1">{diagram.description}</div>
                     </div>
                   </div>
                 </button>
               ))}
-            </div>
+            </nav>
           </div>
-        </div>
+        </aside>
 
-        {/* Diagram Display */}
-        <div className="lg:col-span-3">
-          <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
-            <div className="mb-6">
-              <h4 className="text-xl font-semibold text-gray-900 mb-2">
-                {diagrams.find(d => d.id === selectedDiagram)?.title}
+        <main className="lg:col-span-9">
+          <div className="bg-white rounded-xl shadow-lg p-6 md:p-8 border border-gray-100 min-h-[600px]">
+            <header className="mb-6 pb-4 border-b border-gray-200">
+              <h4 className="text-xl font-semibold text-gray-900 mb-1">
+                {diagrams.find(d => d.id === selectedDiagram)?.title || "Select a Diagram"}
               </h4>
-              <p className="text-gray-600">
+              <p className="text-gray-500 text-sm">
                 {diagrams.find(d => d.id === selectedDiagram)?.description}
               </p>
+            </header>
+            <div className="flex justify-center items-center">
+              {renderDiagramComponent()}
             </div>
-
-            <div className="flex justify-center">
-              {renderDiagram()}
-            </div>
           </div>
-        </div>
-      </div>
-
-      {/* Insights Panel */}
-      <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
-        <h4 className="text-lg font-semibold text-gray-900 mb-4">Diagram Insights</h4>
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <div className="p-4 bg-blue-50 rounded-lg">
-            <h5 className="font-medium text-blue-900 mb-2">Architectural Patterns</h5>
-            <p className="text-blue-700 text-sm">
-              Dependency wheel and file system diagrams reveal modular architecture 
-              with clear separation of concerns.
-            </p>
-          </div>
-          
-          <div className="p-4 bg-green-50 rounded-lg">
-            <h5 className="font-medium text-green-900 mb-2">Temporal Insights</h5>
-            <p className="text-green-700 text-sm">
-              Code churn and temporal coupling show active development areas 
-              and files that change together frequently.
-            </p>
-          </div>
-          
-          <div className="p-4 bg-purple-50 rounded-lg">
-            <h5 className="font-medium text-purple-900 mb-2">Process Optimization</h5>
-            <p className="text-purple-700 text-sm">
-              PR lifecycle and contributor streams highlight development workflow 
-              efficiency and team collaboration patterns.
-            </p>
-          </div>
-        </div>
+        </main>
       </div>
     </div>
   );

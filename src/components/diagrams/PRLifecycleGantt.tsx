@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Clock, GitPullRequest, CheckCircle } from 'lucide-react';
+import { Calendar, Clock, GitPullRequest } from 'lucide-react'; // Removed CheckCircle
 
 interface PRPhase {
   name: string;
@@ -21,10 +21,19 @@ const PRLifecycleGantt = ({
   width = 800, 
   height = 300 
 }: PRLifecycleGanttProps) => {
-  const barHeight = 40;
+  if (!phases || phases.length === 0 || totalDuration <= 0) {
+    return (
+      <div className="flex flex-col items-center justify-center text-gray-500 p-8" style={{ width, height }}>
+        <Clock className="w-16 h-16 mb-4 text-gray-300" />
+        <p className="text-lg">No PR lifecycle data available or total duration is invalid.</p>
+      </div>
+    );
+  }
+
+  // const barHeight = 40; // Unused
   const margin = { top: 40, right: 40, bottom: 60, left: 150 };
   const chartWidth = width - margin.left - margin.right;
-  const chartHeight = height - margin.top - margin.bottom;
+  // const chartHeight = height - margin.top - margin.bottom; // Unused
 
   let currentPosition = 0;
 

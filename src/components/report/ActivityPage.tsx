@@ -1,375 +1,340 @@
-import React from 'react';
 import { 
-  Activity, 
   GitCommit, 
   Calendar, 
   TrendingUp, 
   Clock,
   GitPullRequest,
   AlertCircle,
-  CheckCircle,
-  BarChart3
+  BarChart3,
+  Users
 } from 'lucide-react';
-import { AnalysisResult } from '../../types';
+import { AnalysisResult, Repository } from '../../types';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface ActivityPageProps {
   reportData: AnalysisResult;
 }
 
 const ActivityPage = ({ reportData }: ActivityPageProps) => {
-  const { commits, repository } = reportData;
+  const { 
+    commits = [], 
+    repository = {} as Repository, // ← Use repository field
+    contributors = [], 
+    metrics = {} 
+  } = reportData;
 
-  // Process commit data for visualizations
   const processCommitData = () => {
     const commitsByMonth: Record<string, number> = {};
-    const commitsByDay: Record<string, number> = {};
+    const commitsByDayOfWeek: Record<number, number> = {};
     const commitsByHour: Record<number, number> = {};
 
+    if (!commits || commits.length === 0) {
+      return { 
+        commitsByMonth: {}, 
+        commitsByDayOfWeek: {}, 
+        commitsByHour: {}, 
+        recentCommitsCount: 0, 
+        avgCommitsPerWeek: 0 
+      };
+    }
+
+    let recentCommitsCount = 0;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
     commits.forEach(commit => {
-      const date = new Date(commit.author.date);
+      const date = new Date(commit.date);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const dayKey = date.toISOString().split('T')[0];
+      const dayOfWeek = date.getDay();
       const hour = date.getHours();
 
       commitsByMonth[monthKey] = (commitsByMonth[monthKey] || 0) + 1;
-      commitsByDay[dayKey] = (commitsByDay[dayKey] || 0) + 1;
+      commitsByDayOfWeek[dayOfWeek] = (commitsByDayOfWeek[dayOfWeek] || 0) + 1;
       commitsByHour[hour] = (commitsByHour[hour] || 0) + 1;
+
+      if (date > thirtyDaysAgo) {
+        recentCommitsCount++;
+      }
     });
-
-    return { commitsByMonth, commitsByDay, commitsByHour };
-  };
-
-  const { commitsByMonth, commitsByDay, commitsByHour } = processCommitData();
-
-  // Get recent months for chart
-  const recentMonths = Object.entries(commitsByMonth)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 12)
-    .reverse();
-
-  const maxCommitsInMonth = Math.max(...recentMonths.map(([, count]) => count));
-
-  // Activity heatmap data (simplified)
-  const generateHeatmapData = () => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const hours = Array.from({ length: 24 }, (_, i) => i);
     
-    return days.map(day => 
-      hours.map(hour => ({
-        day,
-        hour,
-        value: Math.floor(Math.random() * 10) // In real implementation, this would be actual commit data
-      }))
-    ).flat();
+    const firstCommitDate = new Date(commits[commits.length - 1].date);
+    const lastCommitDate = new Date(commits[0].date);
+    const weeks = (lastCommitDate.getTime() - firstCommitDate.getTime()) / (1000 * 60 * 60 * 24 * 7);
+    const avgCommitsPerWeek = weeks > 0 ? Math.round((commits.length / weeks) * 10) / 10 : commits.length;
+
+    return { commitsByMonth, commitsByDayOfWeek, commitsByHour, recentCommitsCount, avgCommitsPerWeek };
   };
 
-  const heatmapData = generateHeatmapData();
-  const maxHeatmapValue = Math.max(...heatmapData.map(d => d.value));
+  const { commitsByMonth, commitsByDayOfWeek, commitsByHour, recentCommitsCount, avgCommitsPerWeek } = processCommitData();
 
-  // Calculate metrics
-  const avgCommitsPerWeek = Math.round((commits.length / 52) * 10) / 10;
-  const recentActivity = commits.filter(commit => {
-    const commitDate = new Date(commit.author.date);
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    return commitDate > thirtyDaysAgo;
-  }).length;
+  const recentMonthsData = Object.entries(commitsByMonth)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([month, count]) => ({
+      month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      commits: count
+    }));
 
-  // Mock data for issues and PRs (in real implementation, this would come from GitHub API)
+  const dayOfWeekData = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => ({
+    day,
+    commits: commitsByDayOfWeek[index] || 0
+  }));
+
+  const hourlyData = Array.from({ length: 24 }, (_, hour) => ({
+    hour: `${hour}:00`,
+    commits: commitsByHour[hour] || 0
+  }));
+
   const issueMetrics = {
-    totalIssues: repository.openIssues + Math.floor(Math.random() * 200),
-    openIssues: repository.openIssues,
-    closedIssues: Math.floor(Math.random() * 200),
-    avgCloseTime: Math.floor(Math.random() * 10) + 2, // days
-    closureRate: Math.round((Math.random() * 30 + 70) * 10) / 10 // 70-100%
+    totalIssues: (metrics as any).totalIssues ?? repository?.openIssues ?? 0,
+    openIssues: (metrics as any).openIssues ?? repository?.openIssues ?? 0,
+    closedIssues: (metrics as any).closedIssues ?? 0,
+    avgCloseTime: (metrics as any).avgIssueCloseTime ?? 0,
+    closureRate: (metrics as any).issueClosureRate ?? 0
   };
 
   const prMetrics = {
-    totalPRs: Math.floor(Math.random() * 150) + 50,
-    mergedPRs: Math.floor(Math.random() * 120) + 40,
-    avgMergeTime: Math.floor(Math.random() * 5) + 1, // days
-    mergeRate: Math.round((Math.random() * 20 + 80) * 10) / 10 // 80-100%
+    totalPRs: (metrics as any).totalPRs ?? 0,
+    mergedPRs: (metrics as any).mergedPRs ?? 0,
+    avgMergeTime: (metrics as any).avgPRMergeTime ?? 0,
+    mergeRate: (metrics as any).prMergeRate ?? 0
   };
 
-  // Release timeline (mock data)
   const releases = [
     { version: 'v2.1.0', date: '2024-01-15', type: 'minor' },
-    { version: 'v2.0.5', date: '2023-12-20', type: 'patch' },
-    { version: 'v2.0.0', date: '2023-11-10', type: 'major' },
-    { version: 'v1.9.2', date: '2023-10-05', type: 'patch' },
-    { version: 'v1.9.0', date: '2023-09-15', type: 'minor' }
+    { version: 'v2.0.0', date: '2023-12-01', type: 'major' },
+    { version: 'v1.9.0', date: '2023-10-15', type: 'minor' },
+    { version: 'v1.8.2', date: '2023-09-20', type: 'patch' }
   ];
+
+  const getBarColor = (value: number, maxValue: number) => {
+    const intensity = value / maxValue;
+    if (intensity > 0.8) return '#dc2626'; // red-600
+    if (intensity > 0.6) return '#ea580c'; // orange-600
+    if (intensity > 0.4) return '#ca8a04'; // yellow-600
+    if (intensity > 0.2) return '#65a30d'; // lime-600
+    return '#16a34a'; // green-600
+  };
 
   return (
     <div className="space-y-8">
-      {/* Activity Overview */}
-      <div className="grid md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
+      {/* Header */}
+      <div className="text-center">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Repository Activity Analysis</h1>
+        <p className="text-gray-600">Comprehensive overview of development activity and trends</p>
+      </div>
+
+      {/* Key Metrics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Commits</p>
+              <p className="text-2xl font-bold text-gray-900">{commits.length.toLocaleString()}</p>
+            </div>
             <GitCommit className="w-8 h-8 text-blue-500" />
-            <span className="text-sm font-medium text-green-600">+{recentActivity}</span>
           </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{avgCommitsPerWeek}</h3>
-          <p className="text-gray-600 text-sm">Avg Commits/Week</p>
+          <p className="text-xs text-gray-500 mt-2">
+            {avgCommitsPerWeek} avg/week
+          </p>
         </div>
 
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Recent Activity</p>
+              <p className="text-2xl font-bold text-gray-900">{recentCommitsCount}</p>
+            </div>
+            <Calendar className="w-8 h-8 text-green-500" />
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Last 30 days</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Contributors</p>
+              <p className="text-2xl font-bold text-gray-900">{contributors.length}</p>
+            </div>
+            <Users className="w-8 h-8 text-purple-500" />
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Active developers</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Open Issues</p>
+              <p className="text-2xl font-bold text-gray-900">{issueMetrics.openIssues}</p>
+            </div>
             <AlertCircle className="w-8 h-8 text-orange-500" />
-            <span className="text-sm font-medium text-blue-600">{issueMetrics.closureRate}%</span>
           </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{issueMetrics.avgCloseTime}d</h3>
-          <p className="text-gray-600 text-sm">Avg Issue Close Time</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <GitPullRequest className="w-8 h-8 text-green-500" />
-            <span className="text-sm font-medium text-green-600">{prMetrics.mergeRate}%</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{prMetrics.avgMergeTime}d</h3>
-          <p className="text-gray-600 text-sm">Avg PR Merge Time</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <Activity className="w-8 h-8 text-purple-500" />
-            <span className="text-sm font-medium text-green-600">Active</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{recentActivity}</h3>
-          <p className="text-gray-600 text-sm">Commits (30 days)</p>
+          <p className="text-xs text-gray-500 mt-2">
+            {issueMetrics.closureRate}% closure rate
+          </p>
         </div>
       </div>
 
-      {/* Monthly Commit History */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <BarChart3 className="w-6 h-6 text-blue-500 mr-3" />
-          Monthly Commit History
+      {/* Commit Activity Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Monthly Commits */}
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <TrendingUp className="w-5 h-5 mr-2 text-blue-500" />
+            Monthly Commit Trend
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={recentMonthsData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="commits" fill="#3b82f6" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Day of Week Activity */}
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Calendar className="w-5 h-5 mr-2 text-green-500" />
+            Activity by Day of Week
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={dayOfWeekData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="day" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="commits">
+                {dayOfWeekData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={getBarColor(entry.commits, Math.max(...dayOfWeekData.map(d => d.commits)))} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Hourly Activity Heatmap */}
+      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <Clock className="w-5 h-5 mr-2 text-purple-500" />
+          Hourly Activity Distribution
         </h3>
-
-        <div className="h-64 flex items-end space-x-2">
-          {recentMonths.map(([month, count]) => (
-            <div key={month} className="flex-1 flex flex-col items-center">
-              <div
-                className="w-full bg-blue-500 rounded-t-lg transition-all duration-300 hover:bg-blue-600 cursor-pointer"
-                style={{ height: `${(count / maxCommitsInMonth) * 200}px` }}
-                title={`${month}: ${count} commits`}
-              ></div>
-              <div className="text-xs text-gray-600 mt-2 transform -rotate-45 origin-left">
-                {new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 flex items-center justify-between text-sm text-gray-600">
-          <span>Total commits in period: {recentMonths.reduce((sum, [, count]) => sum + count, 0)}</span>
-          <span>Peak month: {Math.max(...recentMonths.map(([, count]) => count))} commits</span>
-        </div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={hourlyData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="hour" interval={3} />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="commits" fill="#8b5cf6" />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-8">
-        {/* Activity Heatmap */}
-        <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-            <Calendar className="w-6 h-6 text-green-500 mr-3" />
-            Activity Heatmap
+      {/* Issues and PRs */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <AlertCircle className="w-5 h-5 mr-2 text-orange-500" />
+            Issue Management
           </h3>
-
-          <div className="space-y-2">
-            <div className="flex text-xs text-gray-600 mb-2">
-              <div className="w-12"></div>
-              {Array.from({ length: 24 }, (_, i) => (
-                <div key={i} className="w-4 text-center">
-                  {i % 6 === 0 ? i : ''}
-                </div>
-              ))}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Total Issues</span>
+              <span className="font-semibold">{issueMetrics.totalIssues}</span>
             </div>
-            
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-              <div key={day} className="flex items-center">
-                <div className="w-12 text-xs text-gray-600 text-right pr-2">{day}</div>
-                {Array.from({ length: 24 }, (_, hour) => {
-                  const dataPoint = heatmapData.find(d => d.day === day && d.hour === hour);
-                  const intensity = dataPoint ? dataPoint.value / maxHeatmapValue : 0;
-                  return (
-                    <div
-                      key={hour}
-                      className="w-4 h-4 rounded-sm border border-gray-200 cursor-pointer hover:border-gray-400"
-                      style={{
-                        backgroundColor: intensity > 0 
-                          ? `rgba(34, 197, 94, ${0.2 + intensity * 0.8})` 
-                          : '#f3f4f6'
-                      }}
-                      title={`${day} ${hour}:00 - ${dataPoint?.value || 0} commits`}
-                    ></div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 flex items-center justify-between text-xs text-gray-600">
-            <span>Less</span>
-            <div className="flex space-x-1">
-              {[0, 0.25, 0.5, 0.75, 1].map(intensity => (
-                <div
-                  key={intensity}
-                  className="w-3 h-3 rounded-sm border border-gray-200"
-                  style={{
-                    backgroundColor: intensity > 0 
-                      ? `rgba(34, 197, 94, ${0.2 + intensity * 0.8})` 
-                      : '#f3f4f6'
-                  }}
-                ></div>
-              ))}
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Open Issues</span>
+              <span className="font-semibold text-orange-600">{issueMetrics.openIssues}</span>
             </div>
-            <span>More</span>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Closed Issues</span>
+              <span className="font-semibold text-green-600">{issueMetrics.closedIssues}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Avg. Close Time</span>
+              <span className="font-semibold">{issueMetrics.avgCloseTime} days</span>
+            </div>
           </div>
         </div>
 
-        {/* Issue/PR Funnel */}
-        <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-            <TrendingUp className="w-6 h-6 text-purple-500 mr-3" />
-            Issue & PR Funnel
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <GitPullRequest className="w-5 h-5 mr-2 text-blue-500" />
+            Pull Request Statistics
           </h3>
-
-          <div className="space-y-6">
-            {/* Issues */}
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-3">Issues</h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Total Issues</span>
-                  <span className="font-medium">{issueMetrics.totalIssues}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="bg-blue-500 h-2 rounded-full" style={{ width: '100%' }}></div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Closed Issues</span>
-                  <span className="font-medium">{issueMetrics.closedIssues}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-green-500 h-2 rounded-full" 
-                    style={{ width: `${(issueMetrics.closedIssues / issueMetrics.totalIssues) * 100}%` }}
-                  ></div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Open Issues</span>
-                  <span className="font-medium">{issueMetrics.openIssues}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-orange-500 h-2 rounded-full" 
-                    style={{ width: `${(issueMetrics.openIssues / issueMetrics.totalIssues) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Total PRs</span>
+              <span className="font-semibold">{prMetrics.totalPRs}</span>
             </div>
-
-            {/* Pull Requests */}
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-3">Pull Requests</h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Total PRs</span>
-                  <span className="font-medium">{prMetrics.totalPRs}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="bg-purple-500 h-2 rounded-full" style={{ width: '100%' }}></div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Merged PRs</span>
-                  <span className="font-medium">{prMetrics.mergedPRs}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-green-500 h-2 rounded-full" 
-                    style={{ width: `${(prMetrics.mergedPRs / prMetrics.totalPRs) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Merged PRs</span>
+              <span className="font-semibold text-green-600">{prMetrics.mergedPRs}</span>
             </div>
-          </div>
-
-          <div className="mt-6 grid grid-cols-2 gap-4 text-center">
-            <div className="p-3 bg-green-50 rounded-lg">
-              <div className="text-lg font-bold text-green-600">{issueMetrics.closureRate}%</div>
-              <div className="text-xs text-green-700">Issue Closure Rate</div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Merge Rate</span>
+              <span className="font-semibold">{prMetrics.mergeRate}%</span>
             </div>
-            <div className="p-3 bg-purple-50 rounded-lg">
-              <div className="text-lg font-bold text-purple-600">{prMetrics.mergeRate}%</div>
-              <div className="text-xs text-purple-700">PR Merge Rate</div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Avg. Merge Time</span>
+              <span className="font-semibold">{prMetrics.avgMergeTime} days</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Release Timeline */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <Clock className="w-6 h-6 text-indigo-500 mr-3" />
-          Release Timeline
+      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <BarChart3 className="w-5 h-5 mr-2 text-indigo-500" />
+          Recent Releases
         </h3>
-
-        <div className="relative">
-          <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-300"></div>
-          
-          <div className="space-y-6">
-            {releases.map((release, index) => (
-              <div key={release.version} className="relative flex items-center">
-                <div className={`absolute left-2 w-4 h-4 rounded-full border-2 border-white ${
+        <div className="space-y-3">
+          {releases.map((release, index) => (
+            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center space-x-3">
+                <div className={`w-3 h-3 rounded-full ${
                   release.type === 'major' ? 'bg-red-500' :
-                  release.type === 'minor' ? 'bg-blue-500' :
-                  'bg-green-500'
-                }`}></div>
-                
-                <div className="ml-12 flex-1">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-semibold text-gray-900">{release.version}</h4>
-                      <p className="text-sm text-gray-600">
-                        {new Date(release.date).toLocaleDateString('en-US', { 
-                          year: 'numeric', 
-                          month: 'long', 
-                          day: 'numeric' 
-                        })}
-                      </p>
-                    </div>
-                    <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      release.type === 'major' ? 'bg-red-100 text-red-800' :
-                      release.type === 'minor' ? 'bg-blue-100 text-blue-800' :
-                      'bg-green-100 text-green-800'
-                    }`}>
-                      {release.type}
-                    </div>
-                  </div>
-                </div>
+                  release.type === 'minor' ? 'bg-yellow-500' : 'bg-green-500'
+                }`} />
+                <span className="font-medium">{release.version}</span>
+                <span className={`px-2 py-1 text-xs rounded-full ${
+                  release.type === 'major' ? 'bg-red-100 text-red-800' :
+                  release.type === 'minor' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
+                }`} >
+                  {release.type}
+                </span>
               </div>
-            ))}
-          </div>
+              <span className="text-gray-500 text-sm">{release.date}</span>
+            </div>
+          ))}
         </div>
+      </div>
 
-        <div className="mt-6 flex items-center justify-center space-x-8 text-sm">
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-            <span className="text-gray-600">Major Release</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-            <span className="text-gray-600">Minor Release</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            <span className="text-gray-600">Patch Release</span>
-          </div>
+      {/* Top Contributors */}
+      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <Users className="w-5 h-5 mr-2 text-purple-500" />
+          Top Contributors
+        </h3>
+        <div className="space-y-3">
+          {contributors.slice(0, 10).map((contributor, index) => (
+            <div key={contributor.login} className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <span className="text-sm font-medium text-gray-500">#{index + 1}</span>
+                <img 
+                  src={contributor.avatarUrl} 
+                  alt={contributor.login}
+                  className="w-8 h-8 rounded-full"
+                />
+                <span className="font-medium">{contributor.login}</span>
+              </div>
+              <span className="text-gray-600">{contributor.contributions} commits</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

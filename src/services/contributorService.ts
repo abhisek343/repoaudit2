@@ -1,8 +1,8 @@
-import { ContributorStats } from '../types/contributor';
+import { ContributorStats, ContributorDetail } from '../types/contributor'; // Use ContributorDetail
 
 class ContributorService {
   private static instance: ContributorService;
-  private cache: Map<string, ContributorStats> = new Map();
+  private cache: Map<string, { data: ContributorStats, timestamp: number }> = new Map(); // Added timestamp for cache expiry
   private cacheTimeout = 1000 * 60 * 5; // 5 minutes
 
   private constructor() {}
@@ -16,45 +16,61 @@ class ContributorService {
 
   async getContributorStats(period: 'week' | 'month' | 'year' = 'month'): Promise<ContributorStats> {
     const cacheKey = `stats_${period}`;
-    const cached = this.cache.get(cacheKey);
+    const cachedEntry = this.cache.get(cacheKey);
     
-    if (cached) {
-      return cached;
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp < this.cacheTimeout)) {
+      return cachedEntry.data;
     }
 
     try {
+      // This endpoint needs to be implemented on the backend (server.ts)
+      // It should query GitHub for commit activity within the specified period
+      // and aggregate stats per contributor.
       const response = await fetch(`/api/contributors/stats?period=${period}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch contributor stats');
+        const errorData = await response.json().catch(() => ({})); // Try to parse error
+        throw new Error(errorData.error || `Failed to fetch contributor stats (status: ${response.status})`);
       }
 
-      const data = await response.json();
-      this.cache.set(cacheKey, data);
+      const data: ContributorStats = await response.json();
       
-      // Clear cache after timeout
-      setTimeout(() => {
-        this.cache.delete(cacheKey);
-      }, this.cacheTimeout);
+      // Validate data structure
+      if (!data || !data.topContributors || !Array.isArray(data.topContributors) || !data.period) {
+          console.error("Invalid data structure received for contributor stats:", data);
+          throw new Error("Invalid data structure received for contributor stats.");
+      }
 
+      this.cache.set(cacheKey, { data, timestamp: Date.now() });
+      
       return data;
     } catch (error) {
       console.error('Error fetching contributor stats:', error);
-      throw error;
+      // Propagate a more specific error or the original one
+      throw error instanceof Error ? error : new Error('Failed to fetch contributor stats due to an unknown error.');
     }
   }
 
-  async getContributorDetails(contributorId: string): Promise<any> {
+  // This method might be less used if all contributor data comes from the main AnalysisResult
+  async getContributorDetails(contributorLogin: string): Promise<ContributorDetail | null> { // Return type ContributorDetail
     try {
-      const response = await fetch(`/api/contributors/${contributorId}`);
+      // This endpoint also needs backend implementation
+      const response = await fetch(`/api/contributors/details/${contributorLogin}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch contributor details');
+        if (response.status === 404) return null; // Contributor not found
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch contributor details (status: ${response.status})`);
       }
-      return await response.json();
+      const data: ContributorDetail = await response.json();
+       if (!data || !data.id || !data.name) { // Basic validation
+          console.error("Invalid data structure received for contributor details:", data);
+          throw new Error("Invalid data structure received for contributor details.");
+      }
+      return data;
     } catch (error) {
-      console.error('Error fetching contributor details:', error);
+      console.error(`Error fetching contributor details for ${contributorLogin}:`, error);
       throw error;
     }
   }
 }
 
-export default ContributorService; 
+export default ContributorService;

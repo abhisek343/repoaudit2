@@ -1,236 +1,182 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
+import { Users2 } from 'lucide-react'; // For empty state
 
-interface StreamData {
-  date: string;
-  contributors: { [key: string]: number };
+export interface StreamDataPoint { // Export for DiagramsPage
+  date: string; // YYYY-MM-DD
+  contributors: { [key: string]: number }; // contributorLogin: activityCount
 }
 
-interface ProcessedData {
-  dates: Date[];
-  contributors: string[];
-  values: number[][];
-}
+            // Removed unused ProcessedLayerData interface
 
-interface ContributorStreamgraphProps {
-  data: StreamData[];
+            // Define data types used in the component
+            type ValuesData = { [contributor: string]: number }; // Represents contributor counts for a single date point
+
+            // MyStackedPoint might not be strictly needed if areaGenerator works directly with d3.SeriesPoint and datesInDataOrder
+            // For now, let's assume areaGenerator will be adapted.
+
+            interface ContributorStreamgraphProps {
+              data?: StreamDataPoint[]; // Make optional
   width?: number;
   height?: number;
-  margin?: { top: number; right: number; bottom: number; left: number };
-  colors?: string[];
-  maxTimePoints?: number;
+  maxContributors?: number; // Max contributors to show to prevent clutter
 }
 
-const ContributorStreamgraph: React.FC<ContributorStreamgraphProps> = ({ 
-  data,
-  width = 800,
-  height = 400,
-  margin = { top: 20, right: 30, bottom: 30, left: 40 },
-  colors = d3.schemeCategory10,
-  maxTimePoints = 50
-}) => {
-  const svgRef = useRef<SVGSVGElement>(null);
+            const ContributorStreamgraph: React.FC<ContributorStreamgraphProps> = ({ 
+              data,
+              width = 800,
+              height = 400,
+              maxContributors = 10 // Limit number of contributors displayed
+            }) => {
+              const svgRef = useRef<SVGSVGElement>(null);
+              const [tooltipContent, setTooltipContent] = useState<string | null>(null);
+              const [tooltipPosition, setTooltipPosition] = useState<{x: number, y: number} | null>(null);
 
-  // Process and validate data
-  const processedData = useMemo((): ProcessedData | null => {
-    if (!data.length) return null;
+              const processedData = useMemo(() => {
+                if (!data || data.length === 0) return null;
 
-    try {
-      // Limit and validate time periods
-      const validData = data
-        .slice(0, maxTimePoints)
-        .filter(d => 
-          d && 
-          d.date && 
-          d.contributors && 
-          typeof d.contributors === 'object' &&
-          Object.keys(d.contributors).length > 0
-        );
+                const totalContributions: Record<string, number> = {};
+                data.forEach(d => {
+                  Object.entries(d.contributors).forEach(([contributor, count]) => {
+                    totalContributions[contributor] = (totalContributions[contributor] || 0) + count;
+                  });
+                });
 
-      if (validData.length === 0) return null;
+                const topNContributors = Object.entries(totalContributions)
+                  .sort(([,a], [,b]) => b - a)
+                  .slice(0, maxContributors)
+                  .map(([name]) => name);
+                
+                if (topNContributors.length === 0) return null;
 
-      // Convert dates to Date objects
-      const dates = validData.map(d => new Date(d.date));
-      
-      // Get unique contributors
-      const contributors = Array.from(new Set(
-        validData.flatMap(d => Object.keys(d.contributors))
-      )).sort();
+                const datesInDataOrder: Date[] = data.map(d => new Date(d.date));
+                const seriesValues: ValuesData[] = data.map(d => {
+                  const values: ValuesData = {};
+                  let otherContributions = 0;
+                  Object.entries(d.contributors).forEach(([contributor, count]) => {
+                    if (topNContributors.includes(contributor)) {
+                      values[contributor] = count;
+                    } else {
+                      otherContributions += count;
+                    }
+                  });
+                  if (Object.keys(d.contributors).length > maxContributors && otherContributions > 0) {
+                    values['Other'] = otherContributions;
+                  }
+                  return values;
+                });
+                
+                const keys = [...topNContributors];
+                if (seriesValues.some(v => v['Other'] > 0)) {
+                    keys.push('Other');
+                }
+                
+                const stack = d3.stack<ValuesData, string>() 
+                  .keys(keys)
+                  .value((d, key) => d[key] || 0)
+                  .offset(d3.stackOffsetWiggle) 
+                  .order(d3.stackOrderInsideOut); 
 
-      // Create matrix of values
-      const values = validData.map(d => 
-        contributors.map(c => d.contributors[c] || 0)
-      );
+                const stackedValues = stack(seriesValues); // This is d3.Series<ValuesData, string>[]
+                
+                return { stackedValues, keys, datesInDataOrder };
 
-      return { dates, contributors, values };
-    } catch (error) {
-      console.error('Error processing contributor data:', error);
-      return null;
-    }
-  }, [data, maxTimePoints]);
+              }, [data, maxContributors]);
 
-  useEffect(() => {
-    if (!svgRef.current || !processedData) {
-      // Handle empty/invalid data state
-      const svg = d3.select(svgRef.current);
-      svg.selectAll("*").remove();
-      
-      if (svgRef.current) {
-        const g = svg
-          .attr("width", width)
-          .attr("height", height)
-          .append("g");
+              useEffect(() => {
+                if (!svgRef.current) return;
+                const svg = d3.select(svgRef.current);
+                svg.selectAll("*").remove();
 
-        g.append("text")
-          .attr("x", width / 2)
-          .attr("y", height / 2)
-          .attr("text-anchor", "middle")
-          .style("font-size", "14px")
-          .style("fill", "#666")
-          .text("No valid contributor data");
-      }
-      return;
-    }
+                if (!processedData || !processedData.stackedValues || processedData.stackedValues.length === 0) {
+                  const g = svg.attr("width", width).attr("height", height).append("g")
+                    .attr("transform", `translate(${width / 2}, ${height / 2})`);
+                  g.append(() => Users2({ className: "w-16 h-16 text-gray-400" }) as unknown as Element) // Cast to Element for D3 append compatibility with JSX.Element
+                    .attr('x', -32).attr('y', -50);
+                  g.append("text").attr("text-anchor", "middle").attr("y", 20)
+                    .style("font-size", "14px").style("fill", "#6B7280")
+                    .text("No contributor activity data to display.");
+                  return;
+                }
 
-    const { dates, contributors, values } = processedData;
+                const { stackedValues, keys, datesInDataOrder } = processedData;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+                const margin = { top: 20, right: 30, bottom: 50, left: 20 };
+                const innerWidth = width - margin.left - margin.right;
+                const innerHeight = height - margin.top - margin.bottom;
 
-    const g = svg
-      .attr("width", width)
-      .attr("height", height)
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
+                const g = svg.attr("width", width).attr("height", height)
+                  .append("g")
+                  .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // Set up scales
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+                const xScale = d3.scaleTime()
+                  .domain(d3.extent(datesInDataOrder) as [Date, Date])
+                  .range([0, innerWidth]);
 
-    const x = d3.scaleTime()
-      .domain(d3.extent(dates) as [Date, Date])
-      .range([0, innerWidth]);
+                const yMin = d3.min(stackedValues, series => d3.min(series, d => d[0])) || 0;
+                const yMax = d3.max(stackedValues, series => d3.max(series, d => d[1])) || 1;
+                const yScale = d3.scaleLinear()
+                  .domain([yMin, yMax])
+                  .range([innerHeight, 0]);
 
-    const color = d3.scaleOrdinal<string>()
-      .domain(contributors)
-      .range(colors);
+                const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(keys);
+                
+                const areaGenerator = d3.area<d3.SeriesPoint<ValuesData>>() 
+                  .x((_p, i) => xScale(datesInDataOrder[i])) // Only use index if 'p' is unused
+                  .y0(p => yScale(p[0]))
+                  .y1(p => yScale(p[1]))
+                  .curve(d3.curveBasis); 
 
-    // Define a type for the data points in the stack
-    type StackDataPoint = { date: Date; [key: string]: number | Date };
+                g.selectAll(".layer")
+                  .data(stackedValues) // Data is d3.Series<ValuesData, string>[]
+                  .join("path")
+                    .attr("class", "layer")
+                    // d is d3.Series<ValuesData, string>, which is d3.SeriesPoint<ValuesData>[]
+                    // areaGenerator expects d3.SeriesPoint<ValuesData>[]
+                    .attr("d", d => areaGenerator(d)) 
+                    .attr("fill", (d: d3.Series<ValuesData, string>) => colorScale(d.key)) 
+                    .attr("fill-opacity", 0.85)
+                    .style("stroke", (d: d3.Series<ValuesData, string>) => (d3.rgb(colorScale(d.key)).darker(0.5) || colorScale(d.key)).toString())
+                    .style("stroke-width", 0.5)
+                    .on("mouseover", function(event: MouseEvent, d: d3.Series<ValuesData, string>) { 
+                      d3.select(this).attr("fill-opacity", 1);
+                      const totalForKey = d.reduce((sum, point) => sum + (point[1] - point[0]), 0);
+                      setTooltipContent(`
+                        <div class="font-semibold text-sm" style="color: ${colorScale(d.key)}">${d.key}</div>
+                        <div class="text-xs text-gray-300">Total Activity: ${totalForKey.toFixed(0)}</div>
+                      `);
+                      setTooltipPosition({ x: event.pageX, y: event.pageY });
+                    })
+                    .on("mouseout", function() {
+                      d3.select(this).attr("fill-opacity", 0.85);
+                      setTooltipContent(null);
+                    });
 
-    // Restructure data for D3's stack layout
-    const dataForStack: StackDataPoint[] = dates.map((date, i) => {
-      const datum: StackDataPoint = { date };
-      contributors.forEach((c, j) => {
-        datum[c] = values[i][j];
-      });
-      return datum;
-    });
+                // Add X axis
+                const timeFormat = d3.timeFormat("%b '%y");
+                g.append("g")
+                  .attr("transform", `translate(0,${innerHeight})`)
+                  .call(d3.axisBottom(xScale).ticks(width / 100).tickSizeOuter(0).tickFormat(d => timeFormat(d as Date))) // Attempt to remove 'as any'
+                  .call(axis => axis.selectAll(".tick text").style("font-size", "10px").attr("fill", "#4B5563"))
+                  .call(axis => axis.select(".domain").remove());
 
-    // Create the stack layout
-    const stack = d3.stack<StackDataPoint, string>()
-      .keys(contributors)
-      .offset(d3.stackOffsetWiggle)
-      .order(d3.stackOrderInsideOut);
-
-    const stackedData = stack(dataForStack);
-
-    // Adjust Y scale to fit the stacked data
-    const y = d3.scaleLinear()
-      .domain([
-        d3.min(stackedData, s => d3.min(s, d => d[0])) || 0,
-        d3.max(stackedData, s => d3.max(s, d => d[1])) || 0,
-      ])
-      .range([innerHeight, 0]);
-
-    // Create areas generator
-    const area = d3.area<d3.SeriesPoint<StackDataPoint>>()
-      .x(d => x(d.data.date))
-      .y0(d => y(d[0]))
-      .y1(d => y(d[1]))
-      .curve(d3.curveBasis);
-
-    // Draw the streams
-    g.selectAll<SVGPathElement, d3.Series<StackDataPoint, string>>(".stream")
-      .data(stackedData)
-      .enter()
-      .append("path")
-      .attr("class", "stream")
-      .attr("d", area)
-      .attr("fill", d => color(d.key))
-      .attr("opacity", 0.8)
-      .on("mouseover", (event, d) => {
-        d3.select(event.currentTarget)
-          .transition()
-          .duration(200)
-          .attr("opacity", 1);
-
-        // Show tooltip
-        const total = d3.sum(
-          values[values.length - 1].filter((_, i) => 
-            contributors[i] === d.key
-          )
-        );
-
-        const tooltip = d3.select("#contributor-tooltip");
-        tooltip
-          .style("visibility", "visible")
-          .style("left", `${event.pageX + 10}px`)
-          .style("top", `${event.pageY - 10}px`)
-          .html(`
-            <div class="p-2 bg-white rounded shadow-lg">
-              <p class="font-medium">${d.key}</p>
-              <p class="text-sm mt-1">
-                Recent contributions: <span class="font-medium">${total}</span>
-              </p>
-            </div>
-          `);
-      })
-      .on("mouseout", (event) => {
-        d3.select(event.currentTarget)
-          .transition()
-          .duration(200)
-          .attr("opacity", 0.8);
-
-        d3.select("#contributor-tooltip")
-          .style("visibility", "hidden");
-      });
-
-    // Add axes
-    const xAxis = g.append("g")
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(d3.axisBottom(x));
-
-    // Style axes
-    xAxis.select(".domain").attr("stroke", "#666");
-    xAxis.selectAll(".tick line").attr("stroke", "#666");
-    xAxis.selectAll(".tick text")
-      .attr("fill", "#666")
-      .attr("font-size", "10px");
-
-  }, [processedData, width, height, margin, colors]);
+              }, [processedData, width, height]);
 
   return (
-    <div className="relative">
-      <div className="bg-white rounded-xl p-4 shadow-lg">
-        <svg ref={svgRef} className="w-full h-full" />
-        <div 
-          id="contributor-tooltip" 
-          style={{ 
-            position: 'absolute',
-            visibility: 'hidden',
-            pointerEvents: 'none',
-            zIndex: 1000
-          }}
+    <div className="relative p-4 bg-white rounded-lg shadow border border-gray-200">
+      <svg ref={svgRef} className="w-full h-auto" viewBox={`0 0 ${width} ${height}`} />
+      {tooltipContent && tooltipPosition && (
+        <div
+          className="absolute p-2 bg-gray-800 text-white rounded-md shadow-lg text-xs pointer-events-none"
+          style={{ left: tooltipPosition.x + 10, top: tooltipPosition.y - 20, opacity: 0.95, zIndex: 1000 }}
+          dangerouslySetInnerHTML={{ __html: tooltipContent }}
         />
-        <p className="text-sm text-gray-600 text-center mt-4">
-          Hover over streams to see contributor details.
-          Width represents relative contribution volume.
-        </p>
+      )}
+       <div className="mt-3 text-xs text-gray-500 text-center max-w-md mx-auto">
+        <p>Streamgraph showing contributor activity over time. Layer thickness represents activity volume. Hover for details.</p>
       </div>
     </div>
   );
 };
 
-export type { StreamData, ContributorStreamgraphProps };
 export default ContributorStreamgraph;

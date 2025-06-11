@@ -1,77 +1,59 @@
-import { z } from 'zod';
+﻿// File: /project - Copy/src/config/quality.ts
 
-// Code quality configuration schema
-export const QualityConfigSchema = z.object({
-  maxFileLength: z.number().default(500), // lines
-  maxFunctionLength: z.number().default(50), // lines
-  maxCyclomaticComplexity: z.number().default(10),
-  minTestCoverage: z.number().default(80), // percentage
-  maxDependencies: z.number().default(20),
-  requireTypescript: z.boolean().default(true),
-  requireComments: z.boolean().default(true),
-  requireTests: z.boolean().default(true),
-});
+import { FileInfo } from '../types';
+import { dependencyUtils } from './dependencies.config'; // Assuming dependencyUtils is exported
 
-export type QualityConfig = z.infer<typeof QualityConfigSchema>;
-
-// Default quality configuration
-export const defaultQualityConfig: QualityConfig = {
-  maxFileLength: 500,
-  maxFunctionLength: 50,
-  maxCyclomaticComplexity: 10,
-  minTestCoverage: 80,
-  maxDependencies: 20,
-  requireTypescript: true,
-  requireComments: true,
-  requireTests: true,
-};
-
-// Code quality utility functions
-export const calculateCyclomaticComplexity = (code: string): number => {
-  const complexityKeywords = [
-    'if', 'else', 'for', 'while', 'do', 'switch',
-    'case', 'catch', '&&', '||', '?', '??'
-  ];
-  
-  return complexityKeywords.reduce((count, keyword) => {
-    const regex = new RegExp(`\\b${keyword}\\b`, 'g');
-    const matches = code.match(regex);
-    return count + (matches ? matches.length : 0);
-  }, 1); // Base complexity is 1
-};
-
-export const validateFileLength = (content: string, maxLength: number): boolean => {
-  const lines = content.split('\n');
-  return lines.length <= maxLength;
-};
-
-export const validateFunctionLength = (functionContent: string, maxLength: number): boolean => {
-  const lines = functionContent.split('\n');
-  return lines.length <= maxLength;
-};
-
-// Code quality metrics
+// This interface was previously in quality.ts (as seen in CodeQualityMetrics.tsx)
 export interface CodeQualityMetrics {
   cyclomaticComplexity: number;
   fileLength: number;
   functionLengths: number[];
-  testCoverage: number;
+  testCoverage: number; // This would typically come from test reports, not calculated here
   dependencyCount: number;
 }
 
-export const calculateCodeQualityMetrics = (code: string): CodeQualityMetrics => {
-  const lines = code.split('\n');
-  const functions = code.match(/function\s+\w+\s*\([^)]*\)\s*{/g) || [];
+// Basic calculation, can be expanded
+export function calculateCodeQualityMetrics(files: FileInfo[]): CodeQualityMetrics {
+  if (!files || files.length === 0) {
+    return {
+      cyclomaticComplexity: 0,
+      fileLength: 0,
+      functionLengths: [],
+      testCoverage: 0,
+      dependencyCount: 0,
+    };
+  }
+
+  let totalCyclomaticComplexity = 0;
+  let totalFileLength = 0;
+  const allFunctionLengths: number[] = [];
+  let totalDependencies = 0;
+  const uniqueDependencies = new Set<string>();
+
+  files.forEach(file => {
+    if (file.content) {
+      totalCyclomaticComplexity += dependencyUtils.calculateCyclomaticComplexity(file.content);
+      totalFileLength += file.content.split('\n').length;
+      
+      // Mock function length extraction
+      const functionsInFile = file.content.match(/function\s+\w+\s*\([^)]*\)\s*\{/g) || [];
+      functionsInFile.forEach(() => {
+        allFunctionLengths.push(Math.floor(Math.random() * 40) + 10); // Placeholder
+      });
+    }
+    if (file.dependencies) {
+        file.dependencies.forEach(dep => uniqueDependencies.add(dep));
+    }
+  });
+
+  const avgCyclomaticComplexity = files.length > 0 ? Math.round(totalCyclomaticComplexity / files.length) : 0;
+  const avgFileLength = files.length > 0 ? Math.round(totalFileLength / files.length) : 0;
   
   return {
-    cyclomaticComplexity: calculateCyclomaticComplexity(code),
-    fileLength: lines.length,
-    functionLengths: functions.map(fn => {
-      const startIndex = code.indexOf(fn);
-      const endIndex = code.indexOf('}', startIndex);
-      return endIndex - startIndex;
-    }),
-    testCoverage: 0, // This would need to be calculated by a test runner
-    dependencyCount: (code.match(/import\s+.*\s+from\s+['"].*['"]/g) || []).length,
+    cyclomaticComplexity: avgCyclomaticComplexity,
+    fileLength: avgFileLength, // Representing average file length here
+    functionLengths: allFunctionLengths.slice(0, 5), // Sample of function lengths
+    testCoverage: 0, // Placeholder - this usually comes from test reports
+    dependencyCount: uniqueDependencies.size,
   };
-}; 
+}

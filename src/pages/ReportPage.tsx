@@ -1,117 +1,85 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom'; // Added useNavigate
 import { 
   ArrowLeft, 
   Calendar, 
   Users, 
-  TrendingUp,
   AlertTriangle,
-  CheckCircle,
   Star,
-  Eye,
   GitFork,
   Download,
   Share2,
-  Shield,
   Code,
-  Brain,
   Activity,
   GitCommit,
   BookOpen,
   BarChart3,
-  FileText,
-  Settings,
   Layers,
-  Github
+  Github,
+  Loader2 // For loading spinner
 } from 'lucide-react';
 
-// Import page components
 import OverviewPage from '../components/report/OverviewPage';
 import ArchitecturePage from '../components/report/ArchitecturePage';
 import ActivityPage from '../components/report/ActivityPage';
 import CommunityPage from '../components/report/CommunityPage';
 import OnboardingPage from '../components/report/OnboardingPage';
 import DiagramsPage from '../components/report/DiagramsPage';
-
+import { loadReport } from '../utils/persist';
 import { AnalysisResult } from '../types';
 
-// Define the expected props type for each page component
 type PageComponentProps = {
   reportData: AnalysisResult;
 };
 
 const ReportPage = () => {
-  const { repoId } = useParams();
+  const { repoId } = useParams<{ repoId: string }>(); // Ensure repoId is typed
   const [reportData, setReportData] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null); // Added error state
   const [currentPage, setCurrentPage] = useState(0);
+  const navigate = useNavigate();
 
   const pages = [
-    { id: 'overview', title: 'Overview & Vitals', icon: <BarChart3 className="w-5 h-5" />, component: OverviewPage },
-    { id: 'architecture', title: 'Code Architecture & Quality', icon: <Code className="w-5 h-5" />, component: ArchitecturePage },
-    { id: 'diagrams', title: 'Advanced Diagrams', icon: <Layers className="w-5 h-5" />, component: DiagramsPage },
-    { id: 'activity', title: 'Activity & Momentum', icon: <Activity className="w-5 h-5" />, component: ActivityPage },
-    { id: 'community', title: 'Community & Contributors', icon: <Users className="w-5 h-5" />, component: CommunityPage },
-    { id: 'onboarding', title: 'Onboarding & Contribution Guide', icon: <BookOpen className="w-5 h-5" />, component: OnboardingPage }
+    { id: 'overview', title: 'Overview & Vitals', icon: <BarChart3 className="w-5 h-5" />, component: OverviewPage as React.FC<PageComponentProps> },
+    { id: 'architecture', title: 'Code Architecture & Quality', icon: <Code className="w-5 h-5" />, component: ArchitecturePage as React.FC<PageComponentProps> },
+    { id: 'diagrams', title: 'Advanced Diagrams', icon: <Layers className="w-5 h-5" />, component: DiagramsPage as React.FC<PageComponentProps> },
+    { id: 'activity', title: 'Activity & Momentum', icon: <Activity className="w-5 h-5" />, component: ActivityPage as React.FC<PageComponentProps> },
+    { id: 'community', title: 'Community & Contributors', icon: <Users className="w-5 h-5" />, component: CommunityPage as React.FC<PageComponentProps> },
+    { id: 'onboarding', title: 'Onboarding & Contribution Guide', icon: <BookOpen className="w-5 h-5" />, component: OnboardingPage as React.FC<PageComponentProps> }
   ];
 
-  // Add Git History link
   const gitHistoryLink = {
     id: 'git-history',
     title: 'Git History',
     icon: <GitCommit className="w-5 h-5" />,
-    href: `/git-history/${repoId}`
+    href: `/git-history/${repoId}` // Use the correct reportId (which is repoId from params here)
   };
 
   useEffect(() => {
-    // Load report data from localStorage
-    if (repoId) {
-      const savedReport = localStorage.getItem(`report_${repoId}`);
-      if (savedReport) {
-        try {
-          const data = JSON.parse(savedReport);
-          // Ensure all required fields are present with default values
-          const defaultData = {
-            metrics: {
-              codeQuality: 0,
-              testCoverage: 0,
-              technicalDebtScore: 0,
-              performanceScore: 0,
-              totalCommits: 0,
-              totalContributors: 0,
-              linesOfCode: 0,
-              busFactor: 0
-            },
-            hotspots: [],
-            keyFunctions: [],
-            architectureAnalysis: "No architecture analysis available.",
-            files: [],
-            languages: {},
-            repository: {
-              name: "Unknown Repository",
-              fullName: "Unknown Repository",
-              stars: 0,
-              forks: 0
-            }
-          };
-          
-          // Merge the loaded data with defaults
-          const completeData = {
-            ...defaultData,
-            ...data,
-            metrics: {
-              ...defaultData.metrics,
-              ...(data.metrics || {})
-            }
-          };
-          
-          setReportData(completeData);
-        } catch (error) {
-          console.error('Failed to parse report data:', error);
-        }
+    const fetchReport = async () => {
+      if (!repoId) {
+        setError("No report ID provided.");
+        setLoading(false);
+        return;
       }
-    }
-    setLoading(false);
+
+      try {
+        const report = await loadReport(`report_${repoId}`);
+        if (!report) {
+          setError('Report not found (it may have been cleared by the browser).');
+        } else {
+          setReportData(report);
+        }
+      } catch (e) {
+        console.error('Failed to load report data:', e);
+        setError(e instanceof Error ? e.message : "Failed to load or parse report data.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchReport();
   }, [repoId]);
 
   const handleExportReport = () => {
@@ -119,17 +87,14 @@ const ReportPage = () => {
     
     const exportData = {
       ...reportData,
-      generatedAt: new Date().toISOString(),
-      exportedAt: new Date().toISOString()
+      reportGeneratedAtClient: new Date().toISOString(), // Distinguish from potential backend generation time
     };
     
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
-      type: 'application/json' 
-    });
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${reportData.repository.name}-audit-report.json`;
+    a.download = `${reportData.basicInfo.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_audit_report.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -140,8 +105,8 @@ const ReportPage = () => {
     if (!reportData) return;
     
     const shareData = {
-      title: `Audit Report: ${reportData.repository.fullName}`,
-      text: `Check out this comprehensive audit report for ${reportData.repository.fullName}`,
+      title: `Repo Auditor Report: ${reportData.basicInfo.fullName}`,
+      text: `Check out this comprehensive audit report for ${reportData.basicInfo.fullName} generated by Repo Auditor.`,
       url: window.location.href
     };
 
@@ -149,12 +114,17 @@ const ReportPage = () => {
       try {
         await navigator.share(shareData);
       } catch (error) {
-        console.error('Error sharing:', error);
+        console.error('Error sharing report:', error);
+        // Fallback for when navigator.share fails (e.g., user cancels)
+        alert('Sharing cancelled or failed. You can copy the URL from your browser.');
       }
     } else {
-      // Fallback: copy to clipboard
-      navigator.clipboard.writeText(window.location.href);
-      alert('Report URL copied to clipboard!');
+      navigator.clipboard.writeText(window.location.href)
+        .then(() => alert('Report URL copied to clipboard!'))
+        .catch(err => {
+            console.error('Failed to copy URL: ', err);
+            alert('Failed to copy URL. Please copy it manually from your browser.');
+        });
     }
   };
 
@@ -162,26 +132,26 @@ const ReportPage = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading report...</p>
+          <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mx-auto mb-4" />
+          <p className="text-lg text-gray-700">Loading report...</p>
         </div>
       </div>
     );
   }
 
-  if (!reportData) {
+  if (error || !reportData) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
-        <div className="text-center">
-          <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Report Not Found</h2>
-          <p className="text-gray-600 mb-6">The requested report could not be found.</p>
-          <Link 
-            to="/" 
-            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200"
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
+        <div className="text-center bg-white p-8 rounded-xl shadow-xl max-w-md">
+          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Error Loading Report</h2>
+          <p className="text-gray-600 mb-6">{error || 'The report data could not be loaded or is corrupted.'}</p>
+          <button 
+            onClick={() => navigate('/analyze')} 
+            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200 font-medium"
           >
-            Generate New Report
-          </Link>
+            Analyze a New Repository
+          </button>
         </div>
       </div>
     );
@@ -189,171 +159,117 @@ const ReportPage = () => {
 
   const CurrentPageComponent = pages[currentPage].component;
 
-  // Transform the data to match the expected types for each page component
-  const transformedData = {
-    ...reportData,
-    hotspots: (reportData.hotspots || []).map(hotspot => ({
-      file: hotspot.file,
-      complexity: hotspot.complexity,
-      size: hotspot.size || 0,
-      dependencies: [], // Default empty array since this isn't provided in the original data
-      contributors: [], // Default empty array since this isn't provided in the original data
-      commitCount: 0, // Default to 0 since this isn't provided in the original data
-      changes: hotspot.changes,
-      explanation: hotspot.explanation || ''
-    })),
-    keyFunctions: reportData.keyFunctions || [],
-    architectureAnalysis: reportData.architectureAnalysis || "No architecture analysis available.",
-    files: (reportData.files || []).map(file => ({
-      ...file,
-      type: file.type || 'file',
-      dependencies: [],
-      contributors: [],
-      commitCount: 0,
-      functions: []
-    })),
-    languages: reportData.languages || {},
-    metrics: {
-      ...reportData.metrics,
-      codeQuality: reportData.metrics.codeQuality || 0,
-      testCoverage: reportData.metrics.testCoverage || 0,
-      technicalDebtScore: reportData.metrics.technicalDebtScore || 0,
-      performanceScore: reportData.metrics.performanceScore || 0,
-      totalCommits: reportData.metrics.totalCommits || 0,
-      totalContributors: reportData.metrics.totalContributors || 0,
-      linesOfCode: reportData.metrics.linesOfCode || 0,
-      busFactor: reportData.metrics.busFactor || 0
-    }
-  };
-
-  // Create a separate transformed data object for the ArchitecturePage
-  const architecturePageData = {
-    ...transformedData,
-    languages: Object.entries(reportData.languages || {}).map(([name, value]) => ({
-      name,
-      value
-    }))
-  };
-
-  // Type assertion to handle both AnalysisResult and ArchitecturePageProps
-  const pageData = currentPage === 1 ? architecturePageData as any : transformedData;
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      {/* Header */}
-      <div className="bg-white/90 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 to-blue-100">
+      <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
               <Link 
-                to="/" 
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                to="/dashboard" 
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors duration-200"
+                title="Back to Dashboard"
               >
-                <ArrowLeft className="w-6 h-6 text-gray-600" />
+                <ArrowLeft className="w-5 h-5 text-gray-700" />
               </Link>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">
-                  {reportData.repository.fullName}
+              <div className="flex items-center space-x-2">
+                 <Github className="w-6 h-6 text-indigo-600"/>
+                <h1 className="text-xl font-bold text-gray-900 truncate" title={reportData.basicInfo.fullName}>
+                  {reportData.basicInfo.fullName}
                 </h1>
-                <div className="flex items-center text-sm text-gray-500">
-                  <Calendar className="w-4 h-4 mr-1" />
-                  Generated: {new Date().toLocaleDateString()}
-                </div>
               </div>
             </div>
             
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-4 text-sm">
-                <div className="flex items-center space-x-1">
+            <div className="flex items-center space-x-3">
+              <div className="hidden md:flex items-center space-x-3 text-sm text-gray-600">
+                <div className="flex items-center space-x-1" title="Stars">
                   <Star className="w-4 h-4 text-yellow-500" />
-                  <span className="font-medium">{reportData.repository.stars.toLocaleString()}</span>
+                  <span>{reportData.basicInfo.stars?.toLocaleString() || 'N/A'}</span>
                 </div>
-                <div className="flex items-center space-x-1">
+                <div className="flex items-center space-x-1" title="Forks">
                   <GitFork className="w-4 h-4 text-blue-500" />
-                  <span className="font-medium">{reportData.repository.forks.toLocaleString()}</span>
+                  <span>{reportData.basicInfo.forks?.toLocaleString() || 'N/A'}</span>
+                </div>
+                 <div className="flex items-center space-x-1" title="Last Updated">
+                  <Calendar className="w-4 h-4 text-gray-500" />
+                  <span>{reportData.basicInfo.updatedAt ? new Date(reportData.basicInfo.updatedAt).toLocaleDateString() : 'N/A'}</span>
                 </div>
               </div>
               
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleShareReport}
-                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors duration-200"
-                  title="Share Report"
-                >
-                  <Share2 className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={handleExportReport}
-                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors duration-200"
-                  title="Export Report"
-                >
-                  <Download className="w-5 h-5" />
-                </button>
-              </div>
+              <button
+                onClick={handleShareReport}
+                className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors duration-200"
+                title="Share Report"
+              >
+                <Share2 className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleExportReport}
+                className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors duration-200"
+                title="Export Report as JSON"
+              >
+                <Download className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Navigation Tabs */}
-      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-[73px] z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8 overflow-x-auto">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-[65px] z-10 shadow-sm"> {/* Adjusted top value */}
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-1 sm:space-x-4 overflow-x-auto no-scrollbar"> {/* Added no-scrollbar */}
             {pages.map((page, index) => (
               <button
                 key={page.id}
                 onClick={() => setCurrentPage(index)}
-                className={`flex items-center space-x-2 py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors duration-200 ${
+                className={`flex items-center space-x-2 py-3 px-3 border-b-2 font-medium text-sm whitespace-nowrap transition-all duration-200 focus:outline-none ${
                   currentPage === index
-                    ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    ? 'border-indigo-600 text-indigo-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
                 }`}
               >
-                {page.icon}
-                <span>{page.title}</span>
+                {React.cloneElement(page.icon, { className: `w-4 h-4 sm:w-5 sm:h-5 ${currentPage === index ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-500'}` })}
+                <span className="hidden sm:inline">{page.title}</span>
+                <span className="sm:hidden">{page.title.split(' ')[0]}</span>
               </button>
             ))}
-            
-            {/* Add Git History link */}
             <Link
               to={gitHistoryLink.href}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors duration-200"
+              className="flex items-center space-x-2 py-3 px-3 border-b-2 border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300 font-medium text-sm whitespace-nowrap transition-all duration-200 focus:outline-none"
             >
-              <div className="flex items-center space-x-2">
-                {gitHistoryLink.icon}
-                <span>{gitHistoryLink.title}</span>
-              </div>
+              {React.cloneElement(gitHistoryLink.icon, { className: "w-4 h-4 sm:w-5 sm:h-5 text-gray-400 group-hover:text-gray-500"})}
+               <span className="hidden sm:inline">{gitHistoryLink.title}</span>
+               <span className="sm:hidden">{gitHistoryLink.title.split(' ')[0]}</span>
             </Link>
           </div>
         </div>
-      </div>
+      </nav>
 
-      {/* Page Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <CurrentPageComponent reportData={pageData} />
-      </div>
+      <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <CurrentPageComponent reportData={reportData} />
+      </main>
 
-      {/* Page Navigation */}
-      <div className="bg-white/80 backdrop-blur-sm border-t border-gray-200 sticky bottom-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200 sticky bottom-0 z-10 py-3">
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <button
               onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
               disabled={currentPage === 0}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Previous</span>
             </button>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1.5">
               {pages.map((_, index) => (
                 <button
                   key={index}
                   onClick={() => setCurrentPage(index)}
-                  className={`w-3 h-3 rounded-full transition-colors duration-200 ${
-                    currentPage === index ? 'bg-indigo-600' : 'bg-gray-300 hover:bg-gray-400'
+                  className={`w-2.5 h-2.5 rounded-full transition-colors duration-200 focus:outline-none ${
+                    currentPage === index ? 'bg-indigo-600 scale-125' : 'bg-gray-300 hover:bg-gray-400'
                   }`}
+                  aria-label={`Go to page ${index + 1}`}
                 />
               ))}
             </div>
@@ -361,14 +277,14 @@ const ReportPage = () => {
             <button
               onClick={() => setCurrentPage(Math.min(pages.length - 1, currentPage + 1))}
               disabled={currentPage === pages.length - 1}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
             >
               <span>Next</span>
               <ArrowLeft className="w-4 h-4 rotate-180" />
             </button>
           </div>
         </div>
-      </div>
+      </footer>
     </div>
   );
 };

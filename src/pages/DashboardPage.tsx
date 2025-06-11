@@ -23,14 +23,35 @@ const DashboardPage = () => {
 
   useEffect(() => {
     // Load saved reports from localStorage
-    const savedReports = localStorage.getItem('savedReports');
-    if (savedReports) {
-      try {
-        setReports(JSON.parse(savedReports));
-      } catch (error) {
-        console.error('Failed to parse saved reports:', error);
+    const reportsFromStorage: SavedReport[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('report_')) {
+        try {
+          const reportItem = localStorage.getItem(key);
+          if (reportItem) {
+            const parsedReport = JSON.parse(reportItem);
+            // Construct a SavedReport object from the parsed data
+            reportsFromStorage.push({
+              id: key.replace('report_', ''),
+              repositoryName: parsedReport.repository?.fullName || parsedReport.repositoryName || 'Unknown Repo',
+              category: parsedReport.category || 'comprehensive',
+              createdAt: parsedReport.createdAt || new Date().toISOString(),
+              summary: parsedReport.executiveSummary || parsedReport.summary || 'No summary available.',
+              tags: parsedReport.tags || [parsedReport.repository?.language || 'general'],
+              isPublic: parsedReport.isPublic || false, // Assuming a default
+              // Add other fields if necessary, or ensure they are in parsedReport
+              userId: parsedReport.userId || 'local',
+              repositoryUrl: parsedReport.repositoryUrl || `https://github.com/${parsedReport.repository?.fullName}`,
+              lastAccessed: parsedReport.lastAccessed || new Date().toISOString(),
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to parse report ${key}:`, error);
+        }
       }
     }
+    setReports(reportsFromStorage.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
   }, []);
 
   const filteredReports = reports.filter(report => {

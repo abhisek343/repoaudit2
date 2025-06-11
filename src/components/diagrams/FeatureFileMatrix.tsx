@@ -1,4 +1,4 @@
-import React from 'react';
+import { BarChart3 } from 'lucide-react'; // For empty state
 
 interface FeatureFileMatrixProps {
   features: string[];
@@ -15,6 +15,16 @@ const FeatureFileMatrix = ({
   width = 800, 
   height = 600 
 }: FeatureFileMatrixProps) => {
+  if (!features || features.length === 0 || !files || files.length === 0 || !matrix) {
+    return (
+      <div className="flex flex-col items-center justify-center text-gray-500 p-8" style={{ width, height }}>
+        <BarChart3 className="w-16 h-16 mb-4 text-gray-300" /> 
+        <p className="text-lg">No data available for Feature-File Matrix.</p>
+        <p className="text-sm">Ensure features, files, and matrix data are provided.</p>
+      </div>
+    );
+  }
+
   const cellWidth = Math.max(20, (width - 200) / files.length);
   const cellHeight = Math.max(20, (height - 100) / features.length);
 
@@ -29,7 +39,7 @@ const FeatureFileMatrix = ({
       <div className="relative w-full overflow-auto" style={{ width: width, height: height }}>
         {/* Feature labels */}
         <div className="absolute left-0 top-20">
-          {features.map((feature, i) => (
+          {features.map((feature) => (
             <div
               key={feature}
               className="text-sm font-medium text-gray-700 text-right pr-2 whitespace-nowrap"

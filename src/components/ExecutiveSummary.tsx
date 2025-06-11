@@ -1,77 +1,77 @@
-import React from 'react';
-import { Brain, Lightbulb } from 'lucide-react';
+import { Brain, Lightbulb, AlertTriangle } from 'lucide-react'; // Added AlertTriangle
+import { AnalysisResult } from '../types'; // Import AnalysisResult, removed Repository
 
 interface ExecutiveSummaryProps {
-  repository: {
-    name: string;
-    fullName: string;
-    description: string;
-    language: string;
-  };
+  // Pass the full reportData or specific parts needed
+  reportData: Pick<AnalysisResult, 'repository' | 'aiSummary' | 'metrics'>;
 }
 
-const ExecutiveSummary = ({ repository }: ExecutiveSummaryProps) => {
+const ExecutiveSummary = ({ reportData }: ExecutiveSummaryProps) => {
+  const { repository, aiSummary, metrics } = reportData;
+
+  // Generate some simple insights if AI summary is not available or too short
+  const getFallbackInsights = () => {
+    const insights = [];
+    if (metrics.totalCommits > 1000) insights.push("High commit frequency indicates active development.");
+    else if (metrics.totalCommits > 100) insights.push("Consistent commit activity shows ongoing maintenance.");
+    else insights.push("Relatively low commit activity observed.");
+
+    if (metrics.totalContributors > 10) insights.push("Healthy number of contributors suggesting good collaboration.");
+    else if (metrics.totalContributors > 3) insights.push("A small, focused team of contributors.");
+    else insights.push("Very few contributors; potential bus factor risk.");
+    
+    if (metrics.codeQuality >= 8) insights.push("Code quality score is excellent.");
+    else if (metrics.codeQuality >= 6) insights.push("Code quality score is good.");
+    else insights.push("Code quality score suggests areas for improvement.");
+
+    if (metrics.testCoverage >= 75) insights.push("Good test coverage.");
+    else if (metrics.testCoverage >= 50) insights.push("Moderate test coverage, could be improved.");
+    else insights.push("Test coverage is low and needs attention.");
+    
+    return insights.slice(0, 4); // Max 4 fallback insights
+  };
+
+  const fallbackSummary = `The repository ${repository.fullName} is primarily a ${repository.language} project. It has ${repository.stars} stars and ${metrics.totalCommits} commits from ${metrics.totalContributors} contributors. ${repository.description || 'No further description provided.'}`;
+  const summaryToDisplay = aiSummary && aiSummary.length > 50 ? aiSummary : fallbackSummary;
+  const insightsToDisplay = aiSummary && aiSummary.length > 50 ? [] : getFallbackInsights();
+
+
   return (
-    <div className="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-100">
+    <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-gray-100">
       <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
         <Brain className="w-6 h-6 text-indigo-500 mr-3" />
-        AI Executive Summary
+        Executive Summary
       </h3>
       
-      <div className="prose prose-lg max-w-none">
+      <div className="prose prose-lg max-w-none prose-indigo">
         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-6 mb-6 border-l-4 border-indigo-500">
-          <p className="text-gray-800 leading-relaxed">
-            This repository contains the source code for <strong>{repository.name}</strong>, a highly active and well-maintained {repository.language} project. 
-            The codebase demonstrates excellent organizational patterns with clear separation of concerns and robust testing practices.
+          <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+            {summaryToDisplay}
           </p>
+          {(!aiSummary || aiSummary.length <= 50) && (
+            <p className="text-xs text-indigo-700 mt-3">
+                <AlertTriangle className="inline w-3 h-3 mr-1" />
+                This is a basic summary. For deeper insights, configure an AI provider in settings.
+            </p>
+          )}
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <h4 className="text-lg font-semibold text-gray-900 flex items-center">
-              <Lightbulb className="w-5 h-5 text-yellow-500 mr-2" />
-              Key Insights
+        {(insightsToDisplay.length > 0) && (
+            <div className="mt-6">
+            <h4 className="text-lg font-semibold text-gray-900 flex items-center mb-3">
+                <Lightbulb className="w-5 h-5 text-yellow-500 mr-2" />
+                Key Observations
             </h4>
-            <ul className="space-y-3 text-gray-700">
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-green-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                <span>High commit frequency indicates active development and maintenance</span>
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                <span>Well-distributed contributor base reduces bus factor risk</span>
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                <span>Core logic is well-abstracted with clear module boundaries</span>
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-orange-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                <span>Testing coverage is comprehensive across critical paths</span>
-              </li>
+            <ul className="space-y-2 text-gray-700 text-sm">
+                {insightsToDisplay.map((insight, index) => (
+                <li key={index} className="flex items-start">
+                    <span className="w-2 h-2 bg-indigo-400 rounded-full mt-1.5 mr-2.5 flex-shrink-0"></span>
+                    <span>{insight}</span>
+                </li>
+                ))}
             </ul>
-          </div>
-
-          <div className="space-y-4">
-            <h4 className="text-lg font-semibold text-gray-900">
-              Architecture Highlights
-            </h4>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-gray-700 text-sm leading-relaxed">
-                The project follows modern software engineering practices with a clear modular architecture. 
-                The most complex components are concentrated in the core routing and compilation modules, 
-                which show signs of careful refactoring and optimization over time.
-              </p>
             </div>
-            
-            <div className="bg-yellow-50 rounded-lg p-4 border-l-4 border-yellow-400">
-              <p className="text-yellow-800 text-sm font-medium">
-                <strong>Recommendation:</strong> Consider breaking down some of the larger modules 
-                in the routing system to improve maintainability.
-              </p>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

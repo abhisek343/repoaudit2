@@ -1,5 +1,5 @@
-import React from 'react';
 import { X, AlertTriangle, Settings, Key } from 'lucide-react';
+import AnalysisProgress from './AnalysisProgress';
 
 interface ProgressModalProps {
   isOpen: boolean;
@@ -7,9 +7,11 @@ interface ProgressModalProps {
   progress: number;
   error?: string;
   onOpenSettings?: () => void;
+  onClose: () => void;
+  onCancel: () => void;
 }
 
-const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings }: ProgressModalProps) => {
+const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel }: ProgressModalProps) => {
   if (!isOpen) return null;
 
   const isGitHubRateLimitError = (errorMessage?: string): boolean => {
@@ -34,7 +36,16 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings }:
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
+        {error && (
+          <button 
+            onClick={onClose} 
+            className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        )}
         {error ? (
           <div className="text-center">
             <div className={`p-4 rounded-full mx-auto mb-4 ${isRateLimitError ? 'bg-yellow-100' : 'bg-red-100'}`}>
@@ -125,7 +136,7 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings }:
           <div className="text-center">
             <div className="relative w-16 h-16 mx-auto mb-4">
               <div className="absolute inset-0 border-4 border-indigo-200 rounded-full"></div>
-              <div 
+              <div
                 className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"
                 style={{
                   transform: `rotate(${progress * 3.6}deg)`
@@ -137,20 +148,18 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings }:
                 </span>
               </div>
             </div>
-            
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Analyzing Repository
             </h3>
-            
-            <p className="text-gray-600 mb-4">
-              {currentStep}
-            </p>
-            
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-gradient-to-r from-indigo-600 to-purple-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              ></div>
+            <AnalysisProgress progress={progress} currentStep={currentStep} />
+            <div className="mt-4">
+              <button
+                onClick={onCancel}
+                className="w-full py-2 px-4 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-500/30 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <X className="w-5 h-5" />
+                Cancel Analysis
+              </button>
             </div>
           </div>
         )}

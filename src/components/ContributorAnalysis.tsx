@@ -1,4 +1,7 @@
-import React from 'react';
+/**
+ * @deprecated This component is largely superseded by CommunityPage.tsx. 
+ * Please use CommunityPage.tsx for contributor-related analysis and visualizations.
+ */
 import { Users, TrendingUp, AlertTriangle, Calendar } from 'lucide-react';
 
 interface ContributorAnalysisProps {

@@ -1,378 +1,347 @@
-import React from 'react';
 import { 
   Users, 
-  TrendingUp, 
   AlertTriangle, 
-  Calendar,
-  GitCommit,
   Star,
   MessageCircle,
   CheckCircle,
-  X,
+  X, // For missing community files
   Award,
-  UserPlus
-} from 'lucide-react';
-import { AnalysisResult } from '../../types';
+  UserPlus,
+  BarChart // For contributor trends
+} from 'lucide-react'; // Removed TrendingUp, Calendar, GitCommit
+import { AnalysisResult, ProcessedContributor, Repository } from '../../types';
+import { BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'; // Aliased BarChart, Removed Cell, Added Legend
+
 
 interface CommunityPageProps {
   reportData: AnalysisResult;
 }
 
 const CommunityPage = ({ reportData }: CommunityPageProps) => {
-  const { contributors, commits, metrics, repository } = reportData;
+  const { 
+    contributors = [], 
+    commits = [], 
+    metrics = {} as any, 
+    repository = {} as Repository, // ← Use repository field
+    files = [] // ← Add files for community files check
+  } = reportData;
 
-  // Calculate contributor metrics
-  const totalContributions = contributors.reduce((sum, c) => sum + c.contributions, 0);
-  const topContributorShare = contributors[0]?.contributions / totalContributions || 0;
+  const totalContributions = (contributors || []).reduce((sum, c) => sum + c.contributions, 0);
+  const topContributorShare = totalContributions > 0 && contributors && contributors.length > 0 ? (contributors[0].contributions / totalContributions) : 0;
   
-  // Analyze contributor activity
-  const activeContributors = contributors.map(contributor => {
-    const recentCommits = commits.filter(commit => 
-      commit.author.name.toLowerCase().includes(contributor.login.toLowerCase()) ||
-      commit.author.email.toLowerCase().includes(contributor.login.toLowerCase())
-    );
-    
-    const hasRecentActivity = recentCommits.some(commit => {
-      const commitDate = new Date(commit.author.date);
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setDate(threeMonthsAgo.getDate() - 90);
-      return commitDate > threeMonthsAgo;
+  const activeContributors = (contributors || []).map(contributor => {
+    const recentCommits = commits.filter(commit => {
+        const authorName = commit.author.toLowerCase();
+        const contributorLogin = contributor.login.toLowerCase();
+        return authorName.includes(contributorLogin);
     });
+    
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const hasRecentActivityInLast30Days = recentCommits.some(commit => 
+        new Date(commit.date) > thirtyDaysAgo
+    );
 
     return {
       ...contributor,
-      recent: hasRecentActivity,
-      impact: contributor.contributions > totalContributions * 0.2 ? 'high' :
-              contributor.contributions > totalContributions * 0.1 ? 'medium' : 'low',
-      recentCommits: recentCommits.length
+      recentCommitsCount: recentCommits.length,
+      isActiveInLast30Days: hasRecentActivityInLast30Days, // More specific flag
+      impactScore: contributor.contributions / (totalContributions || 1) // Relative impact
     };
-  });
+  }).sort((a, b) => b.contributions - a.contributions); // Ensure sorted for leaderboard
 
-  // Mock data for additional community metrics
   const communityFiles = {
-    codeOfConduct: Math.random() > 0.3,
-    contributing: Math.random() > 0.2,
-    readme: true,
+    readme: files.some(f => f.name.toLowerCase() === 'readme.md'),
+    contributing: files.some(f => f.name.toLowerCase().includes('contributing')),
+    codeOfConduct: files.some(f => f.name.toLowerCase().includes('code_of_conduct')),
     license: !!repository.license,
-    changelog: Math.random() > 0.4,
-    security: Math.random() > 0.6
+    changelog: files.some(f => f.name.toLowerCase().includes('changelog')),
+    security: files.some(f => f.name.toLowerCase() === 'security.md'),
   };
+  const communityHealthScore = Object.values(communityFiles).filter(Boolean).length;
+  const totalCommunityFiles = Object.keys(communityFiles).length;
 
-  // Generate contributor trends (mock data)
   const generateContributorTrends = () => {
-    const months = [];
-    const currentDate = new Date();
-    
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-      const monthKey = date.toISOString().slice(0, 7);
+    const trends: { month: string; new: number; active: number; total: number }[] = [];
+    if (!commits || commits.length === 0) return { trends, maxTrendValue: 0 };
+
+    const contributorFirstCommit: Record<string, string> = {}; 
+    const monthlyActivity: Record<string, { newSet: Set<string>, activeSet: Set<string> }> = {};
+
+    const sortedCommits = [...commits].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    sortedCommits.forEach(commit => {
+      const commitDate = new Date(commit.date);
+      const monthKey = `${commitDate.getFullYear()}-${String(commitDate.getMonth() + 1).padStart(2, '0')}`;
+      const authorLogin = contributors.find(c => c.login.toLowerCase() === commit.author.toLowerCase())?.login || commit.author; 
+
+      if (!monthlyActivity[monthKey]) {
+        monthlyActivity[monthKey] = { newSet: new Set(), activeSet: new Set() };
+      }
       
-      // Mock data for new vs returning contributors
-      const newContributors = Math.floor(Math.random() * 5) + 1;
-      const returningContributors = Math.floor(Math.random() * 10) + 5;
-      
-      months.push({
+      monthlyActivity[monthKey].activeSet.add(authorLogin);
+
+      if (!contributorFirstCommit[authorLogin]) {
+        contributorFirstCommit[authorLogin] = monthKey;
+      }
+      if (contributorFirstCommit[authorLogin] === monthKey) {
+        monthlyActivity[monthKey].newSet.add(authorLogin);
+      }
+    });
+
+    const allMonthKeys = Object.keys(monthlyActivity).sort();
+    let maxTotal = 0;
+
+    allMonthKeys.forEach(monthKey => {
+      const newCount = monthlyActivity[monthKey].newSet.size;
+      const activeCount = monthlyActivity[monthKey].activeSet.size;
+      const total = activeCount; 
+      if (total > maxTotal) maxTotal = total;
+      trends.push({
         month: monthKey,
-        new: newContributors,
-        returning: returningContributors,
-        total: newContributors + returningContributors
+        new: newCount,
+        active: activeCount - newCount, 
+        total: total
       });
-    }
+    });
     
-    return months;
+    return { trends: trends.slice(-12), maxTrendValue: maxTotal };
   };
 
-  const contributorTrends = generateContributorTrends();
-  const maxTrendValue = Math.max(...contributorTrends.map(m => m.total));
-
-  // Top reviewers (mock data)
-  const topReviewers = contributors.slice(0, 5).map(contributor => ({
+  const { trends: contributorTrends } = generateContributorTrends(); 
+  
+  const topReviewers = (reportData.contributors || []).filter(c => ((c as any).reviewCount || 0) > 0)
+    .sort((a, b) => ((b as any).reviewCount || 0) - ((a as any).reviewCount || 0))
+    .slice(0, 5).map(contributor => ({
     ...contributor,
-    reviews: Math.floor(Math.random() * 50) + 10,
-    avgReviewTime: Math.floor(Math.random() * 24) + 1 // hours
-  }));
+    reviews: (contributor as any).reviewCount || 0, 
+    avgReviewTime: metrics.avgReviewTime || 0 
+  })).filter(r => r.reviews > 0);
+
 
   return (
     <div className="space-y-8">
-      {/* Community Overview */}
-      <div className="grid md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <Users className="w-8 h-8 text-blue-500" />
-            <span className="text-sm font-medium text-green-600">+{activeContributors.filter(c => c.recent).length}</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{contributors.length}</h3>
-          <p className="text-gray-600 text-sm">Total Contributors</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <AlertTriangle className="w-8 h-8 text-orange-500" />
-            <span className={`text-sm font-medium ${metrics.busFactor <= 2 ? 'text-red-600' : 'text-green-600'}`}>
-              {metrics.busFactor <= 2 ? 'Risk' : 'Safe'}
-            </span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.busFactor}</h3>
-          <p className="text-gray-600 text-sm">Bus Factor</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <UserPlus className="w-8 h-8 text-green-500" />
-            <span className="text-sm font-medium text-blue-600">Active</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">
-            {activeContributors.filter(c => c.recent).length}
-          </h3>
-          <p className="text-gray-600 text-sm">Active Contributors</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <Award className="w-8 h-8 text-purple-500" />
-            <span className="text-sm font-medium text-purple-600">{Math.round(topContributorShare * 100)}%</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">
-            {contributors[0]?.contributions || 0}
-          </h3>
-          <p className="text-gray-600 text-sm">Top Contributor</p>
-        </div>
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard icon={<Users />} label="Total Contributors" value={(contributors || []).length.toString()} trendText={`${activeContributors.filter(c => c.isActiveInLast30Days).length} active`} />
+        <StatCard icon={<AlertTriangle />} label="Bus Factor" value={metrics.busFactor.toString()} trendText={metrics.busFactor <= 2 ? 'Risk' : 'Healthy'} trendColor={metrics.busFactor <= 2 ? 'text-red-600' : 'text-green-600'} />
+        <StatCard icon={<UserPlus />} label="Active (30d)" value={activeContributors.filter(c => c.isActiveInLast30Days).length.toString()} trendText="Recent Activity" />
+        <StatCard icon={<Award />} label="Top Contributor" value={(contributors && contributors[0]?.contributions.toLocaleString()) || 'N/A'} trendText={`${Math.round(topContributorShare * 100)}% of total`} trendColor="text-purple-600" />
       </div>
 
       <div className="grid lg:grid-cols-3 gap-8">
-        {/* Contributor Leaderboard */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-            <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-              <Star className="w-6 h-6 text-yellow-500 mr-3" />
-              Contributor Leaderboard
-            </h3>
-
-            <div className="space-y-4">
-              {activeContributors.slice(0, 8).map((contributor, index) => (
-                <div 
-                  key={contributor.login}
-                  className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors duration-200"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className="relative">
-                      <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                        {contributor.login.charAt(0).toUpperCase()}
-                      </div>
-                      {index < 3 && (
-                        <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${
-                          index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : 'bg-orange-500'
-                        }`}>
-                          {index + 1}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h4 className="font-semibold text-gray-900">{contributor.login}</h4>
-                        {contributor.recent && (
-                          <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
-                            Active
-                          </span>
-                        )}
-                        {contributor.type === 'Bot' && (
-                          <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                            Bot
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center space-x-4 text-sm text-gray-600">
-                        <span>{contributor.contributions} contributions</span>
-                        <span>{contributor.recentCommits} recent commits</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="text-right">
-                    <div className={`inline-flex px-3 py-1 rounded-full text-xs font-medium mb-2 ${
-                      contributor.impact === 'high' ? 'bg-red-100 text-red-800' :
-                      contributor.impact === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-blue-100 text-blue-800'
-                    }`}>
-                      {contributor.impact} impact
-                    </div>
-                    <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className={`h-2 rounded-full ${
-                          contributor.impact === 'high' ? 'bg-red-500' :
-                          contributor.impact === 'medium' ? 'bg-yellow-500' :
-                          'bg-blue-500'
-                        }`}
-                        style={{ width: `${(contributor.contributions / (contributors[0]?.contributions || 1)) * 100}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-100">
+          <h3 className="text-xl md:text-2xl font-bold text-gray-900 mb-6 flex items-center">
+            <Star className="w-5 h-5 md:w-6 md:h-6 text-yellow-500 mr-3" />
+            Contributor Leaderboard
+          </h3>
+          {activeContributors.length > 0 ? (
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+              {activeContributors.slice(0, 10).map((contributor, index) => (
+                <ContributorCard key={contributor.login} contributor={contributor} rank={index + 1} topContribution={activeContributors[0]?.contributions || 1} />
               ))}
             </div>
-          </div>
+          ) : <p className="text-gray-500 text-center py-10">No contributor data available.</p>}
         </div>
 
-        {/* Bus Factor Analysis */}
         <div className="space-y-6">
           <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
             <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
               <AlertTriangle className="w-5 h-5 text-orange-500 mr-2" />
               Bus Factor Analysis
             </h4>
-            
             <div className="text-center mb-4">
               <div className="text-4xl font-bold text-orange-600 mb-2">{metrics.busFactor}</div>
               <p className="text-sm text-gray-700">
-                Critical contributors whose absence would significantly impact development
+                Key contributors whose absence might impact development.
               </p>
             </div>
-
-            <div className="space-y-3 text-sm">
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <p className="text-blue-800">
-                  <strong>Distribution:</strong> Top contributor: {Math.round(topContributorShare * 100)}%
-                </p>
-              </div>
-              
-              {metrics.busFactor <= 2 && (
-                <div className="p-3 bg-red-50 rounded-lg">
-                  <p className="text-red-800">
-                    <strong>Risk:</strong> High dependency on few contributors
-                  </p>
-                </div>
-              )}
-              
-              <div className="p-3 bg-green-50 rounded-lg">
-                <p className="text-green-800">
-                  <strong>Active:</strong> {activeContributors.filter(c => c.recent).length} of top contributors are active
-                </p>
-              </div>
+            <div className="space-y-2 text-sm">
+              <InfoPill color="blue">Top Contributor Share: {Math.round(topContributorShare * 100)}%</InfoPill>
+              {metrics.busFactor <= 2 && <InfoPill color="red">Risk: High dependency on few contributors.</InfoPill>}
+              <InfoPill color="green">Active Top Contributors: {activeContributors.filter(c => c.isActiveInLast30Days && c.impactScore && c.impactScore > 0.05).length}</InfoPill>
             </div>
           </div>
 
-          {/* Community Health Files */}
           <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
             <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
               <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
-              Community Health
+              Community Health Files
             </h4>
-            
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {Object.entries(communityFiles).map(([file, exists]) => (
-                <div key={file} className="flex items-center justify-between">
-                  <span className="text-sm text-gray-700 capitalize">
-                    {file.replace(/([A-Z])/g, ' $1').trim()}
-                  </span>
-                  {exists ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                  ) : (
-                    <X className="w-4 h-4 text-red-500" />
-                  )}
-                </div>
+                <FileCheckItem key={file} fileName={file} exists={exists} />
               ))}
             </div>
-
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+            <div className="mt-4 pt-3 border-t">
               <div className="text-sm font-medium text-gray-900 mb-1">
-                Health Score: {Object.values(communityFiles).filter(Boolean).length}/6
+                Health Score: {communityHealthScore}/{totalCommunityFiles}
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-green-500 h-2 rounded-full" 
-                  style={{ width: `${(Object.values(communityFiles).filter(Boolean).length / 6) * 100}%` }}
-                ></div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div className="bg-green-500 h-2.5 rounded-full" style={{ width: `${(communityHealthScore / totalCommunityFiles) * 100}%` }}></div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Contributor Trends */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <TrendingUp className="w-6 h-6 text-green-500 mr-3" />
-          New vs Returning Contributors
+      <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-100">
+        <h3 className="text-xl md:text-2xl font-bold text-gray-900 mb-6 flex items-center">
+          <BarChart className="w-5 h-5 md:w-6 md:h-6 text-green-500 mr-3" />
+          Contributor Activity Trends (Last 12 Months)
         </h3>
-
-        <div className="h-64 flex items-end space-x-2">
-          {contributorTrends.map((month) => (
-            <div key={month.month} className="flex-1 flex flex-col items-center">
-              <div className="w-full flex flex-col">
-                <div
-                  className="w-full bg-blue-500 transition-all duration-300 hover:bg-blue-600 cursor-pointer"
-                  style={{ height: `${(month.returning / maxTrendValue) * 180}px` }}
-                  title={`${month.month}: ${month.returning} returning contributors`}
-                ></div>
-                <div
-                  className="w-full bg-green-500 transition-all duration-300 hover:bg-green-600 cursor-pointer"
-                  style={{ height: `${(month.new / maxTrendValue) * 180}px` }}
-                  title={`${month.month}: ${month.new} new contributors`}
-                ></div>
-              </div>
-              <div className="text-xs text-gray-600 mt-2 transform -rotate-45 origin-left">
-                {new Date(month.month + '-01').toLocaleDateString('en-US', { month: 'short' })}
-              </div>
-            </div>
-          ))}
+        {contributorTrends.length > 0 ? (
+        <div className="h-80"> 
+          <ResponsiveContainer width="100%" height="100%">
+            <ReBarChart data={contributorTrends} margin={{ top: 5, right: 20, bottom: 50, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="month" 
+                tickFormatter={(monthKey) => new Date(monthKey + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
+                angle={-45}
+                textAnchor="end"
+                height={60} 
+                interval={0} 
+                tick={{ fontSize: 10 }}
+              />
+              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+              <Tooltip formatter={(value, name) => [`${value} contributors`, name === 'new' ? 'New' : 'Active']} />
+              <Legend wrapperStyle={{ fontSize: "14px" }} />
+              <Bar dataKey="new" stackId="a" fill="#10B981" name="New Contributors" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="active" stackId="a" fill="#3B82F6" name="Returning Active" radius={[4, 4, 0, 0]} />
+            </ReBarChart>
+          </ResponsiveContainer>
         </div>
-
-        <div className="mt-6 flex items-center justify-center space-x-8 text-sm">
-          <div className="flex items-center space-x-2">
-            <div className="w-4 h-4 bg-green-500 rounded"></div>
-            <span className="text-gray-600">New Contributors</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-4 h-4 bg-blue-500 rounded"></div>
-            <span className="text-gray-600">Returning Contributors</span>
-          </div>
-        </div>
+        ) : <p className="text-gray-500 text-center py-10">No contributor trend data available.</p>}
       </div>
 
       {/* Top Reviewers */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <MessageCircle className="w-6 h-6 text-purple-500 mr-3" />
-          Top Code Reviewers
-        </h3>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {topReviewers.map((reviewer, index) => (
-            <div key={reviewer.login} className="p-6 border border-gray-200 rounded-xl hover:border-purple-300 transition-colors duration-200">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-full flex items-center justify-center text-white font-bold">
-                  {reviewer.login.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <h4 className="font-semibold text-gray-900">{reviewer.login}</h4>
-                  <p className="text-sm text-gray-600">{reviewer.reviews} reviews</p>
-                </div>
-              </div>
-              
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Avg Review Time:</span>
-                  <span className="font-medium">{reviewer.avgReviewTime}h</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Contributions:</span>
-                  <span className="font-medium">{reviewer.contributions}</span>
-                </div>
-              </div>
-
-              <div className="mt-4 w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-purple-500 h-2 rounded-full" 
-                  style={{ width: `${(reviewer.reviews / Math.max(...topReviewers.map(r => r.reviews))) * 100}%` }}
-                ></div>
-              </div>
+        {topReviewers.length > 0 ? (
+          <>
+            <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+              <MessageCircle className="w-6 h-6 text-purple-500 mr-3" />
+              Top Code Reviewers
+            </h3>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {topReviewers.map((reviewer) => (
+                <ReviewerCard key={reviewer.login} reviewer={reviewer} maxReviews={Math.max(1, ...topReviewers.map(r => r.reviews))} />
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            <MessageCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+            <p>No code reviewer data available.</p>
+          </div>
+        )}
       </div>
     </div>
   );
 };
+
+
+// Helper components for StatCard, ContributorCard, FileCheckItem, InfoPill, ReviewerCard
+const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: string; trendText?: string; trendColor?: string }> = 
+({ icon, label, value, trendText, trendColor = 'text-green-600' }) => (
+  <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+    <div className="flex items-center justify-between mb-4">
+      <div className="p-2 bg-gray-100 rounded-lg">{icon}</div>
+      {trendText && <span className={`text-xs font-medium ${trendColor}`}>{trendText}</span>}
+    </div>
+    <h3 className="text-2xl font-bold text-gray-900 mb-1">{value}</h3>
+    <p className="text-gray-600 text-sm">{label}</p>
+  </div>
+);
+
+interface ContributorCardProps {
+  contributor: ProcessedContributor & { isActiveInLast30Days?: boolean; recentCommitsCount?: number; impactScore?: number };
+  rank: number;
+  topContribution: number;
+}
+const ContributorCard: React.FC<ContributorCardProps> = ({ contributor, rank, topContribution }) => {
+    const impactColor = contributor.impactScore && contributor.impactScore > 0.2 ? 'bg-red-500' : contributor.impactScore && contributor.impactScore > 0.1 ? 'bg-yellow-500' : 'bg-blue-500';
+    const impactLabel = contributor.impactScore && contributor.impactScore > 0.2 ? 'High Impact' : contributor.impactScore && contributor.impactScore > 0.1 ? 'Medium Impact' : 'Regular Contributor';
+    return (
+        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:border-indigo-300 transition-colors duration-200 bg-white shadow-sm">
+            <div className="flex items-center space-x-3">
+            <div className="relative">
+                <img src={contributor.avatarUrl} alt={contributor.login} className="w-12 h-12 rounded-full border-2 border-gray-200" />
+                {rank <= 3 && (
+                <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-md ${
+                    rank === 1 ? 'bg-yellow-400' : rank === 2 ? 'bg-gray-400' : 'bg-orange-400'
+                }`}>
+                    {rank}
+                </div>
+                )}
+            </div>
+            <div>
+                <h4 className="font-semibold text-gray-800 text-sm md:text-base">{contributor.login}</h4>
+                <p className="text-xs text-gray-500">{contributor.contributions.toLocaleString()} contributions</p>
+                {(contributor as any).type === 'Bot' && <span className="text-xs text-blue-500"> (Bot)</span>}
+            </div>
+            </div>
+            <div className="text-right">
+                {contributor.isActiveInLast30Days && (
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full mb-1 inline-block">Active</span>
+                )}
+                <div className={`text-xs font-medium px-2 py-0.5 rounded-full inline-block text-white ${impactColor}`}>{impactLabel}</div>
+                 <div className="w-20 md:w-24 bg-gray-200 rounded-full h-1.5 mt-1.5">
+                    <div className={`${impactColor} h-1.5 rounded-full`} style={{ width: `${(contributor.contributions / topContribution) * 100}%` }}></div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const FileCheckItem: React.FC<{ fileName: string; exists: boolean }> = ({ fileName, exists }) => (
+  <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+    <span className="text-sm text-gray-700 capitalize">
+      {fileName.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
+    </span>
+    {exists ? <CheckCircle className="w-5 h-5 text-green-500" /> : <X className="w-5 h-5 text-red-400" />}
+  </div>
+);
+
+const InfoPill: React.FC<{ children: React.ReactNode; color: 'blue' | 'green' | 'red' | 'yellow' }> = ({ children, color }) => {
+  const colors = {
+    blue: 'bg-blue-50 text-blue-700 border-blue-200',
+    green: 'bg-green-50 text-green-700 border-green-200',
+    red: 'bg-red-50 text-red-700 border-red-200',
+    yellow: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  };
+  return <div className={`p-2.5 rounded-lg border text-xs ${colors[color]}`}>{children}</div>;
+};
+
+interface ReviewerCardProps {
+    reviewer: ProcessedContributor & { reviews?: number; avgReviewTime?: number };
+    maxReviews: number;
+}
+const ReviewerCard: React.FC<ReviewerCardProps> = ({ reviewer, maxReviews }) => (
+    <div className="p-4 border border-gray-200 rounded-xl hover:border-purple-300 transition-colors duration-200 bg-white shadow-sm">
+        <div className="flex items-center space-x-3 mb-3">
+        <img src={reviewer.avatarUrl} alt={reviewer.login} className="w-10 h-10 rounded-full border border-purple-200" />
+        <div>
+            <h4 className="font-semibold text-gray-800">{reviewer.login}</h4>
+            <p className="text-xs text-purple-600">{reviewer.reviews || 0} reviews</p>
+        </div>
+        </div>
+        <div className="space-y-1.5 text-xs">
+        <div className="flex justify-between">
+            <span className="text-gray-500">Avg Review Time:</span>
+            <span className="font-medium text-gray-700">{reviewer.avgReviewTime ? reviewer.avgReviewTime.toFixed(1) : 'N/A'}h</span>
+        </div>
+        <div className="flex justify-between">
+            <span className="text-gray-500">Contributions:</span>
+            <span className="font-medium text-gray-700">{reviewer.contributions.toLocaleString()}</span>
+        </div>
+        </div>
+        <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5">
+        <div 
+            className="bg-purple-500 h-1.5 rounded-full" 
+            style={{ width: `${((reviewer.reviews || 0) / maxReviews) * 100}%` }}
+        ></div>
+        </div>
+    </div>
+);
 
 export default CommunityPage;

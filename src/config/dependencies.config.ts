@@ -39,9 +39,12 @@ export const DependencyConfigSchema = z.object({
   
   // Code Quality
   quality: z.object({
+    maxFileLength: z.number().default(500), // lines
+    maxFunctionLength: z.number().default(50), // lines
+    maxCyclomaticComplexity: z.number().default(10),
+    minTestCoverage: z.number().default(80), // percentage
     requireTypescript: z.boolean().default(true),
     requireTests: z.boolean().default(true),
-    minTestCoverage: z.number().default(80),
     requireLinting: z.boolean().default(true),
     requireFormatting: z.boolean().default(true),
   }),
@@ -83,9 +86,12 @@ export const defaultDependencyConfig: DependencyConfig = {
   },
   
   quality: {
+    maxFileLength: 500,
+    maxFunctionLength: 50,
+    maxCyclomaticComplexity: 10,
+    minTestCoverage: 80,
     requireTypescript: true,
     requireTests: true,
-    minTestCoverage: 80,
     requireLinting: true,
     requireFormatting: true,
   },
@@ -118,4 +124,33 @@ export const dependencyUtils = {
     
     return Math.max(0, maxScore - dependencyPenalty - devDependencyPenalty);
   },
-}; 
+
+  calculateCyclomaticComplexity: (code: string): number => {
+    const complexityKeywords = [
+      'if', 'else', 'for', 'while', 'do', 'switch',
+      'case', 'catch', '&&', '||', '?', '??'
+    ];
+    
+    return complexityKeywords.reduce((count, keyword) => {
+      // MODIFIED: Escape special regex characters in the keyword
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Ensure word boundaries only if the keyword is alphanumeric
+      const regex = /^[a-zA-Z0-9_]+$/.test(escapedKeyword)
+          ? new RegExp(`\\b${escapedKeyword}\\b`, 'g')
+          : new RegExp(escapedKeyword, 'g'); // For operators like &&, ||, ?
+          
+      const matches = code.match(regex);
+      return count + (matches ? matches.length : 0);
+    }, 1); // Base complexity is 1
+  },
+
+  validateFileLength: (content: string, maxLength: number): boolean => {
+    const lines = content.split('\n');
+    return lines.length <= maxLength;
+  },
+
+  validateFunctionLength: (functionContent: string, maxLength: number): boolean => {
+    const lines = functionContent.split('\n');
+    return lines.length <= maxLength;
+  },
+};

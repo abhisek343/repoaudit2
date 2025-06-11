@@ -1,4 +1,4 @@
-import { ExtendedFileInfo } from '../types';
+import { FileInfo as ExtendedFileInfo } from '../types'; // Use FileInfo, aliased for minimal changes if needed
 
 interface LLMResponse {
   enhancedDiagram: string;
@@ -11,14 +11,26 @@ interface FunctionInfo {
   dependencies: string[];
   calls: string[];
   description?: string;
+  startLine: number; // Added for consistency
+  endLine: number;   // Added for consistency
 }
 
-export async function checkLLMAvailability(): Promise<boolean> {
+export async function checkLLMAvailability(llmConfig?: import('../types').LLMConfig): Promise<boolean> { // llmConfig might be needed for backend check
   try {
-    const response = await fetch('/api/llm/check');
-    return response.ok;
+    const response = await fetch('/api/llm/check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ llmConfig }),
+    });
+    if (response.ok) {
+        const data = await response.json();
+        return data.success;
+    }
+    return false;
   } catch (error) {
-    console.warn('LLM service not available:', error);
+    console.error('Error checking LLM availability:', error);
     return false;
   }
 }
@@ -26,24 +38,32 @@ export async function checkLLMAvailability(): Promise<boolean> {
 export async function enhanceDiagram(
   diagram: string,
   fileInfo: Record<string, ExtendedFileInfo>
-): Promise<LLMResponse> {
+): Promise<LLMResponse> { // This function might be deprecated if all enhancements go through a generic backend endpoint
   try {
-    const response = await fetch('/api/llm/enhance-diagram', {
+    // This should ideally use a configured LLMConfig
+    const savedLlmConfig = localStorage.getItem('llmConfig');
+    if (!savedLlmConfig) {
+        return { enhancedDiagram: diagram, error: 'LLM configuration not found.' };
+    }
+    const llmConfig = JSON.parse(savedLlmConfig);
+
+    const response = await fetch('/api/llm/enhance-diagram', { // Backend endpoint
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ diagram, fileInfo })
+      body: JSON.stringify({ llmConfig, diagramType: 'mermaid', diagramCode: diagram, fileInfo }) // Pass necessary info
     });
 
     if (!response.ok) {
-      throw new Error('Failed to enhance diagram with LLM');
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     return await response.json();
-  } catch (error) {
-    console.error('Error enhancing diagram:', error);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to enhance diagram';
+    console.error('Error enhancing diagram:', errorMessage);
     return {
       enhancedDiagram: diagram,
-      error: error instanceof Error ? error.message : 'Failed to enhance diagram'
+      error: errorMessage
     };
   }
 }
@@ -55,7 +75,7 @@ export function generateFunctionConnections(fileInfo: Record<string, ExtendedFil
   // Process each file
   Object.entries(fileInfo).forEach(([fileId, file]) => {
     if (file.functions) {
-      // Process each function in the file
+      // Process each function in the file (ensure file.functions matches FunctionInfo)
       file.functions.forEach((func: FunctionInfo) => {
         // Add function node
         connections.push(`${fileId}_${func.name}["${func.name}<br/>${func.complexity}% complex"]`);
@@ -81,10 +101,10 @@ export function generateComponentConnections(fileInfo: Record<string, ExtendedFi
   // Process each file
   Object.entries(fileInfo).forEach(([fileId, file]) => {
     // Add file node with metrics
-    connections.push(`${fileId}["${file.name}<br/>Complexity: ${file.complexity}%<br/>Size: ${file.size}b"]`);
+    connections.push(`${fileId}["${file.name}<br/>Complexity: ${file.complexity || 0}%<br/>Size: ${file.size}b"]`);
 
     // Add file dependencies
-    file.dependencies.forEach((dep: string) => {
+    (file.dependencies || []).forEach((dep: string) => {
       connections.push(`${fileId} --> ${dep}`);
     });
   });
@@ -131,4 +151,4 @@ export function generateDetailedArchitectureDiagram(
     '\n%% Detailed Component Connections',
     componentConnections
   ].join('\n');
-} 
+}

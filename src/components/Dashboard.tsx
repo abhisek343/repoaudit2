@@ -1,74 +1,66 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { toast } from 'react-hot-toast';
+import { persistReport } from '../utils/persist';
 import { CodeQualityMetricsDisplay } from './CodeQualityMetrics';
 import { SecurityMetricsDisplay } from './SecurityMetrics';
 import { DependencyMetricsDisplay } from './DependencyMetrics';
 import { defaultSecurityConfig } from '../config/security.config';
 import { defaultDependencyConfig } from '../config/dependencies.config';
-import { calculateCodeQualityMetrics } from '../config/quality';
+import { AnalysisResult, SecurityIssue, Repository, Contributor, Commit, FileInfo } from '../types';
 
 export const Dashboard: React.FC = () => {
-  const [codeMetrics, setCodeMetrics] = useState({
-    cyclomaticComplexity: 0,
-    fileLength: 0,
-    functionLengths: [] as number[],
-    testCoverage: 0,
-    dependencyCount: 0
+  const [codeMetrics] = useState({
+    averageComplexity: 0,
+    testCoveragePercentage: 0,
+    duplicationPercentage: 0,
+    maintainabilityIndex: 0,
+    issuesCount: {
+      blocker: 0,
+      critical: 0,
+      major: 0,
+      minor: 0,
+      info: 0,
+    }
   });
-
-  const [securityMetrics, setSecurityMetrics] = useState({
-    activeConnections: 0,
+  
+  const [simulatedSecurityData] = useState<{
+    securityScore: number;
+    securityIssues: SecurityIssue[];
+    activeConnections: number;
+    blockedRequests: number;
+    totalRequests: number;
+    averageResponseTime: number;
+    lastSecurityScan: Date;
+  }>({
+    securityScore: 0,
+    securityIssues: [],
+    activeConnections: 0, 
     blockedRequests: 0,
     totalRequests: 0,
     averageResponseTime: 0,
     lastSecurityScan: new Date()
   });
-
-  const [dependencyMetrics, setDependencyMetrics] = useState({
+  
+  const [dependencyMetrics] = useState({
     totalDependencies: 0,
     devDependencies: 0,
     outdatedPackages: 0,
     vulnerablePackages: 0,
-    lastScan: new Date(),
+    criticalVulnerabilities: 0,
+    highVulnerabilities: 0,
+    lastScan: new Date().toISOString(),
     dependencyScore: 0
   });
 
-  // Simulate metrics updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Update security metrics
-      setSecurityMetrics(prev => ({
-        ...prev,
-        activeConnections: Math.floor(Math.random() * 50),
-        blockedRequests: Math.floor(Math.random() * 10),
-        totalRequests: prev.totalRequests + Math.floor(Math.random() * 5),
-        averageResponseTime: Math.floor(Math.random() * 200),
-        lastSecurityScan: new Date()
-      }));
-
-      // Update code metrics (simulated)
-      setCodeMetrics(prev => ({
-        ...prev,
-        cyclomaticComplexity: Math.floor(Math.random() * 15),
-        fileLength: Math.floor(Math.random() * 600),
-        functionLengths: Array.from({ length: 3 }, () => Math.floor(Math.random() * 60)),
-        testCoverage: Math.floor(Math.random() * 100),
-        dependencyCount: Math.floor(Math.random() * 25)
-      }));
-
-      // Update dependency metrics (simulated)
-      setDependencyMetrics(prev => ({
-        ...prev,
-        totalDependencies: Math.floor(Math.random() * 100),
-        devDependencies: Math.floor(Math.random() * 50),
-        outdatedPackages: Math.floor(Math.random() * 10),
-        vulnerablePackages: Math.floor(Math.random() * 5),
-        lastScan: new Date(),
-        dependencyScore: Math.floor(Math.random() * 100)
-      }));
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
+  const saveAnalysis = async (report: Partial<AnalysisResult>) => {
+    const key = `report_${Date.now()}`;
+    try {
+      await persistReport(key, report);
+    } catch (err) {
+      console.error('Could not persist report', err);
+      toast.error('Failed to save the report; it will be available for this session only.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 p-6">
@@ -85,7 +77,39 @@ export const Dashboard: React.FC = () => {
           <div>
             <SecurityMetricsDisplay 
               config={defaultSecurityConfig}
-              currentMetrics={securityMetrics}
+              reportData={
+                {
+                  metrics: {
+                    securityScore: simulatedSecurityData.securityScore,
+                    codeQuality: 0,
+                    testCoverage: 0,
+                    busFactor: 0,
+                    linesOfCode: 0,
+                    totalCommits: 0,
+                    totalContributors: 0,
+                    technicalDebtScore: 0,
+                    performanceScore: 0,
+                    criticalVulnerabilities: 0,
+                    highVulnerabilities: 0,
+                    mediumVulnerabilities: 0,
+                    lowVulnerabilities: 0,
+                  },
+                  securityIssues: simulatedSecurityData.securityIssues,
+                  repository: {} as Repository,
+                  contributors: [] as Contributor[],
+                  commits: [] as Commit[],
+                  files: [] as FileInfo[],
+                  languages: {},
+                  aiSummary: '',
+                  hotspots: [],
+                  keyFunctions: [],
+                  securityAnalysis: '',
+                  technicalDebt: [],
+                  apiEndpoints: [],
+                  performanceMetrics: [],
+                  codeQualityMetrics: undefined,
+                } as unknown as AnalysisResult
+              }
             />
           </div>
           <div className="lg:col-span-2">
@@ -102,4 +126,4 @@ export const Dashboard: React.FC = () => {
       </div>
     </div>
   );
-}; 
+};

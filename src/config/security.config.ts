@@ -123,4 +123,32 @@ export const validatePassword = (password: string): boolean => {
   if (requireSpecialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
   
   return true;
-}; 
+};
+
+// Rate limiting utility
+export class RateLimiter {
+  private requests: Map<string, number[]> = new Map();
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+
+  constructor(windowMs: number = 60000, maxRequests: number = 100) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+  }
+
+  isRateLimited(key: string): boolean {
+    const now = Date.now();
+    const userRequests = this.requests.get(key) || [];
+    
+    // Remove old requests
+    const recentRequests = userRequests.filter(time => now - time < this.windowMs);
+    
+    if (recentRequests.length >= this.maxRequests) {
+      return true;
+    }
+    
+    recentRequests.push(now);
+    this.requests.set(key, recentRequests);
+    return false;
+  }
+}

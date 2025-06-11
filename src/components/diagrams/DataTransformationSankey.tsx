@@ -1,41 +1,41 @@
-import React, { useEffect, useRef, useMemo } from 'react';
-import * as d3 from 'd3';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
+import * as d3 from 'd3'; // For scales, colors, etc.
+import { sankey, sankeyLinkHorizontal, sankeyJustify, sankeyLeft } from 'd3-sankey';
+import { Shuffle } from 'lucide-react'; // For empty state icons, removed ServerCrash
 
-interface SankeyNode extends d3.SimulationNodeDatum {
-  id: string;
-  name: string;
-  category: string;
+// Interface for nodes as expected by d3-sankey and for our use
+export interface SankeyNode {
+  id: string; // Unique identifier for the node
+  name: string; // Display name for the node
+  category: string; // Category for coloring or grouping
+  // Properties that d3-sankey will populate:
+  index?: number;
+  x0?: number;
+  x1?: number;
+  y0?: number;
+  y1?: number;
   value?: number;
-  x?: number;
-  y?: number;
+  depth?: number;
+  layer?: number;
   sourceLinks?: SankeyLink[];
   targetLinks?: SankeyLink[];
 }
 
-interface SankeyLink extends d3.SimulationLinkDatum<SankeyNode> {
-  source: string | SankeyNode;
-  target: string | SankeyNode;
-  value: number;
-  path?: string;
+// Interface for links as expected by d3-sankey
+export interface SankeyLink {
+  source: string | number | SankeyNode; // ID, index, or node object
+  target: string | number | SankeyNode; // ID, index, or node object
+  value: number; // The flow value of the link
+  // Properties that d3-sankey will populate:
+  index?: number;
+  y0?: number;
+  y1?: number;
   width?: number;
 }
 
-interface PositionedNode extends SankeyNode {
-  x: number;
-  y: number;
-  height: number;
-}
-
-interface PositionedLink extends SankeyLink {
-  source: PositionedNode;
-  target: PositionedNode;
-  path: string;
-  width: number;
-}
-
 interface DataTransformationSankeyProps {
-  nodes: SankeyNode[];
-  links: SankeyLink[];
+  nodes?: SankeyNode[];
+  links?: SankeyLink[];
   width?: number;
   height?: number;
   nodeWidth?: number;
@@ -44,184 +44,162 @@ interface DataTransformationSankeyProps {
 }
 
 const DataTransformationSankey: React.FC<DataTransformationSankeyProps> = ({ 
-  nodes, 
-  links, 
+  nodes: initialNodes = [], 
+  links: initialLinks = [], 
   width = 800, 
-  height = 400,
-  nodeWidth = 20,
-  nodePadding = 10,
-  colorScale = d3.scaleOrdinal(d3.schemeCategory10)
+  height = 500,
+  nodeWidth = 24,
+  nodePadding = 15,
+  colorScale = d3.scaleOrdinal(d3.schemeTableau10)
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [tooltipContent, setTooltipContent] = useState<string | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{x: number, y: number} | null>(null);
 
-  // Memoize data processing
-  const { validNodes, validLinks, categories } = useMemo(() => {
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const categories = Array.from(new Set(nodes.map(n => n.category))).sort();
+  const processedGraph = useMemo(() => {
+    if (!initialNodes || !initialNodes.length || !initialLinks || !initialLinks.length) {
+      return null;
+    }
+    const nodesCopy = JSON.parse(JSON.stringify(initialNodes)) as SankeyNode[];
+    const linksCopy = JSON.parse(JSON.stringify(initialLinks)) as SankeyLink[];
+
+    const nodeMap = new Map(nodesCopy.map((node, i) => [node.id, i]));
     
-    // Filter out invalid links
-    const validLinks = links.filter(link => {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      return nodeMap.has(sourceId) && nodeMap.has(targetId) && link.value > 0;
+    const validLinks = linksCopy.filter(link => {
+        const sourceId = typeof link.source === 'string' ? link.source : (link.source as SankeyNode).id;
+        const targetId = typeof link.target === 'string' ? link.target : (link.target as SankeyNode).id;
+        return nodeMap.has(sourceId) && nodeMap.has(targetId) && link.value > 0;
+    }).map(link => {
+        const sourceNodeId = typeof link.source === 'string' ? link.source : (link.source as SankeyNode).id;
+        const targetNodeId = typeof link.target === 'string' ? link.target : (link.target as SankeyNode).id;
+        return {
+            ...link,
+            source: nodeMap.get(sourceNodeId)!, 
+            target: nodeMap.get(targetNodeId)! 
+        };
     });
 
-    // Filter out orphaned nodes
-    const connectedNodeIds = new Set([
-      ...validLinks.map(l => typeof l.source === 'string' ? l.source : l.source.id),
-      ...validLinks.map(l => typeof l.target === 'string' ? l.target : l.target.id)
-    ]);
+    if (nodesCopy.length === 0 || validLinks.length === 0) return null;
+    
+    const layout = sankey<SankeyNode, SankeyLink>()
+      .nodeId((d: SankeyNode) => d.id)
+      .nodeWidth(nodeWidth)
+      .nodePadding(nodePadding)
+      .extent([[1, 1], [width - 1, height - 40]]) 
+      .nodeAlign(sankeyJustify || sankeyLeft); 
 
-    const validNodes = nodes.filter(n => connectedNodeIds.has(n.id));
+    try {
+        const graphInput = { nodes: nodesCopy, links: validLinks.map(l => ({...l})) };
+        const graph = layout(graphInput);
 
-    return { validNodes, validLinks, categories };
-  }, [nodes, links]);
+        if (graph.nodes.some((n: SankeyNode) => n.x0 === undefined || n.y0 === undefined || isNaN(n.x0) || isNaN(n.y0))) {
+            console.error("Sankey layout resulted in undefined or NaN coordinates.");
+            return null;
+        }
+        return graph;
+    } catch (error) {
+        console.error("Error during Sankey layout:", error);
+        return null;
+    }
+  }, [initialNodes, initialLinks, width, height, nodeWidth, nodePadding]);
 
   useEffect(() => {
-    if (!svgRef.current || !validNodes.length) return;
-
+    if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const margin = { top: 20, right: 20, bottom: 20, left: 20 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+    if (!processedGraph || !processedGraph.nodes || !processedGraph.nodes.length || !processedGraph.links || !processedGraph.links.length) {
+      const g = svg.attr("width", width).attr("height", height).append("g")
+        .attr("transform", `translate(${width / 2}, ${height / 2 - 20})`);
+      g.append(() => React.createElement(Shuffle, { className: "w-16 h-16 text-gray-400" }) as unknown as Element)
+        .attr('x', -32).attr('y', -50);
+      g.append("text").attr("text-anchor", "middle").attr("y", 20)
+        .style("font-size", "14px").style("fill", "#6B7280")
+        .text("Insufficient data for Sankey diagram.");
+      return;
+    }
+    
+    const { nodes: layoutNodes, links: layoutLinks } = processedGraph;
+    const linkGen = sankeyLinkHorizontal();
 
-    const categoryWidth = innerWidth / categories.length;
-
-    // Position nodes by category with better type safety
-    const positionedNodes: PositionedNode[] = validNodes.map((node) => {
-      const categoryIndex = categories.indexOf(node.category);
-      const nodesInCategory = validNodes.filter(n => n.category === node.category);
-      const nodeIndex = nodesInCategory.indexOf(node);
-      const categoryHeight = innerHeight / Math.max(1, nodesInCategory.length);
-
-      return {
-        ...node,
-        x: margin.left + categoryIndex * categoryWidth + nodeWidth,
-        y: margin.top + nodeIndex * categoryHeight + nodePadding,
-        height: categoryHeight - nodePadding * 2
-      };
-    });
-
-    // Create the node rectangles
-    const nodeGroup = svg
-      .append("g")
-      .attr("class", "nodes")
-      .selectAll("g")
-      .data(positionedNodes)
-      .enter()
-      .append("g")
-      .attr("transform", d => `translate(${d.x},${d.y})`);
-
-    nodeGroup
-      .append("rect")
-      .attr("width", nodeWidth)
-      .attr("height", d => d.height)
-      .attr("fill", d => colorScale(d.category))
-      .attr("opacity", 0.8)
-      .attr("stroke", "#000")
-      .attr("stroke-width", 1);
-
-    // Add node labels
-    nodeGroup
-      .append("text")
-      .attr("x", nodeWidth + 5)
-      .attr("y", d => d.height / 2)
-      .attr("dy", "0.35em")
-      .text(d => d.name)
-      .attr("font-size", "10px")
-      .attr("fill", "#333");
-
-    // Create links with proper typing
-    const positionedLinks: PositionedLink[] = validLinks.map(link => {
-      const source = positionedNodes.find(
-        n => n.id === (typeof link.source === 'string' ? link.source : link.source.id)
-      )!;
-      const target = positionedNodes.find(
-        n => n.id === (typeof link.target === 'string' ? link.target : link.target.id)
-      )!;
-
-      // Calculate link path
-      const path = d3.path();
-      const sourceX = source.x + nodeWidth;
-      const targetX = target.x;
-      const sourceY = source.y + source.height / 2;
-      const targetY = target.y + target.height / 2;
-      const width = Math.max(1, Math.min(10, Math.sqrt(link.value)));
-
-      path.moveTo(sourceX, sourceY);
-      path.bezierCurveTo(
-        (sourceX + targetX) / 2, sourceY,
-        (sourceX + targetX) / 2, targetY,
-        targetX, targetY
-      );
-
-      return {
-        ...link,
-        source,
-        target,
-        path: path.toString(),
-        width
-      };
-    });
-
-    // Draw the links
-    svg
-      .append("g")
-      .attr("class", "links")
-      .selectAll("path")
-      .data(positionedLinks)
-      .enter()
-      .append("path")
-      .attr("d", d => d.path)
-      .attr("stroke", "#999")
-      .attr("stroke-width", d => d.width)
+    svg.append("g")
       .attr("fill", "none")
-      .attr("opacity", 0.4);
+      .attr("stroke-opacity", 0.5)
+      .selectAll<SVGPathElement, SankeyLink>("path")
+      .data(layoutLinks)
+      .join("path")
+        .attr("d", linkGen) // Removed 'as any'
+        .attr("stroke", (d: SankeyLink) => colorScale((d.source as SankeyNode).category))
+        .attr("stroke-width", (d: SankeyLink) => Math.max(1, d.width!))
+        .on("mouseover", (event: MouseEvent, d: SankeyLink) => {
+          d3.select(event.currentTarget as SVGPathElement).attr("stroke-opacity", 0.8);
+          setTooltipContent(`
+            <div class="font-semibold text-sm">${(d.source as SankeyNode).name} → ${(d.target as SankeyNode).name}</div>
+            <div class="text-xs text-gray-300">Value: ${d.value.toLocaleString()}</div>
+          `);
+          setTooltipPosition({ x: event.pageX, y: event.pageY });
+        })
+        .on("mouseout", (event: MouseEvent) => {
+          d3.select(event.currentTarget as SVGPathElement).attr("stroke-opacity", 0.5);
+          setTooltipContent(null);
+        });
 
-    // Add tooltips and interactivity
-    nodeGroup
-      .on("mouseover", function(_event, d) {
-        d3.select(this)
-          .select("rect")
-          .transition()
-          .duration(200)
-          .attr("opacity", 1);
+    const nodeGroup = svg.append("g")
+      .attr("stroke", "#000")
+      .attr("stroke-width", 0.5)
+      .selectAll<SVGGElement, SankeyNode>("g")
+      .data(layoutNodes)
+      .join("g")
+        .attr("transform", (d: SankeyNode) => `translate(${d.x0},${d.y0})`)
+        .on("mouseover", (event: MouseEvent, d: SankeyNode) => {
+          d3.select(event.currentTarget as SVGGElement).select("rect").attr("stroke-width", 1.5).attr("stroke", "#333");
+          setTooltipContent(`
+            <div class="font-semibold text-sm">${d.name}</div>
+            <div class="text-xs text-gray-300">Category: ${d.category}</div>
+            <div class="text-xs mt-1">Total Flow: ${d.value!.toLocaleString()}</div>
+          `);
+          setTooltipPosition({ x: event.pageX, y: event.pageY });
+        })
+        .on("mouseout", (event: MouseEvent) => {
+          d3.select(event.currentTarget as SVGGElement).select("rect").attr("stroke-width", 0.5).attr("stroke", "#000");
+          setTooltipContent(null);
+        });
 
-        // Highlight connected links
-        svg.selectAll<SVGPathElement, PositionedLink>("path")
-          .transition()
-          .duration(200)
-          .attr("opacity", function(this: SVGPathElement, link: PositionedLink) {
-            return link.source.id === d.id || link.target.id === d.id ? 0.8 : 0.1;
-          });
-      })
-      .on("mouseout", function() {
-        d3.select(this)
-          .select("rect")
-          .transition()
-          .duration(200)
-          .attr("opacity", 0.8);
+    nodeGroup.append("rect")
+      .attr("height", (d: SankeyNode) => Math.max(1, d.y1! - d.y0!))
+      .attr("width", (d: SankeyNode) => d.x1! - d.x0!)
+      .attr("fill", (d: SankeyNode) => colorScale(d.category))
+      .attr("fill-opacity", 0.9);
 
-        svg.selectAll("path")
-          .transition()
-          .duration(200)
-          .attr("opacity", 0.4);
-      });
-
-  }, [validNodes, validLinks, categories, width, height, nodeWidth, nodePadding, colorScale]);    return (
-      <div className="relative">
-        <div className="bg-white rounded-xl p-4 shadow-lg">
-          <svg ref={svgRef} width={width} height={height} className="w-full h-full"></svg>
-          <p className="text-sm text-gray-600 text-center max-w-md mt-4">
-            Sankey diagram showing data flow between system components. 
-            Width of connections represents data volume.
-          </p>
-        </div>
+    nodeGroup.append("text")
+      .attr("x", (d: SankeyNode) => (d.x0! < width / 2 && (d.x1! - d.x0!) > 10) ? (d.x1! - d.x0! + 6) : -6)
+      .attr("y", (d: SankeyNode) => (d.y1! - d.y0!) / 2)
+      .attr("dy", "0.35em")
+      .attr("text-anchor", (d: SankeyNode) => (d.x0! < width / 2 && (d.x1! - d.x0!) > 10) ? "start" : "end")
+      .style("font-size", "10px")
+      .style("fill", "#333")
+      .style("pointer-events", "none")
+      .text((d: SankeyNode) => d.name)
+      .append("title")
+        .text((d: SankeyNode) => `${d.name}\nCategory: ${d.category}\nValue: ${d.value!.toLocaleString()}`);
+        
+  }, [processedGraph, width, height, colorScale, nodeWidth, nodePadding]);
+  
+  return (
+    <div className="relative p-4 bg-white rounded-lg shadow border border-gray-200">
+      <svg ref={svgRef} className="w-full h-auto" viewBox={`0 0 ${width} ${height}`} />
+      {tooltipContent && tooltipPosition && (
+        <div
+          className="absolute p-2 bg-gray-800 text-white rounded-md shadow-lg text-xs pointer-events-none"
+          style={{ left: tooltipPosition.x + 10, top: tooltipPosition.y - 20, opacity: 0.95, zIndex: 1000 }}
+          dangerouslySetInnerHTML={{ __html: tooltipContent }}
+        />
+      )}
+      <div className="mt-3 text-xs text-gray-500 text-center max-w-md mx-auto">
+        <p>Sankey diagram illustrating data or process flow. Node height and link width represent flow volume. Hover for details.</p>
       </div>
-    );
+    </div>
+  );
 };
 
-export type { SankeyNode, SankeyLink, DataTransformationSankeyProps };
 export default DataTransformationSankey;
