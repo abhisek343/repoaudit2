@@ -1,0 +1,67 @@
+
+# Dependency directories
+node_modules/
+npm-packages-offline-cache/
+bower_components/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+build/
+out/
+target/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+.DS_Store
+.project
+.settings/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# Compiled files
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Database and cache files
+*.sqlite
+*.db
+*.cache
+
+# Dependency lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Testing and coverage
+coverage/
+.nyc_output/

@@ -60,6 +60,7 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
   };
 
   try {
+    console.log('Received query:', req.query); // Add this line for debugging
     // Get parameters from query (GET) or body (POST)
     const { repoUrl, llmConfig: llmConfigString, githubToken: rawGithubToken } = req.method === 'POST' ? req.body : req.query;
     const githubToken = typeof rawGithubToken === 'string' && rawGithubToken.trim() !== '' ? rawGithubToken : undefined;

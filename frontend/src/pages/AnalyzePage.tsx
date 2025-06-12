@@ -21,7 +21,7 @@ import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
 import { AnalysisService } from '../services/analysisService';
 import { persistReport } from '../utils/persist';
-import { LLMConfig, ReportCategory, AnalysisResult } from '../types'; // Added AnalysisResult
+import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index'; // Added AnalysisResult
 
 const AnalyzePage = () => {
   const [githubUrl, setGithubUrl] = useState('');
@@ -365,7 +365,7 @@ const AnalyzePage = () => {
                   {category.description}
                 </p>
                 <div className="space-y-1.5">
-                  {category.features.slice(0, 3).map((feature, index) => (
+                  {category.features.slice(0, 3).map((feature: string, index: number) => (
                     <div key={index} className="flex items-center text-xs text-gray-700">
                       <CheckCircle className="w-3.5 h-3.5 text-green-500 mr-1.5 flex-shrink-0" />
                       <span>{feature}</span>

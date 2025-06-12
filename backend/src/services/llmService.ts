@@ -44,7 +44,7 @@ export class LLMService {
           });
           break;
         case 'gemini':
-          this.googleAI = new GoogleGenAI(this.config.apiKey); // Ensure this is the correct constructor usage
+          this.googleAI = new GoogleGenAI({ apiKey: this.config.apiKey }); // Align with documentation: pass API key as an object property
           break;
         case 'claude':
           this.claude = new Anthropic({
@@ -76,7 +76,7 @@ export class LLMService {
     }
   }
 
-  async enhanceMermaidDiagram(diagramCode: string, fileInfo: FileInfo): Promise<{ enhancedCode: string }> {
+  async enhanceMermaidDiagram(diagramCode: string, _fileInfo: FileInfo): Promise<{ enhancedCode: string }> {
     // Placeholder implementation
     return { enhancedCode: diagramCode };
   }
@@ -87,7 +87,7 @@ export class LLMService {
 
   private getDefaultModel(provider: LLMConfig['provider']): string {
     if (provider === 'openai') return 'gpt-4o';
-    if (provider === 'gemini') return 'gemini-1.5-flash-latest';
+    if (provider === 'gemini') return 'gemini-2.0-flash'; // Updated default Gemini model
     if (provider === 'claude') return 'claude-3-5-sonnet-20240620';
     return '';
   }
@@ -145,23 +145,36 @@ export class LLMService {
         }
         case 'gemini': {
           if (!this.googleAI) throw new LLMError('Google AI (Gemini) not initialized.');
-          const geminiModel = this.googleAI.getGenerativeModel({ model: modelName });
+          // Directly use the models.generateContent structure as per latest docs
           let retryCount = 0;
           const maxRetries = 4;
           const initialDelay = 2000;
           while (retryCount < maxRetries) {
             try {
-              const result = await geminiModel.generateContent(prompt);
-              // The 'result' object is GenerateContentResult, which has a 'response' property of type GenerateContentResponse.
-              const genResponse: GenerateContentResponse = result.response;
+              // Align with documentation: ai.models.generateContent({ model, contents })
+              const result = await this.googleAI.models.generateContent({
+                model: modelName,
+                contents: [{ role: "user", parts: [{ text: prompt }] }] // Ensure 'contents' format is correct
+              });
+              // 'result' is already the GenerateContentResponse
+              const genResponse: GenerateContentResponse = result;
               // Access text property, or fallback to candidates
-              if (typeof genResponse.text === 'string') {
-                return genResponse.text;
+              // Note: The SDK's GenerateContentResponse might have text() as a method or .text as a property.
+              // The current usage implies .text is a property. If it's a method, it should be genResponse.text().
+              // Let's assume .text is a property based on current structure and previous attempts.
+              // If genResponse.text is not directly available, the candidates path is the fallback.
+              // The TS error indicates genResponse.text is a 'get' accessor, so access it as a property.
+              const responseText = genResponse.text;
+
+              if (typeof responseText === 'string') {
+                return responseText;
               } else {
+                // Fallback to candidates if .text is not a string or not present
                 const candidateText = genResponse.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (typeof candidateText === 'string') return candidateText;
-                // If genResponse.text is not a string and candidateText is not found, log and throw
-                console.error("LLMService Gemini: genResponse.text is not a string and candidate text not found. Response:", genResponse);
+                
+                // If neither .text nor candidates provide a string, log and throw
+                console.error("LLMService Gemini: Text content not found via .text property or in candidates. Response:", genResponse);
                 throw new LLMError("Unexpected Gemini response structure: text content not found.");
               }
             } catch (error) {

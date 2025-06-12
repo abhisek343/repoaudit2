@@ -136,9 +136,9 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
 
   const getDefaultModel = (provider: string) => {
     switch (provider) {
-      case 'openai': return 'gpt-4.1-nano';
-      case 'gemini': return 'gemini-2.5-flash-preview-05-20';
-      case 'claude': return 'claude-sonnet-4';
+      case 'openai': return 'gpt-4.1-nano'; // Assuming this is a desired custom name or specific variant
+      case 'gemini': return 'gemini-2.5-flash-preview-05-20'; // Updated default Gemini model to latest Flash
+      case 'claude': return 'claude-sonnet-4'; // Assuming this is a desired custom name or specific variant
       default: return '';
     }
   };
@@ -153,8 +153,9 @@ const getModelOptions = (provider: string) => {
       ];
     case 'gemini':
       return [
-        { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (Recommended)', context: '1M tokens', pros: 'Massive context, multimodal, strong reasoning', cons: 'Higher latency' },
-        { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash', context: '1M tokens', pros: 'Very fast and cost-effective, large context', cons: 'Slightly less capable than Pro' }
+        { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash Preview (05-20) (Recommended)', context: '1M tokens*', pros: 'Latest Flash, very fast, large context', cons: 'Preview version' },
+        { value: 'gemini-2.5-pro-preview-06-05', label: 'Gemini 2.5 Pro Preview (06-05)', context: '1M tokens*', pros: 'Latest Pro model, advanced reasoning, large context', cons: 'Preview version, potentially higher latency/cost' }
+        // *Context window for Gemini models can vary.
       ];
     case 'claude':
       return [
@@ -172,7 +173,7 @@ const getModelOptions = (provider: string) => {
       case 'openai':
         return { name: 'OpenAI', description: 'Access GPT models for high-quality text generation.', keyUrl: 'https://platform.openai.com/api-keys', maxContext: '128K tokens', strengths: 'Strong overall performance' };
       case 'gemini':
-        return { name: 'Google Gemini', description: 'Access Gemini models for advanced AI capabilities.', keyUrl: 'https://aistudio.google.com/app/apikey', maxContext: 'Up to 1M tokens', strengths: 'Large context, multimodal' };
+        return { name: 'Google Gemini', description: 'Access Gemini models for advanced AI capabilities.', keyUrl: 'https://aistudio.google.com/app/apikey', maxContext: '1M tokens', strengths: 'Large context, multimodal' };
       case 'claude':
         return { name: 'Anthropic Claude', description: 'Access Claude models for safe, helpful AI assistance.', keyUrl: 'https://console.anthropic.com/account/keys', maxContext: '200K tokens', strengths: 'Excellent for code analysis' };
       default:
