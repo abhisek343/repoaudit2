@@ -3,11 +3,11 @@ import { AnalysisResult } from '../types'; // Import AnalysisResult, removed Rep
 
 interface ExecutiveSummaryProps {
   // Pass the full reportData or specific parts needed
-  reportData: Pick<AnalysisResult, 'repository' | 'aiSummary' | 'metrics'>;
+  reportData: Pick<AnalysisResult, 'basicInfo' | 'aiSummary' | 'metrics'>;
 }
 
 const ExecutiveSummary = ({ reportData }: ExecutiveSummaryProps) => {
-  const { repository, aiSummary, metrics } = reportData;
+  const { basicInfo, aiSummary, metrics } = reportData;
 
   // Generate some simple insights if AI summary is not available or too short
   const getFallbackInsights = () => {
@@ -20,18 +20,10 @@ const ExecutiveSummary = ({ reportData }: ExecutiveSummaryProps) => {
     else if (metrics.totalContributors > 3) insights.push("A small, focused team of contributors.");
     else insights.push("Very few contributors; potential bus factor risk.");
     
-    if (metrics.codeQuality >= 8) insights.push("Code quality score is excellent.");
-    else if (metrics.codeQuality >= 6) insights.push("Code quality score is good.");
-    else insights.push("Code quality score suggests areas for improvement.");
-
-    if (metrics.testCoverage >= 75) insights.push("Good test coverage.");
-    else if (metrics.testCoverage >= 50) insights.push("Moderate test coverage, could be improved.");
-    else insights.push("Test coverage is low and needs attention.");
-    
     return insights.slice(0, 4); // Max 4 fallback insights
   };
 
-  const fallbackSummary = `The repository ${repository.fullName} is primarily a ${repository.language} project. It has ${repository.stars} stars and ${metrics.totalCommits} commits from ${metrics.totalContributors} contributors. ${repository.description || 'No further description provided.'}`;
+  const fallbackSummary = `The repository ${basicInfo.fullName} is primarily a ${basicInfo.language} project. It has ${basicInfo.stars} stars and ${metrics.totalCommits} commits from ${metrics.totalContributors} contributors. ${basicInfo.description || 'No further description provided.'}`;
   const summaryToDisplay = aiSummary && aiSummary.length > 50 ? aiSummary : fallbackSummary;
   const insightsToDisplay = aiSummary && aiSummary.length > 50 ? [] : getFallbackInsights();
 

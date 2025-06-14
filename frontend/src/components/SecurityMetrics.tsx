@@ -3,6 +3,7 @@ import { SecurityConfig } from '../config/security.config';
 // We'll derive metrics from AnalysisResult, not pass currentMetrics directly
 import { AnalysisResult } from '../types'; 
 import { ShieldAlert, Server, Lock, FileWarning } from 'lucide-react'; // Removed ShieldCheck, Clock, ListChecks
+import VisualizationErrorBoundary from './VisualizationErrorBoundary';
 
 interface SecurityMetricsProps {
   config: SecurityConfig; // Default config for display of rules
@@ -10,16 +11,16 @@ interface SecurityMetricsProps {
 }
 
 export const SecurityMetricsDisplay: React.FC<SecurityMetricsProps> = ({ config, reportData }) => {
-  const { securityIssues, metrics } = reportData;
+  const securityIssues = reportData.securityIssues || [];
 
-  const criticalIssues = securityIssues?.filter(issue => issue.severity === 'critical').length || 0;
-  const highIssues = securityIssues?.filter(issue => issue.severity === 'high').length || 0;
-  const mediumIssues = securityIssues?.filter(issue => issue.severity === 'medium').length || 0;
-  const lowIssues = securityIssues?.filter(issue => issue.severity === 'low').length || 0;
-  // const totalIssues = criticalIssues + highIssues + mediumIssues + lowIssues; // Removed unused variable
+  const criticalIssues = securityIssues.filter(issue => issue.severity === 'critical').length;
+  const highIssues = securityIssues.filter(issue => issue.severity === 'high').length;
+  const mediumIssues = securityIssues.filter(issue => issue.severity === 'medium').length;
+  const lowIssues = securityIssues.filter(issue => issue.severity === 'low').length;
   
-  // securityScore from metrics is the overall score
-  const securityScore = metrics.securityScore || 0;
+  // Derive a simple security score: lower is better, scale 0-10
+  const totalIssues = criticalIssues + highIssues + mediumIssues + lowIssues;
+  const securityScore = totalIssues > 0 ? Math.max(0, 10 - totalIssues) : 10;
 
   const getScoreColor = (score: number): string => {
     if (score >= 8) return 'text-green-600';
@@ -30,6 +31,7 @@ export const SecurityMetricsDisplay: React.FC<SecurityMetricsProps> = ({ config,
 
 
   return (
+    <VisualizationErrorBoundary>
     <div className="p-6 bg-white rounded-xl shadow-lg border border-gray-100">
       <h2 className="text-xl font-bold mb-6 text-gray-800 flex items-center">
         <ShieldAlert className="w-6 h-6 mr-3 text-red-500" />
@@ -82,6 +84,7 @@ export const SecurityMetricsDisplay: React.FC<SecurityMetricsProps> = ({ config,
         <p>Displayed configurations are defaults. Actual runtime security depends on implementation.</p>
       </div>
     </div>
+    </VisualizationErrorBoundary>
   );
 };
 

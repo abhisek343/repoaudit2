@@ -1,107 +1,114 @@
-import React from 'react';
-import { ErrorBoundary } from 'react-error-boundary';
-import { Skeleton } from '../ui/skeleton';
-import ErrorDisplay from '../ui/ErrorDisplay';
-import { DependencyGraph, DependencyLink as GraphDependencyLink } from '../diagrams/DependencyGraph';
-import ContributorStreamgraph, { StreamDataPoint } from '../diagrams/ContributorStreamgraph';
-import { AnalysisResult, ProcessedContributor } from '../../types';
+import { AnalysisResult } from '../../types';
 
-import { useReportSimple as useReport } from '../../hooks/useReport';
+interface OverviewPageProps {
+  analysisResult: AnalysisResult;
+}
 
-// Definition of DataHydrator
-const DataHydrator = ({ data, children }: { data: AnalysisResult | { error: string } | null; children: React.ReactNode }) => {
-  if (!data) return <Skeleton className="h-[400px] w-full" />;
-  
-  // Check if data has an error property before accessing it
-  if (typeof data === 'object' && data !== null && 'error' in data) {
-    // Since data prop is AnalysisResult | { error: string } | null,
-    // if 'error' is in data, data must be of type { error: string }
-    const errorObj = data as { error: string }; 
-    return <ErrorDisplay message={errorObj.error} showRetry onRetry={() => window.location.reload()} />;
+export function OverviewPage({ analysisResult }: OverviewPageProps) {
+  // Add safety checks for analysisResult
+  if (!analysisResult) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="text-center text-gray-500">
+            <p>No analysis data available</p>
+          </div>
+        </div>
+      </div>
+    );
   }
+
+  console.log('[OverviewPage] Received analysisResult:', analysisResult);
   
-  return <ErrorBoundary FallbackComponent={ErrorFallback}>{children}</ErrorBoundary>;
-};
+  // Use optional chaining and default values directly for cleaner access
+  const basicInfo = analysisResult?.basicInfo || {};
+  const metrics = analysisResult?.metrics || {};
+  const aiSummary = analysisResult?.aiSummary || '';
 
-// Definition of ErrorFallback
-const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (
-  <ErrorDisplay 
-    title="Render Error"
-    message={error.message}
-    showRetry
-    onRetry={resetErrorBoundary}
-  />
-);
+  console.log('[OverviewPage] Processed data:', { basicInfo, metrics, aiSummary });
 
-const OverviewPage = () => {
-  const { reportData, isLoading, error } = useReport();
+  const vitals = [
+    { name: 'Stars', value: basicInfo.stars, icon: '⭐' },
+    { name: 'Forks', value: basicInfo.forks, icon: '🍴' },
+    { name: 'File Count', value: metrics.fileCount, icon: '📄' },
+    { name: 'Critical Vulnerabilities', value: metrics.criticalVulnerabilities, icon: '🔥' },
+    { name: 'High Vulnerabilities', value: metrics.highVulnerabilities, icon: '🔶' },
+  ];
 
-  // Prepare links for DependencyGraph - MOVED TO TOP
-  const transformedLinks = React.useMemo(() => {
-    if (!reportData?.dependencies?.nodes || !reportData?.dependencies?.links) {
-      return [];
-    }
-    const nodesMap = new Map(reportData.dependencies.nodes.map(node => [node.id, node]));
-    return reportData.dependencies.links.map(link => {
-      const sourceNode = nodesMap.get(link.source as string);
-      const targetNode = nodesMap.get(link.target as string);
-      if (sourceNode && targetNode) {
-        return {
-          ...link,
-          source: sourceNode,
-          target: targetNode,
-        } as GraphDependencyLink;
-      }
-      return null;
-    }).filter(Boolean) as GraphDependencyLink[];
-  }, [reportData?.dependencies]);
-
-  // Prepare data for ContributorStreamgraph - MOVED TO TOP
-  const contributorActivityData: StreamDataPoint[] = React.useMemo(() => {
-    if (!reportData?.contributors) {
-      return [];
-    }
-    const activityByDate: { [date: string]: { [contributorLogin: string]: number } } = {};
-    reportData.contributors.forEach((contributor: ProcessedContributor) => {
-      if (contributor.activity && Array.isArray(contributor.activity)) {
-        contributor.activity.forEach(act => {
-          if (act && typeof act.date === 'string' && typeof act.count === 'number') {
-            if (!activityByDate[act.date]) {
-              activityByDate[act.date] = {};
-            }
-            if (typeof contributor.login === 'string') {
-               activityByDate[act.date][contributor.login] = (activityByDate[act.date][contributor.login] || 0) + act.count;
-            }
-          }
-        });
-      }
-    });
-    return Object.entries(activityByDate).map(([date, contributors]) => ({
-      date,
-      contributors,
-    }));
-  }, [reportData?.contributors]);
-  
-  if (isLoading) return <Skeleton className="h-[600px] w-full" />;
-  if (error) return <ErrorDisplay message={error} title="Failed to load report data" showRetry onRetry={() => window.location.reload()} />;
-  
   return (
-    <DataHydrator data={reportData}>
-      {reportData && (
-        <div className="space-y-6">
-          {reportData.dependencies && (
-            <DependencyGraph 
-              nodes={reportData.dependencies.nodes || []}
-              links={transformedLinks}
-            />
-          )}
-          <ContributorStreamgraph 
-            data={contributorActivityData} 
-          />
+    <div className="space-y-6">
+      {/* Repository Overview */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-2xl font-bold mb-4">{basicInfo.fullName || 'N/A'}</h2>
+        <p className="text-gray-600 mb-4">{basicInfo.description || 'No description available.'}</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-blue-600">
+              {typeof metrics.linesOfCode === 'number' ? metrics.linesOfCode.toLocaleString() : 'N/A'}
+            </div>
+            <div className="text-gray-600">Lines of Code</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-green-600">
+              {typeof metrics.totalContributors === 'number' ? metrics.totalContributors.toLocaleString() : 'N/A'}
+            </div>
+            <div className="text-gray-600">Contributors</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-purple-600">
+              {typeof metrics.totalCommits === 'number' ? metrics.totalCommits.toLocaleString() : 'N/A'}
+            </div>
+            <div className="text-gray-600">Commits</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Vitals */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-xl font-bold mb-3">Vitals</h3>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {vitals.map((vital, index) => (
+            <div key={index} className="text-center">
+              <div className="text-3xl">{vital.icon}</div>
+              <div className="text-xl font-bold text-gray-800">{vital.value?.toLocaleString() ?? 'N/A'}</div>
+              <div className="text-gray-600">{vital.name}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* AI Summary */}
+      {aiSummary && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-xl font-bold mb-3">AI Summary</h3>
+          <p className="text-gray-700">{aiSummary}</p>
         </div>
       )}
-    </DataHydrator>
+
+      {/* Repository Details */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-xl font-bold mb-3">Repository Details</h3>
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Language</dt>
+            <dd className="mt-1 text-sm text-gray-900">{basicInfo.language || 'Not specified'}</dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Created</dt>
+            <dd className="mt-1 text-sm text-gray-900">{basicInfo.createdAt ? new Date(basicInfo.createdAt).toLocaleDateString() : 'N/A'}</dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Last Updated</dt>
+            <dd className="mt-1 text-sm text-gray-900">{basicInfo.updatedAt ? new Date(basicInfo.updatedAt).toLocaleDateString() : 'N/A'}</dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Default Branch</dt>
+            <dd className="mt-1 text-sm text-gray-900">{basicInfo.defaultBranch || 'N/A'}</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
   );
-};
+}
 
 export default OverviewPage;

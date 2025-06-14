@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom'; // Added useNavigate
+// Add useLocation
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'; 
 import { 
   ArrowLeft, 
   Calendar, 
@@ -25,62 +26,111 @@ import ActivityPage from '../components/report/ActivityPage';
 import CommunityPage from '../components/report/CommunityPage';
 import OnboardingPage from '../components/report/OnboardingPage';
 import DiagramsPage from '../components/report/DiagramsPage';
-import { loadReport } from '../utils/persist';
+import GitHistoryPage from './GitHistoryPage';
 import { AnalysisResult } from '../types';
+import { StorageService } from '../services/storageService';
+import VisualizationErrorBoundary from '../components/VisualizationErrorBoundary';
 
-type PageComponentProps = {
-  reportData: AnalysisResult;
-};
+interface ReportPageProps {
+  analysisResult?: AnalysisResult | null;
+}
 
-const ReportPage = () => {
-  const { repoId } = useParams<{ repoId: string }>(); // Ensure repoId is typed
-  const [reportData, setReportData] = useState<AnalysisResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null); // Added error state
+const ReportPage = ({ analysisResult }: ReportPageProps) => {
+  const { repoId } = useParams<{ repoId: string }>();
+  console.log('[ReportPage] repoId from params:', repoId); // Log repoId
+  const [reportData, setReportData] = useState<AnalysisResult | null | undefined>(analysisResult);
+  const [isLoading, setIsLoading] = useState<boolean>(!analysisResult);
+  const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const navigate = useNavigate();
-
-  const pages = [
-    { id: 'overview', title: 'Overview & Vitals', icon: <BarChart3 className="w-5 h-5" />, component: OverviewPage as React.FC<PageComponentProps> },
-    { id: 'architecture', title: 'Code Architecture & Quality', icon: <Code className="w-5 h-5" />, component: ArchitecturePage as React.FC<PageComponentProps> },
-    { id: 'diagrams', title: 'Advanced Diagrams', icon: <Layers className="w-5 h-5" />, component: DiagramsPage as React.FC<PageComponentProps> },
-    { id: 'activity', title: 'Activity & Momentum', icon: <Activity className="w-5 h-5" />, component: ActivityPage as React.FC<PageComponentProps> },
-    { id: 'community', title: 'Community & Contributors', icon: <Users className="w-5 h-5" />, component: CommunityPage as React.FC<PageComponentProps> },
-    { id: 'onboarding', title: 'Onboarding & Contribution Guide', icon: <BookOpen className="w-5 h-5" />, component: OnboardingPage as React.FC<PageComponentProps> }
-  ];
-
-  const gitHistoryLink = {
-    id: 'git-history',
-    title: 'Git History',
-    icon: <GitCommit className="w-5 h-5" />,
-    href: `/git-history/${repoId}` // Use the correct reportId (which is repoId from params here)
-  };
-
+  const location = useLocation(); // Get location object
+  
+  // Attempt to get analysisResult from navigation state first
+  const analysisResultFromNavigation = location.state?.analysisResultFromNavigation as AnalysisResult | undefined;
   useEffect(() => {
-    const fetchReport = async () => {
-      if (!repoId) {
-        setError("No report ID provided.");
-        setLoading(false);
+    console.log('[ReportPage] useEffect triggered. analysisResultFromNavigation:', analysisResultFromNavigation, 'analysisResult prop:', analysisResult, 'repoId:', repoId);
+    const loadReport = async () => {
+      if (analysisResultFromNavigation) {
+        console.log('[ReportPage] Using analysisResult from navigation state:', analysisResultFromNavigation);
+        setReportData(analysisResultFromNavigation);
+        setIsLoading(false);
         return;
-      }
-
-      try {
-        const report = await loadReport(`report_${repoId}`);
-        if (!report) {
-          setError('Report not found (it may have been cleared by the browser).');
-        } else {
-          setReportData(report);
+      } 
+      
+      if (analysisResult) { 
+        console.log('[ReportPage] Using analysisResult prop:', analysisResult);
+        setReportData(analysisResult);
+        setIsLoading(false);
+        return;
+      } 
+      
+      if (repoId) { 
+        console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
+        setIsLoading(true);
+        try {
+          // First try to get the latest result if no specific ID match
+          let storedResult = await StorageService.getAnalysisResultById(repoId);
+          
+          if (!storedResult) {
+            // Fallback to latest result
+            console.log('[ReportPage] No result found by ID, trying latest result...');
+            storedResult = await StorageService.getLatestAnalysisResult();
+          }
+          
+          console.log('[ReportPage] Result from StorageService:', storedResult);
+          if (storedResult) {
+            setReportData(storedResult);
+          } else {
+            console.error(`[ReportPage] No data found in StorageService for ID: ${repoId}`);
+            setError("Report data not found. Please try analyzing again.");
+          }
+        } catch (err) {
+          console.error('[ReportPage] Error loading from StorageService:', err);
+          setError("Failed to load report data. Please try again.");
+        } finally {
+          setIsLoading(false);
         }
-      } catch (e) {
-        console.error('Failed to load report data:', e);
-        setError(e instanceof Error ? e.message : "Failed to load or parse report data.");
-      } finally {
-        setLoading(false);
+      } else {
+        // No repoId and no direct data
+        console.log('[ReportPage] No repoId provided, trying to load latest result...');
+        try {
+          const latestResult = await StorageService.getLatestAnalysisResult();
+          if (latestResult) {
+            setReportData(latestResult);
+            setIsLoading(false);
+          } else {
+            setError("No analysis results found. Please analyze a repository first.");
+            setIsLoading(false);
+          }
+        } catch (err) {
+          console.error('[ReportPage] Error loading latest result:', err);
+          setError("Failed to load report data. Please try again.");
+          setIsLoading(false);
+        }
       }
     };
+    loadReport();
+  }, [analysisResultFromNavigation, analysisResult, repoId]);
 
-    fetchReport();
-  }, [repoId]);
+  // Add a new useEffect to log reportData changes
+  useEffect(() => {
+    console.log('[ReportPage] reportData state changed:', reportData);
+    if (reportData) {
+      console.log('[ReportPage] reportData.id:', reportData.id);
+      console.log('[ReportPage] reportData.repositoryUrl:', reportData.repositoryUrl);
+    }
+  }, [reportData]);
+
+  const pages = [
+    { id: 'overview', title: 'Overview & Vitals', icon: <BarChart3 className="w-5 h-5" />, component: OverviewPage },
+    { id: 'architecture', title: 'Code Architecture & Quality', icon: <Code className="w-5 h-5" />, component: ArchitecturePage },
+    { id: 'diagrams', title: 'Advanced Diagrams', icon: <Layers className="w-5 h-5" />, component: DiagramsPage },
+    { id: 'activity', title: 'Activity & Momentum', icon: <Activity className="w-5 h-5" />, component: ActivityPage },
+    { id: 'community', title: 'Community & Contributors', icon: <Users className="w-5 h-5" />, component: CommunityPage },
+    { id: 'onboarding', title: 'Onboarding & Contribution Guide', icon: <BookOpen className="w-5 h-5" />, component: OnboardingPage },
+    { id: 'git-history', title: 'Git History', icon: <GitCommit className="w-5 h-5" />, component: GitHistoryPage }
+  ];
+
 
   const handleExportReport = () => {
     if (!reportData) return;
@@ -94,7 +144,7 @@ const ReportPage = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${reportData.basicInfo.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_audit_report.json`;
+    a.download = `${(reportData.basicInfo.fullName as string).replace(/[^a-z0-9]/gi, '_').toLowerCase()}_audit_report.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -128,7 +178,7 @@ const ReportPage = () => {
     }
   };
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
         <div className="text-center">
@@ -139,13 +189,13 @@ const ReportPage = () => {
     );
   }
 
-  if (error || !reportData) {
+  if (error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
         <div className="text-center bg-white p-8 rounded-xl shadow-xl max-w-md">
           <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Error Loading Report</h2>
-          <p className="text-gray-600 mb-6">{error || 'The report data could not be loaded or is corrupted.'}</p>
+          <p className="text-gray-600 mb-6">{error}</p>
           <button 
             onClick={() => navigate('/analyze')} 
             className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200 font-medium"
@@ -156,8 +206,55 @@ const ReportPage = () => {
       </div>
     );
   }
+  if (!reportData) {
+    console.log('[ReportPage] Rendering fallback because reportData is null/undefined and not loading/error.');
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-100 p-4">
+        <div className="bg-white p-8 rounded-xl shadow-xl text-center max-w-md">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4 mx-auto" />
+          <p className="text-lg text-slate-700 mb-2">Preparing report...</p>
+          <p className="text-sm text-slate-500 mb-4">If this takes too long, please ensure you have a valid report ID or try re-analyzing.</p>
+          <div className="space-y-2">
+            <Link 
+              to="/analyze" 
+              className="block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+            >
+              Analyze a New Repository
+            </Link>
+            <Link 
+              to="/dashboard" 
+              className="block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+            >
+              View Dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const CurrentPageComponent = pages[currentPage].component;
+  // console.log('[ReportPage] Rendering actual report content with data:', reportData);
+  const CurrentPageComponent = pages[currentPage]?.component;
+
+  if (!CurrentPageComponent) {
+    // This can happen if currentPage is out of bounds, though it shouldn't with current logic.
+    // It's a good safeguard.
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
+        <div className="text-center bg-white p-8 rounded-xl shadow-xl max-w-md">
+          <AlertTriangle className="w-16 h-16 text-orange-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Invalid Page</h2>
+          <p className="text-gray-600 mb-6">The selected page does not exist.</p>
+          <button 
+            onClick={() => navigate('/dashboard')} 
+            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200 font-medium"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-blue-100">
@@ -192,7 +289,7 @@ const ReportPage = () => {
                 </div>
                  <div className="flex items-center space-x-1" title="Last Updated">
                   <Calendar className="w-4 h-4 text-gray-500" />
-                  <span>{reportData.basicInfo.updatedAt ? new Date(reportData.basicInfo.updatedAt).toLocaleDateString() : 'N/A'}</span>
+                  <span>{reportData.basicInfo.updatedAt ? new Date(reportData.basicInfo.updatedAt as string).toLocaleDateString() : 'N/A'}</span>
                 </div>
               </div>
               
@@ -215,9 +312,9 @@ const ReportPage = () => {
         </div>
       </header>
 
-      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-[65px] z-10 shadow-sm"> {/* Adjusted top value */}
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-[65px] z-10 shadow-sm">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-1 sm:space-x-4 overflow-x-auto no-scrollbar"> {/* Added no-scrollbar */}
+          <div className="flex space-x-1 sm:space-x-4 overflow-x-auto no-scrollbar">
             {pages.map((page, index) => (
               <button
                 key={page.id}
@@ -233,20 +330,14 @@ const ReportPage = () => {
                 <span className="sm:hidden">{page.title.split(' ')[0]}</span>
               </button>
             ))}
-            <Link
-              to={gitHistoryLink.href}
-              className="flex items-center space-x-2 py-3 px-3 border-b-2 border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300 font-medium text-sm whitespace-nowrap transition-all duration-200 focus:outline-none"
-            >
-              {React.cloneElement(gitHistoryLink.icon, { className: "w-4 h-4 sm:w-5 sm:h-5 text-gray-400 group-hover:text-gray-500"})}
-               <span className="hidden sm:inline">{gitHistoryLink.title}</span>
-               <span className="sm:hidden">{gitHistoryLink.title.split(' ')[0]}</span>
-            </Link>
           </div>
         </div>
       </nav>
 
       <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <CurrentPageComponent reportData={reportData} />
+        <VisualizationErrorBoundary>
+          <CurrentPageComponent analysisResult={reportData} reportData={reportData} />
+        </VisualizationErrorBoundary>
       </main>
 
       <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200 sticky bottom-0 z-10 py-3">

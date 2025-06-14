@@ -3,7 +3,6 @@ import {
   BarChart3, 
   GitBranch, 
   Layers, 
-  TrendingUp,
   Clock,
   Network,
   FileText,
@@ -13,14 +12,15 @@ import {
   Route, 
   GitCommit, 
   GitMerge, 
-  ListChecks,
-  LayoutList,
-  AlertTriangle,
-  ShieldCheck,
-  Eye
+  ListChecks
 } from 'lucide-react';
-import { AnalysisResult, PRPhase, ChurnNode as GlobalChurnNode, FileNode } from '../../types';
-import { RouteNode } from '../diagrams/APIRouteTree'; // Import RouteNode
+import { AnalysisResult } from '../../types';
+import { 
+  PRPhase, 
+  ChurnNode as GlobalChurnNode, 
+  FileNode,
+  RouteNode
+} from '../../types/advanced';
 
 // Import diagram components
 import ComponentDependencyWheel from '../diagrams/ComponentDependencyWheel';
@@ -38,38 +38,18 @@ interface DiagramsPageProps {
   reportData: AnalysisResult;
 }
 
-// Helper to get icon component from string name
-const getIconComponent = (iconName: string | React.ReactNode): React.ReactNode => {
-  if (React.isValidElement(iconName)) return iconName;
-  switch (iconName as string) {
-    case 'FileText': return <FileText className="w-4 h-4" />;
-    case 'Users': return <Users className="w-4 h-4" />;
-    case 'GitBranch': return <GitBranch className="w-4 h-4" />;
-    case 'BarChart3': return <BarChart3 className="w-4 h-4" />;
-    case 'Layers': return <Layers className="w-4 h-4" />;
-    case 'Shuffle': return <Shuffle className="w-4 h-4" />;
-    case 'TrendingUp': return <TrendingUp className="w-4 h-4" />;
-    case 'LayoutList': return <LayoutList className="w-4 h-4" />;
-    case 'Clock': return <Clock className="w-4 h-4" />;
-    case 'Activity': return <Activity className="w-4 h-4" />;
-    case 'AlertTriangle': return <AlertTriangle className="w-4 h-4" />;
-    case 'ShieldCheck': return <ShieldCheck className="w-4 h-4" />;
-    case 'Eye': return <Eye className="w-4 h-4" />;
-    case 'Network': return <Network className="w-4 h-4" />;
-    case 'Route': return <Route className="w-4 h-4" />;
-    case 'GitCommit': return <GitCommit className="w-4 h-4" />;
-    case 'GitMerge': return <GitMerge className="w-4 h-4" />;
-    case 'ListChecks': return <ListChecks className="w-4 h-4" />;
-    case 'CheckCircle': return <CheckCircle className="w-4 h-4" />;
-    default: return <LayoutList className="w-4 h-4" />;
-  }
-};
+// All icons are now directly in the diagrams array, so this helper is not needed.
 
 const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
   const [selectedDiagram, setSelectedDiagram] = useState('dependency-wheel');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
   // Use actual data from reportData with proper fallbacks
+  const {
+    files = [],
+    dependencies
+  } = reportData || {};
+
   const {
     dependencyWheelData = [],
     fileSystemTree,
@@ -80,9 +60,7 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     contributorStreamData = [],
     dataTransformationSankey,
     prLifecycleData,
-    files = [],
-    dependencies = { dependencies: {}, devDependencies: {} }
-  } = reportData;
+  } = reportData?.advancedAnalysis || {};
 
   // Generate fallback data if not provided by backend
   const apiRoutesTreeData = useMemo(() => {
@@ -163,14 +141,17 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
 
   // Add fallback data generation for missing diagram data
   const fallbackDependencyWheelData = useMemo(() => {
-    if (dependencyWheelData.length > 0) return dependencyWheelData;
+    if (dependencyWheelData && dependencyWheelData.length > 0) return dependencyWheelData;
     
-    // Generate from dependencies
-    return Object.keys(dependencies.dependencies).slice(0, 20).map(dep => ({
-      source: 'main',
-      target: dep,
-      value: 1
-    }));
+    if (dependencies && dependencies.links) {
+      return dependencies.links.slice(0, 50).map(link => ({
+        source: link.source,
+        target: link.target,
+        value: 1 
+      }));
+    }
+    
+    return [];
   }, [dependencyWheelData, dependencies]);
 
   const fallbackFileSystemTree = useMemo(() => {
@@ -271,7 +252,7 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
         const tcData = temporalCouplingData || { nodes: [], links: [] };
         return (tcData.nodes.length > 0) ? (
           <TemporalCouplingGraph 
-            nodes={tcData.nodes}
+            nodes={tcData.nodes.map(n => ({ ...n, group: n.group || 1 }))}
             links={tcData.links}
             width={700} height={500}
           />
@@ -293,25 +274,20 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
         ) : <EmptyState message="No data pipeline data available." />;
       }
       case 'pr-lifecycle': {
-        const defaultPhases: PRPhase[] = [ 
-          { name: 'Open', duration: 2, color: '#3B82F6', icon: getIconComponent('FileText') },
-          { name: 'Review', duration: 24, color: '#F59E0B', icon: getIconComponent('Clock') },
-          { name: 'Changes', duration: 8, color: '#EF4444', icon: getIconComponent('Activity') },
-          { name: 'Approval', duration: 4, color: '#10B981', icon: getIconComponent('CheckCircle') },
-          { name: 'Merge', duration: 1, color: '#8B5CF6', icon: getIconComponent('GitBranch') }
+        const defaultPhases: PRPhase[] = [
+          { name: 'Open', duration: 2, color: '#3B82F6', icon: <FileText className="w-4 h-4" /> },
+          { name: 'Review', duration: 24, color: '#F59E0B', icon: <Clock className="w-4 h-4" /> },
+          { name: 'Changes', duration: 8, color: '#EF4444', icon: <Activity className="w-4 h-4" /> },
+          { name: 'Approval', duration: 4, color: '#10B981', icon: <CheckCircle className="w-4 h-4" /> },
+          { name: 'Merge', duration: 1, color: '#8B5CF6', icon: <GitBranch className="w-4 h-4" /> }
         ];
         
-        const currentPrData = prLifecycleData || { phases: defaultPhases, totalDuration: defaultPhases.reduce((s,p)=>s+p.duration,0) };
-        const phasesToUse = currentPrData.phases.map(p => ({
-            ...p,
-            icon: getIconComponent(p.icon as string) 
-        }));
-        const totalDurationToUse = currentPrData.totalDuration;
-
-        return (phasesToUse.length > 0) ? (
+        const currentPrData = prLifecycleData || { phases: defaultPhases, totalDuration: defaultPhases.reduce((s, p) => s + p.duration, 0) };
+        
+        return (currentPrData.phases.length > 0) ? (
           <PRLifecycleGantt 
-            phases={phasesToUse}
-            totalDuration={totalDurationToUse}
+            phases={currentPrData.phases}
+            totalDuration={currentPrData.totalDuration}
             width={700} height={350}
           />
         ) : <EmptyState message="No PR lifecycle data available." />;

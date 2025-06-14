@@ -1,3 +1,5 @@
+import { AdvancedAnalysisResult } from './advanced';
+
 export interface LLMConfig {
   provider: string;
   apiKey: string;
@@ -18,26 +20,61 @@ export interface AnalysisResult {
   basicInfo: {
     fullName: string;
     description?: string;
-    [key: string]: unknown;
+    language?: string;
+    stars?: number;
+    forks?: number;
+    createdAt: string;
+    updatedAt: string;
+    defaultBranch?: string;
+  };
+  metrics: {
+    linesOfCode: number;
+    totalCommits: number;
+    totalContributors: number;
+    fileCount?: number;
+    criticalVulnerabilities?: number;
+    highVulnerabilities?: number;
+    mediumVulnerabilities?: number;
+    lowVulnerabilities?: number;
   };
   commits: Array<Commit>;
+  files: FileInfo[];
+  dependencies?: {
+    nodes: { id: string; [key: string]: string | number | undefined }[];
+    links: { source: string; target: string; [key: string]: string | number | undefined }[];
+  };
+  contributors?: Contributor[];
+  hotspots?: { file: string, path: string, complexity: number, changes: number, riskLevel: string, explanation: string }[];
+  architectureAnalysis?: string;
+  securityIssues?: SecurityIssue[];
   aiSummary?: string;
   createdAt: string;
   repositoryUrl?: string;
-  [key: string]: unknown;
+  advancedAnalysis?: AdvancedAnalysisResult;
 }
 
 export interface FileInfo {
+  name: string;
   path: string;
+  size: number;
   content?: string;
-  [key: string]: unknown;
+  complexity?: number;
+  dependencies?: string[];
+  contributors?: string[];
+  commitCount?: number;
+  type?: string;
+  language?: string;
+  testCoverage?: number;
+  lastModified?: string;
+  primaryAuthor?: string;
+  functions?: { name: string, complexity: number }[];
 }
 
 export interface Contributor {
   login: string;
   id: number;
   contributions: number;
-  [key: string]: unknown;
+  avatarUrl: string;
 }
 
 export interface Commit {
@@ -49,14 +86,11 @@ export interface Commit {
       email: string;
       date: string;
     };
-    [key: string]: unknown;
   };
-  author?: {
+  author: {
     login: string;
     id: number;
-  [key: string]: unknown;
   };
-    [key: string]: unknown;
 }
 
 export interface SecurityIssue {

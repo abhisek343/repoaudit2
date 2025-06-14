@@ -1,5 +1,6 @@
 import React from 'react';
 import { Flame, FileText, Info } from 'lucide-react'; // Added Info, removed AlertCircle, TrendingUp
+import { validateChartData } from '../lib/utils';
 
 interface HotspotData { // Define a more specific type for this component
     file: string; // short name
@@ -16,7 +17,26 @@ interface CodeHeatmapProps {
 }
 
 const CodeHeatmap = ({ hotspots }: CodeHeatmapProps) => {
-  const heatmapData = hotspots && hotspots.length > 0 ? hotspots : [];
+  // Validate incoming data
+  if (!validateChartData(hotspots)) {
+    return (
+      <div className="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-100">
+        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+          <Flame className="w-6 h-6 text-red-500 mr-3" />
+          Code Hotspots & Complexity
+        </h3>
+        <div className="text-center py-12 text-gray-500">
+          <Info className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h4 className="text-lg font-medium mb-2">No Hotspot Data</h4>
+          <p className="text-sm">
+            Hotspots analysis might not have been run or no significant hotspots were identified.
+            Ensure LLM is configured for deep analysis if expected.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  const heatmapData = hotspots as HotspotData[];
 
   const getHeatColorClass = (riskLevel: HotspotData['riskLevel']): string => {
     switch (riskLevel) {
@@ -47,26 +67,6 @@ const CodeHeatmap = ({ hotspots }: CodeHeatmapProps) => {
       default: return 'text-gray-600';
     }
   };
-
-
-  if (heatmapData.length === 0) {
-    return (
-      <div className="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-100">
-        <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-          <Flame className="w-6 h-6 text-red-500 mr-3" />
-          Code Hotspots & Complexity
-        </h3>
-        <div className="text-center py-12 text-gray-500">
-          <Info className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h4 className="text-lg font-medium mb-2">No Hotspot Data</h4>
-          <p className="text-sm">
-            Hotspots analysis might not have been run or no significant hotspots were identified.
-            Ensure LLM is configured for deep analysis if expected.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-gray-100">

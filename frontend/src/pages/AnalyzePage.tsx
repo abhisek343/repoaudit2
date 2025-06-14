@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'; // Added useEffect
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { 
   Search, 
   Github, 
@@ -19,22 +19,24 @@ import {
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
-import { AnalysisService } from '../services/analysisService';
-import { persistReport } from '../utils/persist';
-import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index'; // Added AnalysisResult
+import { LLMConfig, ReportCategory } from '../types/index';
 
-const AnalyzePage = () => {
+interface AnalyzePageProps {
+  onAnalysisStart: (repoUrl: string) => void;
+  isAnalyzing: boolean;
+  error?: string;
+  progress: number;
+  currentStep: string;
+  onCancel: () => void;
+  onErrorClear: () => void;
+}
+
+const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentStep, onCancel, onErrorClear }: AnalyzePageProps) => {
   const [githubUrl, setGithubUrl] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('comprehensive');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [currentStep, setCurrentStep] = useState('');
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | undefined>();
   const [llmConfig, setLlmConfig] = useState<LLMConfig | undefined>();
   const [githubToken, setGithubToken] = useState<string | undefined>();
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
-  const navigate = useNavigate();
 
   const reportCategories: ReportCategory[] = [
     {
@@ -148,6 +150,7 @@ const AnalyzePage = () => {
     }
   }, []);
 
+
   const handleSettingsSave = (config: LLMConfig, token?: string) => {
     setLlmConfig(config);
     localStorage.setItem('llmConfig', JSON.stringify(config));
@@ -161,87 +164,10 @@ const AnalyzePage = () => {
     }
   };
 
-  const isAnalysisDataValid = (data: AnalysisResult): boolean => {
-    if (!data) return false;
-  
-    // Basic validation - require at least basic info and commits
-    const hasBasicInfo = data.basicInfo && Object.keys(data.basicInfo).length > 0;
-    const hasCommits = data.commits && data.commits.length > 0;
-  
-    if (!hasBasicInfo || !hasCommits) {
-        console.error('Validation Failed: Missing basic repository data or commit history.', { hasBasicInfo, hasCommits });
-        return false;
-    }
-    
-    return true;
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!githubUrl.trim() || isAnalyzing) return;
-
-    setIsAnalyzing(true);
-    setError(undefined);
-    setProgress(0);
-    setCurrentStep('Initializing analysis...');
-
-    try {
-      const analysisService = new AnalysisService(githubToken, llmConfig);
-      
-      const { eventSource: newEventSource, analysisPromise } = analysisService.analyzeRepository(
-        githubUrl,
-        (step: string, progressValue: number) => {
-          setCurrentStep(step);
-          setProgress(progressValue);
-        }
-      );
-
-      setEventSource(newEventSource);
-
-      const result = await analysisPromise;
-
-      setCurrentStep('Analysis complete. Preparing report...');
-      setProgress(100);
-
-      if (!isAnalysisDataValid(result)) {
-        setError('Analysis Failed: The server returned incomplete data. Core metrics or architecture information could not be generated.');
-        setIsAnalyzing(false);
-        return;
-      }
-
-      const reportData = { ...result, repositoryUrl: githubUrl };
-
-      try {
-        await persistReport(`report_${result.id}`, reportData);
-
-        const allReportsString = localStorage.getItem('allReports');
-        const allReports = allReportsString ? JSON.parse(allReportsString) : [];
-        allReports.unshift({
-          id: result.id,
-          name: result.basicInfo.fullName,
-          createdAt: result.createdAt,
-          summary: result.aiSummary || result.basicInfo.description,
-        });
-        localStorage.setItem('allReports', JSON.stringify(allReports.slice(0, 50)));
-      } catch (e) {
-        console.error(`Failed to save report to localStorage:`, e);
-        setError(`Failed to save report details due to storage limits. Error: ${e instanceof Error ? e.message : String(e)}`);
-        setIsAnalyzing(false);
-        return;
-      }
-
-      setTimeout(() => {
-        setIsAnalyzing(false);
-        navigate(`/report/${result.id}`);
-      }, 500); // Short delay to show 100%
-
-    } catch (err) { // Changed variable name from error to err
-      console.error('Analysis failed:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Analysis failed due to an unknown error.';
-      setError(errorMessage);
-      setIsAnalyzing(false); 
-      // No auto-clear for error, let ProgressModal handle it.
-    }
+    if (!githubUrl.trim()) return;
+    onAnalysisStart(githubUrl);
   };
 
   const getIconComponent = (iconName: string) => {
@@ -257,7 +183,7 @@ const AnalyzePage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <>
       <nav className="bg-white/90 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -453,26 +379,17 @@ const AnalyzePage = () => {
       />
 
       <ProgressModal
-        isOpen={isAnalyzing || !!error} // Show modal if analyzing OR if there's an error
+        isOpen={isAnalyzing || !!error}
         currentStep={currentStep}
         progress={progress}
         error={error}
-        onClose={() => {
-          setError(undefined);
-        }}
+        onClose={onErrorClear}
         onOpenSettings={() => {
           setShowSettings(true);
-          setError(undefined);
         }}
-        onCancel={() => {
-          if (eventSource) {
-            eventSource.close();
-          }
-          setIsAnalyzing(false);
-          setError('Analysis cancelled by user.');
-        }}
+        onCancel={onCancel}
       />
-    </div>
+    </>
   );
 };
 

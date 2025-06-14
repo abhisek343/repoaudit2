@@ -285,6 +285,7 @@ export interface AnalysisResult {
   metrics: {
     totalCommits: number;
     totalContributors: number;
+    fileCount: number;
     linesOfCode: number;
     codeQuality: number;
     testCoverage: number;

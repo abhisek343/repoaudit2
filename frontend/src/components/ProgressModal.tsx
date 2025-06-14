@@ -12,8 +12,6 @@ interface ProgressModalProps {
 }
 
 const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel }: ProgressModalProps) => {
-  if (!isOpen) return null;
-
   const isGitHubRateLimitError = (errorMessage?: string): boolean => {
     if (!errorMessage) return false;
     return errorMessage.includes('rate limit') || 
@@ -35,8 +33,11 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, o
   const isLLMError = isLLMRateLimitError(error);
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
+    <div 
+      className={`fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      style={{ transform: 'translateZ(0)' }}
+    >
+      <div className={`bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative transition-transform duration-300 ${isOpen ? 'scale-100' : 'scale-95'}`}>
         {error && (
           <button 
             onClick={onClose} 

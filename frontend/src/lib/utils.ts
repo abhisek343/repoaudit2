@@ -148,3 +148,10 @@ export function deepMerge<T extends Record<string, unknown>>(target: T, source: 
   }
   return result;
 }
+
+// Validate chart data before rendering
+export function validateChartData(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  if (Array.isArray(data) && data.length === 0) return false;
+  return true;
+}

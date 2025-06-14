@@ -10,6 +10,36 @@ const port = process.env.PORT || 3001;
 app.use(cors()); // Enable CORS for all routes
 app.use(express.json({ limit: '50mb' }));
 
+// Safe serialization preserving all data and handling circular references
+function safeSerializeReport(report: any): string {
+  const seen = new WeakSet();
+  return JSON.stringify(report, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+    }
+    if (typeof value === 'function') {
+      return `[Function: ${value.name || 'anonymous'}]`;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    return value;
+  });
+}
+
+// Robust error response
+function handleAnalysisError(res: Response, error: unknown): void {
+  const msg = error instanceof Error ? error.message : 'Unknown error';
+  try {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`);
+    res.end();
+  } catch (e) {
+    console.error('Failed to send error to client:', e);
+    try { res.destroy(); } catch {}
+  }
+}
+
 // Endpoint to check LLM availability
 app.post('/api/llm/check', (async (req: Request, res: Response) => {
   try {
@@ -47,15 +77,23 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
   res.flushHeaders();
 
+  // Handle client disconnects gracefully
+  req.on('close', () => {
+    console.warn('Client disconnected before analysis complete, aborting response stream.');
+    try { res.end(); } catch (e) {}
+  });
+
   const sendProgress = (step: string, progress: number) => {
-    // Log progress to server console for debugging
     console.log(`[${new Date().toISOString()}] Progress: ${progress}% - ${step}`);
     try {
       res.write(`data: ${JSON.stringify({ step, progress })}\n\n`);
-    } catch (error) {
-      console.error('Failed to send progress update to client:', error);
+    } catch (err) {
+      console.warn('Progress write failed, aborting response:', err);
+      handleAnalysisError(res, err);
     }
   };
 
@@ -86,30 +124,31 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
         res.end();
         return;
       }
-    }
-
-    console.log(`[${new Date().toISOString()}] Starting analysis for: ${repoUrl}`);
+    }    console.log(`[${new Date().toISOString()}] Starting analysis for: ${repoUrl}`);
     const analysisService = new BackendAnalysisService(githubToken, llmConfig);
     const report = await analysisService.analyze(repoUrl as string, sendProgress);
     
     console.log(`[${new Date().toISOString()}] Analysis completed successfully`);
-    res.write(`event: complete\ndata: ${JSON.stringify(report)}\n\n`);
-    res.end();
-  } catch (error) {
-    let errorMessage = 'An unknown error occurred during analysis.';
-    if (error instanceof CustomLLMError) {
-        errorMessage = `An LLM processing error occurred: ${error.message}`;
-    } else if (error instanceof Error) {
-        errorMessage = error.message;
-    }
     
-    console.error('Analysis failed:', error);
     try {
-      res.write(`event: error\ndata: ${JSON.stringify({ error: errorMessage })}\n\n`);
+      // Use safeSerializeReport for robust serialization
+      const jsonString = safeSerializeReport(report);
+      
+      const payloadSizeKB = (jsonString.length / 1024).toFixed(2);
+      console.log(`[${new Date().toISOString()}] Analysis completed (${payloadSizeKB} KB)`);
+      console.log(`[${new Date().toISOString()}] Sending completion signal to client`);
+      
+      // Send just a completion signal with the analysis result for client-side storage
+      res.write(`event: complete\ndata: ${jsonString}\n\n`);
       res.end();
-    } catch (writeError) {
-      console.error('Failed to send error response to client:', writeError);
+    } catch (serializationError) {
+      console.error('Failed to serialize analysis result:', serializationError);
+      res.write(`event: error\ndata: ${JSON.stringify({ error: 'Failed to serialize analysis result' })}\n\n`);
+      res.end();
     }
+  } catch (error) {
+    console.error('Analysis failed:', error);
+    handleAnalysisError(res, error);
   }
 };
 

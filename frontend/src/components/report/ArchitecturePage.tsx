@@ -31,10 +31,10 @@ interface ComplexityData {
 }
 
 interface ArchitecturePageProps {
-  reportData: AnalysisResult;
+  analysisResult: AnalysisResult;
 }
 
-const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ reportData }) => {
+const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: reportData }) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('architecture'); 
   const [useLLM, setUseLLM] = useState(true);
   

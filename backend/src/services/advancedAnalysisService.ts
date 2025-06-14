@@ -114,47 +114,72 @@ export class AdvancedAnalysisService {
     }
   }
 
+  /**
+   * Safely execute regex matching with timeout and max matches to prevent ReDoS
+   */
+  private matchPatternSafely(pattern: RegExp, text: string, timeoutMs: number = 5000): Promise<RegExpMatchArray[]> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Pattern matching timeout')), timeoutMs);
+      const matches: RegExpMatchArray[] = [];
+      let match: RegExpMatchArray | null;
+      let count = 0;
+      const MAX_MATCHES = 1000;
+      try {
+        // Reset lastIndex in case of global regex reuse
+        pattern.lastIndex = 0;
+        while ((match = pattern.exec(text)) !== null && count < MAX_MATCHES) {
+          matches.push(match);
+          count++;
+        }
+        clearTimeout(timer);
+        resolve(matches);
+      } catch (err) {
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+  }
+
   async analyzeSecurityIssues(files: FileInfo[]): Promise<SecurityIssue[]> {
     const issues: SecurityIssue[] = [];
-    const CODE_SNIPPET_CONTEXT_LINES = 2; // Lines before and after the found secret
-    const MAX_FILES_FOR_LLM_VULN_CHECK = 3; // Limit for LLM-based vulnerability checks
-    let llmVulnCheckCounter = 0;
-
+    const CODE_SNIPPET_CONTEXT_LINES = 2;
     for (const file of files) {
-      if (!file.content || file.size === 0) continue;
-
+      if (!file.content) continue;
       const lines = file.content.split('\n');
-
-      // Regex-based secret scanning for all files with content
-      lines.forEach((lineContent, index) => {
-        this.secretPatterns.forEach(({ pattern, type, severity, cwe }) => {
-          pattern.lastIndex = 0; 
-          while (pattern.exec(lineContent) !== null) {
-            const start = Math.max(0, index - CODE_SNIPPET_CONTEXT_LINES);
-            const end = Math.min(lines.length, index + CODE_SNIPPET_CONTEXT_LINES + 1);
-            const codeSnippet = lines.slice(start, end).join('\n');
-
-            issues.push({
-              type: 'secret',
-              severity,
-              file: file.path,
-              line: index + 1,
-              description: `Potential ${type} detected.`,
-              recommendation: `Validate if this is a sensitive credential. If so, remove it from source code and store it securely (e.g., environment variables, secrets manager). Rotate the credential if it has been exposed.`,
-              cwe,
-              codeSnippet
-            });
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        for (const { pattern, type, severity, cwe } of this.secretPatterns) {
+          try {
+            const matches = await this.matchPatternSafely(pattern, line);
+            if (matches.length) {
+              const start = Math.max(0, i - CODE_SNIPPET_CONTEXT_LINES);
+              const end = Math.min(lines.length, i + CODE_SNIPPET_CONTEXT_LINES + 1);
+              const snippet = lines.slice(start, end).join('\n');
+              matches.forEach(() => {
+                issues.push({ type: 'secret', severity, file: file.path, line: i+1,
+                  description: `Potential ${type} detected.`,
+                  recommendation: `Validate and remove credentials from code; use secure vaults instead.`,
+                  cwe, codeSnippet: snippet });
+              });
+            }
+          } catch (err) {
+            console.warn(`Timeout or error scanning for ${type} in ${file.path}:`, err);
           }
-        });
-      });
-
+        }
+      }
+      // LLM-based vulnerability check for a limited number of files
+      let llmVulnCheckCounter = 0;
+      const MAX_FILES_FOR_LLM_VULN_CHECK = 10;
       // LLM-based vulnerability check for a limited number of files
       if (this.llmService.isConfigured() && llmVulnCheckCounter < MAX_FILES_FOR_LLM_VULN_CHECK) {
         const analyzableExtensions = ['.js', '.ts', '.py', '.java', '.php', '.rb', '.go', '.cs', '.c', '.cpp', '.jsx', '.tsx', '.html', '.sql'];
         const fileExtension = `.${file.name.split('.').pop()?.toLowerCase()}`;
         if (analyzableExtensions.includes(fileExtension) && file.content.length >= 50) {
-            await this.checkCodeVulnerabilitiesLLM(file, issues);
-            llmVulnCheckCounter++;
+          await this.checkCodeVulnerabilitiesLLM(file, issues);
+          llmVulnCheckCounter++;
+          // Delay between LLM calls to avoid rate limits
+          const delayMs = Number(process.env.LLM_VULN_DELAY_MS) || 2000;
+          await new Promise(res => setTimeout(res, delayMs));
         }
       }
     }
@@ -222,7 +247,7 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
               file: file.path,
               complexity: llmPerfAnalysis.complexity,
               estimatedRuntime: llmPerfAnalysis.runtime,
-              recommendation: llmPerfAnalysis.recommendation
+              recommendation: llmPerfAnalysis.recommendation || ''
             });
           }
         } catch (error: unknown) { // Catch unknown

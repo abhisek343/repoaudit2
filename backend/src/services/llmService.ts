@@ -77,8 +77,25 @@ export class LLMService {
   }
 
   async enhanceMermaidDiagram(diagramCode: string, _fileInfo: FileInfo): Promise<{ enhancedCode: string }> {
-    // Placeholder implementation
-    return { enhancedCode: diagramCode };
+    // Add timeout to prevent hanging
+    const timeoutMs = Number(process.env.LLM_DIAGRAM_TIMEOUT_MS) || 10000;
+    const timeoutPromise = new Promise<{ enhancedCode: string }>((resolve) =>
+      setTimeout(() => resolve({ enhancedCode: diagramCode }), timeoutMs)
+    );
+    try {
+      // Race between real service and timeout
+      const result = await Promise.race([
+        (async () => {
+          // Real implementation placeholder
+          return { enhancedCode: diagramCode };
+        })(),
+        timeoutPromise
+      ]);
+      return result;
+    } catch (error) {
+      console.error('enhanceMermaidDiagram failed or timed out:', error);
+      return { enhancedCode: diagramCode };
+    }
   }
 
    public isConfigured(): boolean {
@@ -160,8 +177,7 @@ export class LLMService {
               const genResponse: GenerateContentResponse = result;
               // Access text property, or fallback to candidates
               // Note: The SDK's GenerateContentResponse might have text() as a method or .text as a property.
-              // The current usage implies .text is a property. If it's a method, it should be genResponse.text().
-              // Let's assume .text is a property based on current structure and previous attempts.
+              // The current usage implies .text is a property based on current structure and previous attempts.
               // If genResponse.text is not directly available, the candidates path is the fallback.
               // The TS error indicates genResponse.text is a 'get' accessor, so access it as a property.
               const responseText = genResponse.text;
@@ -368,22 +384,22 @@ Be specific and actionable. Aim for 150-200 words. Return only the analysis text
 
   async analyzeArchitecture(files: FileInfo[], languages: Record<string, number>): Promise<string> {
     if (!this.isConfigured()) return "LLM not configured. Architecture analysis unavailable.";
-    const filePaths = files.slice(0, 20).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
+    const filePaths = files.slice(0, 100).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
     const languageSummary = Object.entries(languages || {}).map(([lang, bytes]) => `${lang}: ${bytes} bytes`).join(', ');
     const prompt = `
-Analyze the architecture of this codebase:
+Analyze the architecture of this codebase in detail:
 Languages used: ${languageSummary}
 Key files and directories:
 ${filePaths}
-Provide a technical but concise analysis (200-250 words) covering:
-1.  Probable architectural pattern(s) (e.g., Monolith, Microservices, MVC, Layered).
-2.  Key modules/components and their apparent responsibilities.
-3.  Data flow patterns if discernible.
-4.  Observations on code organization, modularity, and separation of concerns.
-5.  Scalability and maintainability considerations.
-6.  Potential architectural improvements.
-Provide a technical but concise analysis. Aim for 200-250 words. Return only the analysis text.`;
-    return this.generateText(prompt, 500);
+Provide a detailed technical analysis (400-500 words) covering:
+1.  In-depth analysis of the probable architectural pattern(s) (e.g., Monolith, Microservices, MVC, Layered), with evidence.
+2.  Detailed breakdown of key modules/components and their apparent responsibilities and interactions.
+3.  Analysis of data flow patterns and state management strategies.
+4.  Deep observations on code organization, modularity, and separation of concerns.
+5.  Thorough discussion of scalability, maintainability, and potential bottlenecks.
+6.  Specific, actionable architectural improvements with justifications.
+Provide a comprehensive and detailed analysis. Aim for 400-500 words. Return only the analysis text.`;
+    return this.generateText(prompt, 800);
   }
   
   async generateSecurityAnalysis(files: FileInfo[], repoName: string): Promise<string> {
