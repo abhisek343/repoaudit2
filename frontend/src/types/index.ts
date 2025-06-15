@@ -302,7 +302,7 @@ export interface AnalysisResult {
     lowVulnerabilities: number;
     lastScan: string;
     dependencyScore: number;
-    dependencyGraph: { nodes: unknown[]; links: unknown[] };
+    packageDependencyGraph: { nodes: unknown[]; links: unknown[] }; // External package dependencies
     vulnerabilityDistribution: Array<{ severity: string; count: number; color: string }>;
   };
   qualityMetrics?: QualityMetrics;

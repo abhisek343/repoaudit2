@@ -250,7 +250,7 @@ export interface PRPhase {
   name: string;
   duration: number;
   color: string;
-  icon: React.ReactNode | string;
+  icon: string;
 }
 
 // --- Main Analysis Result Structure ---

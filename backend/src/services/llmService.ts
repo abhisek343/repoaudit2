@@ -22,6 +22,10 @@ export class LLMService {
   private googleAI?: GoogleGenAI;
   private claude?: Anthropic;
   private config: LLMConfig;
+  
+  // Circuit breaker for quota exhaustion
+  private static quotaExhaustedUntil: Record<string, number> = {};
+  private static readonly QUOTA_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
 
   constructor(config: LLMConfig) {
     this.config = {
@@ -59,18 +63,35 @@ export class LLMService {
        if (this.config.provider === 'gemini') this.googleAI = undefined;
        if (this.config.provider === 'claude') this.claude = undefined;
      }
-   }
-
-   async checkAvailability(): Promise<boolean> {
+   }   async checkAvailability(): Promise<boolean> {
     if (!this.isConfigured()) {
       return false;
     }
+    
+    // Check circuit breaker first
+    if (this.isQuotaExhausted()) {
+      console.warn("LLM availability check skipped due to quota exhaustion cooldown");
+      return false;
+    }
+    
     try {
       // A simple test prompt
       await this.generateText("hello", 5);
       return true;
     } catch (error) {
       console.error("LLM availability check failed:", error);
+      
+      // If it's a quota/rate limit error, activate circuit breaker
+      if (error instanceof Error && (
+        error.message.includes('429') ||
+        error.message.toLowerCase().includes('too many requests') ||
+        error.message.toLowerCase().includes('quota') ||
+        error.message.toLowerCase().includes('resource_exhausted')
+      )) {
+        console.warn("LLM availability check failed due to quota/rate limit. Activating circuit breaker.");
+        this.markQuotaExhausted();
+      }
+      
       return false;
     }
   }
@@ -128,12 +149,6 @@ Enhanced Mermaid Code:
 
    public isConfigured(): boolean {
     const result = !!(this.config?.provider && this.config?.apiKey && this.config.apiKey.trim() !== '');
-    console.log('LLM isConfigured check:', {
-        hasProvider: !!this.config?.provider,
-        hasApiKey: !!this.config?.apiKey,
-        apiKeyLength: this.config?.apiKey?.length,
-        result
-    });
     return result;
    }
 
@@ -177,11 +192,15 @@ Enhanced Mermaid Code:
       }
     }
   }
-
   async generateText(prompt: string, maxTokens: number = 1000): Promise<string> {
     const modelName = this.config.model;
     if (!modelName) {
         throw new LLMError(`No model specified for provider ${this.config.provider}`);
+    }
+    
+    // Check circuit breaker first
+    if (this.isQuotaExhausted()) {
+      throw new LLMError(`LLM service unavailable due to quota exhaustion. Please wait before retrying.`);
     }
     try {
       switch (this.config.provider) {
@@ -214,12 +233,9 @@ Enhanced Mermaid Code:
                 return text;
               } else {
                 throw new LLMError("Empty or invalid response from Gemini.");
-              }
-            } catch (error) {
+              }            } catch (error) {
               retryCount++;
-              if (retryCount >= maxRetries) {
-                throw new LLMError(`Max retries exceeded for Gemini model ${modelName}. Last error: ${error instanceof Error ? error.message : String(error)}`, error);
-              }
+                // Check for non-retryable errors including quota exhaustion
               if (error instanceof Error && (
                   error.message.includes('404') || 
                   error.message.toLowerCase().includes('model not found') || 
@@ -230,6 +246,22 @@ Enhanced Mermaid Code:
                  )) {
                 throw new LLMError(`Non-retryable Gemini error: "${error.message}". Model: ${modelName}.`, error);
               }
+              
+              // Check for quota exhaustion errors
+              if (error instanceof Error && (
+                  error.message.includes('429') ||
+                  error.message.toLowerCase().includes('too many requests') ||
+                  error.message.toLowerCase().includes('quota') ||
+                  error.message.toLowerCase().includes('resource_exhausted')
+                 )) {
+                this.markQuotaExhausted();
+                throw new LLMError(`Quota exhausted for Gemini: "${error.message}". Model: ${modelName}.`, error);
+              }
+              
+              if (retryCount >= maxRetries) {
+                throw new LLMError(`Max retries exceeded for Gemini model ${modelName}. Last error: ${error instanceof Error ? error.message : String(error)}`, error);
+              }
+              
               const delay = initialDelay * Math.pow(2, retryCount - 1);
               await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -649,4 +681,27 @@ Return ONLY a JSON array of roadmap items.`;
       console.error('LLM Service Error (generatePerformanceOptimizations):', error);
       return 'Performance optimization suggestions failed due to an error.';
     }  }
+
+    private getProviderKey(): string {
+    return `${this.config.provider}_${this.config.apiKey?.substring(0, 8) || 'no-key'}`;
+  }
+
+  private isQuotaExhausted(): boolean {
+    const key = this.getProviderKey();
+    const exhaustedUntil = LLMService.quotaExhaustedUntil[key];
+    if (exhaustedUntil && Date.now() < exhaustedUntil) {
+      return true;
+    }
+    // Clean up expired entries
+    if (exhaustedUntil && Date.now() >= exhaustedUntil) {
+      delete LLMService.quotaExhaustedUntil[key];
+    }
+    return false;
+  }
+
+  private markQuotaExhausted(): void {
+    const key = this.getProviderKey();
+    LLMService.quotaExhaustedUntil[key] = Date.now() + LLMService.QUOTA_COOLDOWN_MS;
+    console.warn(`LLM quota exhausted for ${this.config.provider}. Cooldown until ${new Date(LLMService.quotaExhaustedUntil[key]).toISOString()}`);
+  }
 }

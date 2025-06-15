@@ -46,11 +46,9 @@ interface DiagramsPageProps {
 const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
   const [selectedDiagram, setSelectedDiagram] = useState('dependency-wheel');
   const [selectedCategory, setSelectedCategory] = useState('All');
-
   // Use actual data from reportData with proper fallbacks
   const {
     files = [],
-    dependencies
     // dependencyMetrics // Removed as reportData.dependencies is used as primary and fallback
   } = reportData || {};
 
@@ -143,13 +141,21 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     });
     return root;
   }, [apiEndpoints, files]);
-
   // Add fallback data generation for missing diagram data
   const fallbackDependencyWheelData = useMemo(() => {
-    if (dependencyWheelData && dependencyWheelData.length > 0) return dependencyWheelData;
+    if (dependencyWheelData && dependencyWheelData.length > 0) return dependencyWheelData;    // For dependency wheel, use package dependencies from dependencyMetrics
+    if (reportData.dependencyMetrics?.packageDependencyGraph?.links) {
+      const links = reportData.dependencyMetrics.packageDependencyGraph.links as Array<{ source: string; target: string; value?: number }>;
+      return links.slice(0, 50).map(link => ({
+        source: link.source,
+        target: link.target,
+        value: link.value || 1 
+      }));
+    }
     
-    if (dependencies && dependencies.links) {
-      return dependencies.links.slice(0, 50).map(link => ({
+    // Fallback: try to use internal dependency graph if no package dependencies
+    if (reportData.dependencyGraph?.links) {
+      return reportData.dependencyGraph.links.slice(0, 20).map(link => ({
         source: link.source,
         target: link.target,
         value: 1 
@@ -157,50 +163,62 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     }
     
     return [];
-  }, [dependencyWheelData, dependencies]);
-
+  }, [dependencyWheelData, reportData.dependencyMetrics, reportData.dependencyGraph]);
   const preparedDependencyGraphData = useMemo(() => {
-    const depData = reportData.dependencies; // Simplified: directly use reportData.dependencies
+    // Use dependencyGraph for internal module dependencies, not dependencies which contains package.json deps
+    const depData = reportData.dependencyGraph; 
 
     if (!depData || !depData.nodes || !depData.links) {
+      console.log('No dependency graph data available:', { depData });
       return { nodes: [], links: [] };
     }
 
-    // Use types from frontend/src/types/index.ts for initial mapping
-    const typedNodes = depData.nodes as import('../../types').DependencyNode[];
-    const typedLinks = depData.links as import('../../types').DependencyLink[];
+    console.log('Processing dependency graph data:', { 
+      nodes: depData.nodes.length, 
+      links: depData.links.length 
+    });
 
-    const visNodes: VisDependencyNode[] = typedNodes.map((n) => ({
-      id: n.id || n.name || `node-${Math.random().toString(36).substr(2, 9)}`,
-      name: n.name || 'Unknown Node',
-      type: n.type || 'dependency',
-      // @ts-expect-error // n.size might not exist on import('../../types').DependencyNode, handle gracefully
-      size: n.size || (n.metrics?.linesOfCode) || 100,
-      // @ts-expect-error // n.metrics might not exist or match VisDependencyNode structure
-      metrics: n.metrics || { complexity: 0, dependencies: 0, dependents: 0, lastModified: 'N/A' },
+    // Use the ArchitectureData nodes/links structure
+    const visNodes: VisDependencyNode[] = depData.nodes.map((n) => ({
+      id: n.id || n.path || `node-${Math.random().toString(36).substr(2, 9)}`,
+      name: n.name || n.path?.split('/').pop() || 'Unknown Node',
+      type: n.type || 'module',
+      size: 100, // Default size since ArchitectureData nodes don't have size
+      metrics: { 
+        complexity: 0, 
+        dependencies: 0, 
+        dependents: 0, 
+        lastModified: 'N/A' 
+      },
     }));
 
-    const visLinks: VisDependencyLink[] = typedLinks.map((l) => {
-      // The source/target in typedLinks are strings, but VisDependencyLink expects objects.
-      // We find the corresponding VisDependencyNode.
+    const visLinks: VisDependencyLink[] = depData.links.map((l) => {
+      // ArchitectureData links have source/target as strings (node IDs)
       const sourceNode = visNodes.find(vn => vn.id === l.source);
       const targetNode = visNodes.find(vn => vn.id === l.target);
       
       if (!sourceNode || !targetNode) {
-        console.warn('Skipping link due to missing source/target node in DependencyGraph:', l, { availableNodeIds: visNodes.map(vn => vn.id) });
+        console.warn('Skipping link due to missing source/target node in DependencyGraph:', l, { 
+          availableNodeIds: visNodes.map(vn => vn.id) 
+        });
         return null; 
       }
 
       return {
         source: sourceNode, 
         target: targetNode,
-        type: 'related', // Default type, as l.type doesn't exist on DependencyLink from types/index.ts
-        strength: 1, // Default strength, as l.strength doesn't exist
+        type: 'imports',
+        strength: 1,
       };
     }).filter(l => l !== null) as VisDependencyLink[];
 
+    console.log('Prepared dependency graph data:', { 
+      nodes: visNodes.length, 
+      links: visLinks.length 
+    });
+
     return { nodes: visNodes, links: visLinks };
-  }, [reportData.dependencies]);
+  }, [reportData.dependencyGraph]);
 
   const fallbackFileSystemTree = useMemo(() => {
     if (fileSystemTree) return fileSystemTree;

@@ -61,14 +61,18 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setGithubTokenError('Failed to validate GitHub token.');
       console.error('GitHub token validation error:', error);
     }
-  }, []);
-
-  const validateLlmConfig = useCallback(async (config: LLMConfig) => {
+  }, []);  const validateLlmConfig = useCallback(async (config: LLMConfig) => {
     if (!config.apiKey.trim()) {
       setLlmConfigStatus('idle');
       setLlmConfigError(null);
       return;
     }
+    
+    // Prevent rapid revalidation if already validating
+    if (llmConfigStatus === 'validating') {
+      return;
+    }
+    
     setLlmConfigStatus('validating');
     setLlmConfigError(null);
     try {
@@ -82,13 +86,24 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
         setLlmConfigStatus('valid');
       } else {
         setLlmConfigStatus('invalid');
-        setLlmConfigError(data.error || `Invalid API key for ${config.provider}.`);
+        const errorMessage = data.error || `Invalid API key for ${config.provider}.`;
+        
+        // Check if it's a quota-related error and provide user-friendly message
+        if (errorMessage.toLowerCase().includes('quota') || 
+            errorMessage.toLowerCase().includes('too many requests') ||
+            errorMessage.toLowerCase().includes('temporarily unavailable') ||
+            errorMessage.toLowerCase().includes('rate limited')) {
+          setLlmConfigError('API quota temporarily exceeded. Please wait before retrying or upgrade your plan.');
+        } else {
+          setLlmConfigError(errorMessage);
+        }
       }
     } catch (error) {
       setLlmConfigStatus('invalid');
       setLlmConfigError(`Failed to validate API key for ${config.provider}.`);
       console.error('LLM key validation error:', error);
-    }  }, []);
+    }
+  }, [llmConfigStatus]); // Add dependency to prevent rapid revalidation
 
   // Add this function to check for environment variables
   const checkEnvironmentKeys = useCallback(async () => {
@@ -115,7 +130,6 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setGithubTokenError(null);
     }
   }, 500);
-
   const validateLlmConfigDebounced = useDebounce(() => {
     if (apiKey && provider) {
       validateLlmConfig({ provider, apiKey, model: model || getDefaultModel(provider) });
@@ -123,7 +137,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setLlmConfigStatus('idle');
       setLlmConfigError(null);
     }
-  }, 500);
+  }, 2000); // Increased from 500ms to 2000ms to reduce rapid calls
   useEffect(() => {
     validateGithubTokenDebounced();
   }, [githubToken, validateGithubTokenDebounced]);

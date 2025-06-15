@@ -28,19 +28,24 @@ export class AnalysisService {
 
     const eventSource = new EventSource(`/api/analyze?${params.toString()}`);
     
-    const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {
-      // Add a timeout to help debug hanging requests
+    const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {      // Add a timeout to help debug hanging requests
       const timeout = setTimeout(() => {
         console.log('Analysis timeout - closing EventSource');
         eventSource.close();
-        reject(new Error('Analysis timed out after 5 minutes'));
-      }, 5 * 60 * 1000); // 5 minutes
-      
-      eventSource.onopen = () => {
+        reject(new Error('Analysis timed out after 10 minutes'));
+      }, 10 * 60 * 1000); // Increased to 10 minutes
+        eventSource.onopen = () => {
         console.log('EventSource connection opened');
+        console.log('EventSource readyState:', eventSource.readyState);
       };
       
-      eventSource.onmessage = (event) => {
+      // Add more debugging for connection state
+      const originalClose = eventSource.close.bind(eventSource);
+      eventSource.close = () => {
+        console.log('EventSource closing - readyState:', eventSource.readyState);
+        originalClose();
+      };
+        eventSource.onmessage = (event) => {
         console.log('Received SSE message:', { 
           type: event.type, 
           data: event.data,
@@ -50,6 +55,13 @@ export class AnalysisService {
         try {
           const data = JSON.parse(event.data);
           console.log('Parsed message data:', data);
+          
+          // Handle keep-alive messages
+          if (data.type === 'keep-alive') {
+            console.log('Received keep-alive message');
+            return;
+          }
+          
           if (data.step && typeof data.progress === 'number') {
             onProgress(data.step, data.progress);
           }
@@ -88,13 +100,21 @@ export class AnalysisService {
           eventSource.close();
           reject(new Error('Failed to parse final analysis result.'));
         }
-      });
-
-      eventSource.addEventListener('error', (event) => {
+      });      eventSource.addEventListener('error', (event) => {
         clearTimeout(timeout); // Clear timeout on error
         console.error('EventSource error:', event);
         console.log('EventSource readyState:', eventSource.readyState);
         console.log('Error event data:', (event as MessageEvent).data); // Log event.data
+        console.log('Error event type:', event.type);
+        console.log('Error event target:', event.target);
+        
+        // Check if this is a network error or server error
+        if (eventSource.readyState === EventSource.CLOSED) {
+          console.log('EventSource was closed');
+        } else if (eventSource.readyState === EventSource.CONNECTING) {
+          console.log('EventSource is reconnecting');
+        }
+        
         try {
           if ((event as MessageEvent).data) {
             const errorData = JSON.parse((event as MessageEvent).data);
@@ -103,7 +123,7 @@ export class AnalysisService {
             reject(new Error('Analysis failed due to a connection error or server issue.'));
           }
         } catch {
-          reject(new Error('Failed to parse error data.'));
+          reject(new Error('Analysis failed due to a connection error or server issue.'));
         } finally {
           eventSource.close();
         }

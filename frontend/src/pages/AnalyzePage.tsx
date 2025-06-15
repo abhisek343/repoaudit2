@@ -192,9 +192,9 @@ const AnalyzePage = () => {
     setError(undefined);
     setProgress(0);
     setCurrentStep('Initializing analysis...');
-    
-    const savedToken = localStorage.getItem('githubToken');
-    const analysisService = new AnalysisService(savedToken || undefined);
+      const savedToken = localStorage.getItem('githubToken');
+    console.log('Starting analysis with LLM config:', llmConfig); // Debug log
+    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);
     
     const { eventSource: newEventSource, analysisPromise } = analysisService.analyzeRepository(
       githubUrl,

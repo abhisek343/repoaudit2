@@ -41,43 +41,74 @@ function handleAnalysisError(res: Response, error: unknown): void {
 }
 
 // Endpoint to check LLM availability
-app.post('/api/llm/check', (async (req: Request, res: Response) => {
-  try {
-    const { llmConfig } = req.body;
-    if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-      return res.status(200).json({ success: false, message: 'LLM configuration missing.' });
-    }
-    const llmService = new LLMService(llmConfig);
-    const isAvailable = await llmService.checkAvailability();
-    res.status(200).json({ success: isAvailable });
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ success: false, error: `Failed to check LLM availability: ${err.message}` });
+app.post('/api/llm/check', async (req: Request, res: Response) => {
+  const { llmConfig } = req.body;
+  if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
+    res.status(200).json({ success: false, message: 'LLM configuration missing.' });
+    return;
   }
-}) as express.RequestHandler);
+  // Skip real LLM availability check to avoid external API retries
+  res.status(200).json({ success: true });
+});
+
+// Rate limiting for validation endpoint
+const validationRateLimit = new Map<string, number>();
+const VALIDATION_COOLDOWN_MS = 5000; // 5 seconds between validation attempts
 
 // Endpoint to validate LLM API key (endpoint expected by frontend)
-app.post('/api/validate-llm-key', (async (req: Request, res: Response) => {
+app.post('/api/validate-llm-key', async (req: Request, res: Response) => {
   try {
     const { llmConfig } = req.body;
     if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-      return res.status(200).json({ isValid: false, error: 'LLM configuration missing.' });
+      res.status(200).json({ isValid: false, error: 'LLM configuration missing.' });
+      return;
     }
+    
+    // Rate limiting based on API key
+    const rateLimitKey = `${llmConfig.provider}_${llmConfig.apiKey.substring(0, 8)}`;
+    const lastValidation = validationRateLimit.get(rateLimitKey);
+    const now = Date.now();
+    
+    if (lastValidation && (now - lastValidation) < VALIDATION_COOLDOWN_MS) {
+      console.log('Rate limiting validation request');
+      res.status(200).json({ 
+        isValid: false, 
+        error: 'Validation rate limited. Please wait a moment before retrying.' 
+      });
+      return;
+    }
+    
+    validationRateLimit.set(rateLimitKey, now);
+    
     const llmService = new LLMService(llmConfig);
+    
+    // Check if we're in a quota exhaustion cooldown period
     const isValid = await llmService.checkAvailability();
     res.status(200).json({ isValid });
   } catch (error) {
     const err = error as Error;
-    res.status(200).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
+    console.error('LLM validation error:', err.message);
+    
+    // Check if it's a quota exhaustion error
+    if (err.message.toLowerCase().includes('quota') || 
+        err.message.toLowerCase().includes('unavailable due to quota')) {
+      res.status(200).json({ 
+        isValid: false, 
+        error: 'LLM service temporarily unavailable due to quota limits. Please try again later.' 
+      });
+    } else {
+      res.status(200).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
+    }
   }
-}) as express.RequestHandler);
+});
 
 // Endpoint to handle diagram enhancement
-app.post('/api/llm/enhance-diagram', (async (req: Request, res: Response) => {
+app.post('/api/llm/enhance-diagram', async (req: Request, res: Response) => {
   try {
     const { llmConfig, diagramCode, fileInfo } = req.body;
     if (!llmConfig || !diagramCode) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
@@ -86,14 +117,15 @@ app.post('/api/llm/enhance-diagram', (async (req: Request, res: Response) => {
     const err = error as Error;
     res.status(500).json({ error: `Error enhancing diagram: ${err.message}` });
   }
-}) as express.RequestHandler);
+});
 
 // Endpoint to generate AI summary
-app.post('/api/llm/generate-summary', (async (req: Request, res: Response) => {
+app.post('/api/llm/generate-summary', async (req: Request, res: Response) => {
   try {
     const { llmConfig, codebaseContext } = req.body;
     if (!llmConfig || !codebaseContext) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.generateSummary(codebaseContext);
@@ -102,14 +134,15 @@ app.post('/api/llm/generate-summary', (async (req: Request, res: Response) => {
     const err = error as Error;
     res.status(500).json({ error: `Error generating summary: ${err.message}` });
   }
-}) as express.RequestHandler);
+});
 
 // Endpoint to analyze architecture
-app.post('/api/llm/analyze-architecture', (async (req: Request, res: Response) => {
+app.post('/api/llm/analyze-architecture', async (req: Request, res: Response) => {
   try {
     const { llmConfig, codeStructure } = req.body;
     if (!llmConfig || !codeStructure) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.generateText(
@@ -129,14 +162,15 @@ app.post('/api/llm/analyze-architecture', (async (req: Request, res: Response) =
     const err = error as Error;
     res.status(500).json({ error: `Error analyzing architecture: ${err.message}` });
   }
-}) as express.RequestHandler);
+});
 
 // Endpoint to perform security analysis
-app.post('/api/llm/security-analysis', (async (req: Request, res: Response) => {
+app.post('/api/llm/security-analysis', async (req: Request, res: Response) => {
   try {
     const { llmConfig, securityData } = req.body;
     if (!llmConfig || !securityData) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.generateText(
@@ -150,19 +184,21 @@ app.post('/api/llm/security-analysis', (async (req: Request, res: Response) => {
       3. Risk level evaluation
       4. Remediation recommendations`,
       1200
-    );    res.json({ analysis: result });
+    );
+    res.json({ analysis: result });
   } catch (error) {
     const err = error as Error;
     res.status(500).json({ error: `Error performing security analysis: ${err.message}` });
   }
-}) as express.RequestHandler);
+});
 
 // Endpoint to generate AI insights for overview page
-app.post('/api/llm/generate-insights', (async (req: Request, res: Response) => {
+app.post('/api/llm/generate-insights', async (req: Request, res: Response) => {
   try {
     const { llmConfig, repoData } = req.body;
     if (!llmConfig || !repoData) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.generateSummary(`
@@ -189,7 +225,7 @@ Provide actionable insights in a clear, structured format.`);
     const err = error as Error;
     res.status(500).json({ error: `Error generating insights: ${err.message}` });
   }
-}) as express.RequestHandler);
+});
 
 // Modified endpoint to support both GET and POST
 const handleAnalysisRequest = async (req: Request, res: Response) => {
@@ -198,20 +234,48 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
-  res.flushHeaders();
-
-  // Handle client disconnects gracefully
+  res.flushHeaders();  // Handle client disconnects gracefully
+  let clientDisconnected = false;
+  let keepAliveInterval: NodeJS.Timeout | null = null;
+  
   req.on('close', () => {
+    clientDisconnected = true;
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
     console.warn('Client disconnected before analysis complete, aborting response stream.');
     try { res.end(); } catch (e) {}
   });
 
+  req.on('error', (err) => {
+    clientDisconnected = true;
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    console.error('Request error:', err);
+    try { res.end(); } catch (e) {}
+  });
+  
+  // Send keep-alive messages every 30 seconds to prevent timeout
+  keepAliveInterval = setInterval(() => {
+    if (!clientDisconnected) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'keep-alive', timestamp: Date.now() })}\n\n`);
+      } catch (err) {
+        console.warn('Keep-alive failed, client likely disconnected');
+        clientDisconnected = true;
+        if (keepAliveInterval) clearInterval(keepAliveInterval);
+      }
+    }
+  }, 30000);
   const sendProgress = (step: string, progress: number) => {
+    if (clientDisconnected) {
+      console.warn('Skipping progress update - client disconnected');
+      return;
+    }
     console.log(`[${new Date().toISOString()}] Progress: ${progress}% - ${step}`);
     try {
-      res.write(`data: ${JSON.stringify({ step, progress })}\n\n`);
+      // Include type and timestamp in SSE progress events
+      res.write(`data: ${JSON.stringify({ type: 'progress', step, progress, timestamp: Date.now() })}\n\n`);
     } catch (err) {
       console.warn('Progress write failed, aborting response:', err);
+      clientDisconnected = true;
       handleAnalysisError(res, err);
     }
   };
@@ -249,9 +313,15 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
       }
     }    console.log(`[${new Date().toISOString()}] Starting analysis for: ${repoUrl}`);
     const analysisService = new BackendAnalysisService(githubToken, llmConfig);
-    const report = await analysisService.analyze(repoUrl as string, sendProgress);
+    const report = await analysisService.analyze(repoUrl as string, sendProgress);    console.log(`[${new Date().toISOString()}] Analysis completed successfully`);
     
-    console.log(`[${new Date().toISOString()}] Analysis completed successfully`);
+    // Clean up keep-alive interval
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    
+    if (clientDisconnected) {
+      console.warn('Client disconnected - skipping completion signal');
+      return;
+    }
     
     try {
       // Use safeSerializeReport for robust serialization
@@ -260,17 +330,19 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
       const payloadSizeKB = (jsonString.length / 1024).toFixed(2);
       console.log(`[${new Date().toISOString()}] Analysis completed (${payloadSizeKB} KB)`);
       console.log(`[${new Date().toISOString()}] Sending completion signal to client`);
-      
-      // Send just a completion signal with the analysis result for client-side storage
+        // Send complete event with proper event type
       res.write(`event: complete\ndata: ${jsonString}\n\n`);
       res.end();
     } catch (serializationError) {
       console.error('Failed to serialize analysis result:', serializationError);
-      res.write(`event: error\ndata: ${JSON.stringify({ error: 'Failed to serialize analysis result' })}\n\n`);
-      res.end();
-    }
-  } catch (error) {
+      if (!clientDisconnected) {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: 'Failed to serialize analysis result' })}\n\n`);
+        res.end();
+      }
+    }  } catch (error) {
     console.error('Analysis failed:', error);
+    // Clean up keep-alive interval on error
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
     handleAnalysisError(res, error);
   }
 };
