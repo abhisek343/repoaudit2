@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { GoogleGenAI, GenerateContentResponse } from '@google/genai'; // Added GenerateContentResponse
+import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import { LLMConfig, Contributor, Commit, FileInfo, TechnicalDebt, FunctionInfo } from '../types';
 
@@ -42,9 +42,8 @@ export class LLMService {
             apiKey: this.config.apiKey,
             dangerouslyAllowBrowser: true
           });
-          break;
-        case 'gemini':
-          this.googleAI = new GoogleGenAI({ apiKey: this.config.apiKey }); // Align with documentation: pass API key as an object property
+          break;        case 'gemini':
+          this.googleAI = new GoogleGenAI({ apiKey: this.config.apiKey });
           break;
         case 'claude':
           this.claude = new Anthropic({
@@ -76,30 +75,66 @@ export class LLMService {
     }
   }
 
-  async enhanceMermaidDiagram(diagramCode: string, _fileInfo: FileInfo): Promise<{ enhancedCode: string }> {
-    // Add timeout to prevent hanging
-    const timeoutMs = Number(process.env.LLM_DIAGRAM_TIMEOUT_MS) || 10000;
-    const timeoutPromise = new Promise<{ enhancedCode: string }>((resolve) =>
-      setTimeout(() => resolve({ enhancedCode: diagramCode }), timeoutMs)
+  async enhanceMermaidDiagram(diagramCode: string, fileInfo: FileInfo): Promise<{ enhancedCode: string }> {
+    if (!this.isConfigured()) {
+      console.warn('LLMService: enhanceMermaidDiagram called but LLM is not configured. Returning original code.');
+      return { enhancedCode: diagramCode };
+    }
+
+    const timeoutMs = Number(process.env.LLM_DIAGRAM_TIMEOUT_MS) || 15000; // Increased timeout slightly
+    const timeoutPromise = new Promise<{ enhancedCode: string }>(resolve =>
+      setTimeout(() => {
+        console.warn(`enhanceMermaidDiagram timed out for ${fileInfo.path}. Returning original code.`);
+        resolve({ enhancedCode: diagramCode });
+      }, timeoutMs)
     );
+
     try {
-      // Race between real service and timeout
-      const result = await Promise.race([
-        (async () => {
-          // Real implementation placeholder
-          return { enhancedCode: diagramCode };
-        })(),
-        timeoutPromise
-      ]);
+      const llmTask = async () => {
+        const prompt = `
+Analyze the following Mermaid diagram code from the file "${fileInfo.path}".
+Enhance it by improving clarity, layout, adding relevant details, or correcting syntax if necessary.
+Return ONLY the enhanced Mermaid diagram code. Do not include any explanations or surrounding text.
+
+Original Mermaid Code:
+\`\`\`mermaid
+${diagramCode}
+\`\`\`
+
+Enhanced Mermaid Code:
+`;
+        // Using a moderate number of tokens, as diagrams can become verbose
+        const enhancedCodeResponse = await this.generateText(prompt, 1024);
+        
+        // Basic validation: check if the response looks like Mermaid code
+        // This is a heuristic. More robust validation might involve trying to render it.
+        if (enhancedCodeResponse && enhancedCodeResponse.trim().length > 0 && !enhancedCodeResponse.includes("```")) {
+          return { enhancedCode: enhancedCodeResponse.trim() };
+        } else if (enhancedCodeResponse.includes("```mermaid")) {
+            const cleaned = enhancedCodeResponse.replace(/```mermaid\s*([\s\S]*?)\s*```/, '$1').trim();
+            if (cleaned.length > 0) return { enhancedCode: cleaned };
+        }
+        console.warn('LLMService: enhanceMermaidDiagram received an unexpected response format. Returning original code.', { response: enhancedCodeResponse.substring(0,100) });
+        return { enhancedCode: diagramCode }; // Fallback to original if response is weird
+      };
+
+      const result = await Promise.race([llmTask(), timeoutPromise]);
       return result;
     } catch (error) {
-      console.error('enhanceMermaidDiagram failed or timed out:', error);
-      return { enhancedCode: diagramCode };
+      console.error(`LLMService: enhanceMermaidDiagram failed for ${fileInfo.path}:`, error);
+      return { enhancedCode: diagramCode }; // Fallback to original on error
     }
   }
 
    public isConfigured(): boolean {
-     return !!this.config.apiKey && (!!this.openai || !!this.googleAI || !!this.claude);
+    const result = !!(this.config?.provider && this.config?.apiKey && this.config.apiKey.trim() !== '');
+    console.log('LLM isConfigured check:', {
+        hasProvider: !!this.config?.provider,
+        hasApiKey: !!this.config?.apiKey,
+        apiKeyLength: this.config?.apiKey?.length,
+        result
+    });
+    return result;
    }
 
   private getDefaultModel(provider: LLMConfig['provider']): string {
@@ -159,39 +194,26 @@ export class LLMService {
             temperature: 0.5,
           });
           return openaiResponse.choices[0]?.message?.content || '';
-        }
-        case 'gemini': {
+        }        case 'gemini': {
           if (!this.googleAI) throw new LLMError('Google AI (Gemini) not initialized.');
-          // Directly use the models.generateContent structure as per latest docs
           let retryCount = 0;
           const maxRetries = 4;
           const initialDelay = 2000;
           while (retryCount < maxRetries) {
             try {
-              // Align with documentation: ai.models.generateContent({ model, contents })
+              // Use the correct structure for GoogleGenAI SDK
               const result = await this.googleAI.models.generateContent({
                 model: modelName,
-                contents: [{ role: "user", parts: [{ text: prompt }] }] // Ensure 'contents' format is correct
+                contents: [{ role: "user", parts: [{ text: prompt }] }]
               });
-              // 'result' is already the GenerateContentResponse
-              const genResponse: GenerateContentResponse = result;
-              // Access text property, or fallback to candidates
-              // Note: The SDK's GenerateContentResponse might have text() as a method or .text as a property.
-              // The current usage implies .text is a property based on current structure and previous attempts.
-              // If genResponse.text is not directly available, the candidates path is the fallback.
-              // The TS error indicates genResponse.text is a 'get' accessor, so access it as a property.
-              const responseText = genResponse.text;
-
-              if (typeof responseText === 'string') {
-                return responseText;
+              
+              // Extract text from the response using the correct property
+              const text = result.text || result.candidates?.[0]?.content?.parts?.[0]?.text;
+              
+              if (typeof text === 'string' && text.length > 0) {
+                return text;
               } else {
-                // Fallback to candidates if .text is not a string or not present
-                const candidateText = genResponse.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (typeof candidateText === 'string') return candidateText;
-                
-                // If neither .text nor candidates provide a string, log and throw
-                console.error("LLMService Gemini: Text content not found via .text property or in candidates. Response:", genResponse);
-                throw new LLMError("Unexpected Gemini response structure: text content not found.");
+                throw new LLMError("Empty or invalid response from Gemini.");
               }
             } catch (error) {
               retryCount++;
@@ -381,7 +403,6 @@ Provide a brief analysis (100-150 words) covering:
 Be specific and actionable. Aim for 150-200 words. Return only the analysis text.`;
     return this.generateText(prompt, 400);
   }
-
   async analyzeArchitecture(files: FileInfo[], languages: Record<string, number>): Promise<string> {
     if (!this.isConfigured()) return "LLM not configured. Architecture analysis unavailable.";
     const filePaths = files.slice(0, 100).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
@@ -529,14 +550,103 @@ Return ONLY a JSON array of roadmap items.`;
         }
             functions.push({
                 name: functionName,
-                complexity: 0, // Placeholder value
-                dependencies: [],
+                // dependencies: [], // This property does not exist on FunctionInfo in backend/src/types/index.ts
                 calls: [],
                 description: `Function ${functionName}`,
                 startLine: startLine,
-                endLine: startLine + (match[0].split('\n').length -1)
+                endLine: startLine + (match[0].split('\n').length - 1),
+                parameters: [], // placeholder for parameters
+                sloc: match[0].split('\n').length,
+                isAsync: /\basync\b/.test(match[0]),
+                content: match[0]
             });
     }
-    return functions;
+    return functions;  }
+
+  // --- Enhanced Security Analysis ---
+  async performSecurityAnalysis(securityData: any): Promise<string> {
+    if (!this.isConfigured()) {
+      console.warn('LLMService: performSecurityAnalysis called but LLM is not configured.');
+      return 'Security analysis unavailable - LLM not configured.';
+    }
+
+    try {
+      const prompt = `Perform a comprehensive security analysis on this repository:
+      Security Issues Found: ${JSON.stringify(securityData.issues)}
+      Dependencies: ${JSON.stringify(securityData.dependencies)}
+      File Analysis: ${JSON.stringify(securityData.files?.slice(0, 10) || [])}
+      
+      Analyze and provide:
+      1. Vulnerability assessment and risk levels
+      2. Security best practices compliance
+      3. Dependency security evaluation
+      4. Code security patterns analysis
+      5. Prioritized remediation recommendations
+      6. OWASP compliance notes where applicable
+      
+      Format your response with clear risk categories and actionable recommendations.`;
+
+      return await this.generateText(prompt, 1200);
+    } catch (error) {
+      console.error('LLM Service Error (performSecurityAnalysis):', error);
+      return 'Security analysis failed due to an error.';
+    }
   }
+
+  // --- Code Quality Assessment ---
+  async assessCodeQuality(qualityMetrics: any): Promise<string> {
+    if (!this.isConfigured()) {
+      console.warn('LLMService: assessCodeQuality called but LLM is not configured.');
+      return 'Code quality assessment unavailable - LLM not configured.';
+    }
+
+    try {
+      const prompt = `Assess the code quality based on these metrics:
+      Quality Metrics: ${JSON.stringify(qualityMetrics)}
+      
+      Provide assessment on:
+      1. Overall code quality score and reasoning
+      2. Maintainability index analysis
+      3. Complexity distribution insights
+      4. Test coverage evaluation
+      5. Technical debt assessment
+      6. Specific improvement recommendations
+      
+      Format as a structured quality report with actionable insights.`;
+
+      return await this.generateText(prompt, 1000);
+    } catch (error) {
+      console.error('LLM Service Error (assessCodeQuality):', error);
+      return 'Code quality assessment failed due to an error.';
+    }
+  }
+
+  // --- Performance Optimization Suggestions ---
+  async generatePerformanceOptimizations(performanceData: any): Promise<string> {
+    if (!this.isConfigured()) {
+      console.warn('LLMService: generatePerformanceOptimizations called but LLM is not configured.');
+      return 'Performance optimization suggestions unavailable - LLM not configured.';
+    }
+
+    try {
+      const prompt = `Analyze performance characteristics and suggest optimizations:
+      Performance Metrics: ${JSON.stringify(performanceData.metrics)}
+      Hot Spots: ${JSON.stringify(performanceData.hotspots)}
+      Key Functions: ${JSON.stringify(performanceData.keyFunctions)}
+      
+      Provide:
+      1. Performance bottleneck identification
+      2. Algorithmic complexity improvements
+      3. Memory usage optimization suggestions
+      4. Database query optimization (if applicable)
+      5. Caching strategy recommendations
+      6. Specific code refactoring suggestions
+      
+      Focus on actionable, high-impact optimizations.`;
+
+      return await this.generateText(prompt, 1200);
+    } catch (error) {
+      console.error('LLM Service Error (generatePerformanceOptimizations):', error);
+      return 'Performance optimization suggestions failed due to an error.';
+    }  }
 }

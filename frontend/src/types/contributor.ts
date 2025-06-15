@@ -1,41 +1,47 @@
-// This file defines detailed contributor statistics, primarily for the ContributorStats component.
-// The main Contributor type used in AnalysisResult is in src/types/index.ts.
+// This file can be used to define more specific contributor-related types if needed,
+// but the main Contributor type used by AnalysisResult should be in index.ts for consistency.
+
+// Example: If ContributorDetail from here is distinct and needed elsewhere, it can stay.
+// Otherwise, consider merging its relevant fields into a comprehensive Contributor type in index.ts.
 
 export interface CommitDistribution {
   additions: number;
   deletions: number;
-  total: number; // Total commits by this contributor in the period
+  total: number;
   byFileType: {
-    [key: string]: number; // e.g., { ".ts": 10, ".md": 5 }
+    [key: string]: number;
   };
 }
 
 export interface RecentActivity {
   commits: number;
-  pullRequests: number; // Number of PRs opened/merged
-  issues: number;      // Number of issues opened/commented
-  reviews: number;     // Number of PR reviews submitted
-  lastActive: string;  // ISO date string of last activity
+  pullRequests: number;
+  issues: number;
+  reviews: number;
+  lastActive: string;
 }
 
-export interface ContributorDetail { // Renamed to avoid conflict with core Contributor type
-  id: string; // GitHub user ID or login
+// This ContributorDetail might be used for specific views like a contributor stats page.
+// The core AnalysisResult.contributors array might use a simpler Contributor type defined in index.ts.
+export interface ContributorDetail {
+  id: string;
   name: string;
   avatarUrl: string;
-  email?: string; // Might not always be available
+  email?: string;
   commitDistribution: CommitDistribution;
   recentActivity: RecentActivity;
-  totalContributions: number; // Overall contributions to the repo (from GitHub API)
-  joinDate?: string; // Date of first contribution to this repo
-  // Potentially more detailed stats could go here
+  totalContributions: number;
+  joinDate?: string;
 }
 
 export interface ContributorStats {
-  topContributors: ContributorDetail[]; // Use the detailed type here
-  totalCommitsInPeriod: number; // Total commits in the selected period by all contributors
-  totalContributorsInPeriod: number; // Unique contributors active in the period
+  topContributors: ContributorDetail[];
+  totalCommitsInPeriod: number;
+  totalContributorsInPeriod: number;
   period: {
-    start: string; // ISO date string
-    end: string;   // ISO date string
+    start: string;
+    end: string;
   };
 }
+
+// The Contributor type is defined and exported from frontend/src/types/index.ts

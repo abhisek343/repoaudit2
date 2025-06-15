@@ -13,6 +13,8 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
+        // keep-alive for SSE; disable ws so it does not treat it as websocket
+        ws: false
       },
     },
   },

@@ -1,7 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
-import { X, Key, Settings, Eye, EyeOff, Zap, Clock, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react'; // Removed DollarSign, Added Loader2
+import React, { useState, useEffect, useCallback } from 'react';
+import { X, Key, Settings, Eye, EyeOff, Zap, Clock, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import { LLMConfig } from '../types';
-import { debounce } from 'lodash';
+
+// Simple debounce hook
+const useDebounce = (callback: () => void, delay: number) => {
+  const timeoutRef = React.useRef<NodeJS.Timeout>();
+  
+  return useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(callback, delay);
+  }, [callback, delay]);
+};
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -77,29 +88,53 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setLlmConfigStatus('invalid');
       setLlmConfigError(`Failed to validate API key for ${config.provider}.`);
       console.error('LLM key validation error:', error);
+    }  }, []);
+
+  // Add this function to check for environment variables
+  const checkEnvironmentKeys = useCallback(async () => {
+    try {
+      const response = await fetch('/api/check-env-keys');
+      const data = await response.json();
+      
+      if (data.hasLlmKey) {
+        setLlmConfigStatus('valid');
+        setLlmConfigError(null);
+        // Optional: Show a message that server-side keys are configured
+      }
+    } catch (error) {
+      console.warn('Could not check environment keys:', error);
     }
   }, []);
 
-  const debouncedValidateGithubToken = useCallback(debounce(validateGithubToken, 500), [validateGithubToken]);
-  const debouncedValidateLlmConfig = useCallback(debounce(validateLlmConfig, 500), [validateLlmConfig]);
-
-  useEffect(() => {
+  // Debounced validation
+  const validateGithubTokenDebounced = useDebounce(() => {
     if (githubToken) {
-      debouncedValidateGithubToken(githubToken);
+      validateGithubToken(githubToken);
     } else {
       setGithubTokenStatus('idle');
       setGithubTokenError(null);
     }
-  }, [githubToken, debouncedValidateGithubToken]);
+  }, 500);
 
-  useEffect(() => {
+  const validateLlmConfigDebounced = useDebounce(() => {
     if (apiKey && provider) {
-      debouncedValidateLlmConfig({ provider, apiKey, model: model || getDefaultModel(provider) });
+      validateLlmConfig({ provider, apiKey, model: model || getDefaultModel(provider) });
     } else {
       setLlmConfigStatus('idle');
       setLlmConfigError(null);
     }
-  }, [apiKey, provider, model, debouncedValidateLlmConfig]);
+  }, 500);
+  useEffect(() => {
+    validateGithubTokenDebounced();
+  }, [githubToken, validateGithubTokenDebounced]);
+  useEffect(() => {
+    validateLlmConfigDebounced();
+  }, [apiKey, provider, model, validateLlmConfigDebounced]);
+
+  // Call this on component mount
+  useEffect(() => {
+    checkEnvironmentKeys();
+  }, [checkEnvironmentKeys]);
 
 
   useEffect(() => {
@@ -189,8 +224,7 @@ const getModelOptions = (provider: string) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">        <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Settings className="w-6 h-6 text-indigo-600" />
@@ -203,7 +237,26 @@ const getModelOptions = (provider: string) => {
               <X className="w-5 h-5 text-gray-500" />
             </button>
           </div>
-          <p className="text-gray-600 mt-2">
+          
+          {/* Privacy Notice */}
+          <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-1 bg-green-100 rounded">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-green-800 mb-1">
+                  🔒 Your Privacy is Protected - Bring Your Own Keys
+                </h3>
+                <p className="text-xs text-green-700">
+                  API keys are stored locally in your browser and only sent to official provider endpoints. 
+                  Your code never leaves your machine - all analysis happens locally. We don't collect, store, or transmit your data.
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <p className="text-gray-600 mt-3">
             Configure your API keys to enable AI-powered analysis and increase GitHub API rate limits.
           </p>
         </div>

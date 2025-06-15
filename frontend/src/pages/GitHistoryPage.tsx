@@ -6,7 +6,7 @@ import {
   Filter
 } from 'lucide-react';
 import GitHistoryVisualization from '../components/diagrams/GitHistoryVisualization';
-import { AnalysisResult, Commit } from '../types';
+import { AnalysisResult, ProcessedCommit as Commit, Contributor } from '../types';
 
 interface GitHistoryPageProps {
   analysisResult: AnalysisResult;
@@ -20,10 +20,11 @@ const GitHistoryPage: React.FC<GitHistoryPageProps> = ({ analysisResult: reportD
     if (!reportData?.commits) return [];
     const authorNames = new Set<string>();
     reportData.commits.forEach(c => {
-      if (c.author?.login) {
-        authorNames.add(c.author.login);
-      } else if (c.commit?.author?.name) {
-        authorNames.add(c.commit.author.name);
+      const author = c.author;
+      // Assuming author can be a string or an object with a login/name property
+      const authorName = typeof author === 'string' ? author : (author as Contributor)?.login || (author as { name?: string })?.name;
+      if (authorName) {
+        authorNames.add(authorName);
       }
     });
     return Array.from(authorNames).sort();
@@ -32,7 +33,7 @@ const GitHistoryPage: React.FC<GitHistoryPageProps> = ({ analysisResult: reportD
   const filteredCommits = useMemo(() => {
     if (!reportData?.commits) return [];
 
-    let commits = reportData.commits.filter((c): c is Commit => !!(c && c.commit && c.commit.author && c.commit.author.date));
+    let commits = reportData.commits.filter((c): c is Commit => !!(c && c.date)); // Check for c.date for ProcessedCommit
 
     if (timeFilter !== 'all') {
       const now = new Date();
@@ -42,19 +43,16 @@ const GitHistoryPage: React.FC<GitHistoryPageProps> = ({ analysisResult: reportD
       } else if (timeFilter === 'week') {
         cutoff.setDate(now.getDate() - 7);
       }
-      commits = commits.filter(commit => new Date(commit.commit.author.date) >= cutoff);
+      commits = commits.filter(commit => new Date(commit.date) >= cutoff);
     }
 
     if (authorFilter !== 'all') {
       commits = commits.filter(commit => {
-        const login = commit.author?.login;
-        const name = commit.commit?.author?.name;
+        const author = commit.author;
+        const authorName = typeof author === 'string' ? author : (author as Contributor)?.login || (author as { name?: string })?.name;
         const filter = authorFilter.toLowerCase();
         
-        if (login && login.toLowerCase() === filter) {
-          return true;
-        }
-        if (name && name.toLowerCase() === filter) {
+        if (authorName && authorName.toLowerCase() === filter) {
           return true;
         }
         return false;
@@ -104,7 +102,7 @@ const GitHistoryPage: React.FC<GitHistoryPageProps> = ({ analysisResult: reportD
       <div className="grid grid-cols-1 gap-8">
         <GitHistoryVisualization
           commits={filteredCommits}
-          contributors={reportData.contributors || []}
+          contributors={(reportData.contributors || []) as Contributor[]}
           onCommitSelect={(commit) => {
             console.log('Selected commit:', commit);
           }}
@@ -139,8 +137,8 @@ const GitHistoryPage: React.FC<GitHistoryPageProps> = ({ analysisResult: reportD
             <p className="mt-2 text-sm text-gray-600">
               {filteredCommits.length > 0 ? (
                 <>
-                  {new Date(filteredCommits[filteredCommits.length - 1].commit.author.date).toLocaleDateString()} -{' '}
-                  {new Date(filteredCommits[0].commit.author.date).toLocaleDateString()}
+                  {new Date(filteredCommits[filteredCommits.length - 1].date).toLocaleDateString()} -{' '}
+                  {new Date(filteredCommits[0].date).toLocaleDateString()}
                 </>
               ) : (
                 'N/A'

@@ -1,16 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { ZoomIn, ZoomOut, RefreshCw, Calendar, GitBranch, GitCommit, Users } from 'lucide-react';
-import { Commit as AnalysisCommit } from '../../types';
+import { Calendar, GitCommit, Users } from 'lucide-react';
+import { ProcessedCommit } from '../../types';
 
 interface GitHistoryVisualizationProps {
-  commits: AnalysisCommit[];
+  commits: ProcessedCommit[];
   contributors: Array<{
     login: string;
     contributions: number;
     avatarUrl: string;
   }>;
-  onCommitSelect?: (commit: AnalysisCommit) => void;
+  onCommitSelect?: (commit: ProcessedCommit) => void;
 }
 
 const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
@@ -18,13 +18,17 @@ const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
   contributors,
   onCommitSelect
 }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [zoom, setZoom] = useState(1);
-  const [selectedCommit, setSelectedCommit] = useState<AnalysisCommit | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);  const [selectedCommit, setSelectedCommit] = useState<ProcessedCommit | null>(null);
   const [timeRange, setTimeRange] = useState<[Date, Date]>([new Date(), new Date()]);
-
   useEffect(() => {
-    if (!svgRef.current || !commits.length) return;
+    if (!svgRef.current) return;
+    
+    // Guard against empty commits
+    if (!commits || commits.length === 0) {
+      // Clear previous visualization and show empty state
+      d3.select(svgRef.current).selectAll('*').remove();
+      return;
+    }
 
     // Clear previous visualization
     d3.select(svgRef.current).selectAll('*').remove();
@@ -33,35 +37,22 @@ const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
     const height = svgRef.current.clientHeight;
     const margin = { top: 20, right: 20, bottom: 30, left: 40 };
 
-    // Create scales
+    // Create scales - Fix: use d.date instead of d.author.date
     const xScale = d3.scaleTime()
-      .domain(d3.extent(commits, d => new Date(d.author.date)) as [Date, Date])
+      .domain(d3.extent(commits, d => new Date(d.date)) as [Date, Date])
       .range([margin.left, width - margin.right]);
 
     const yScale = d3.scaleLinear()
       .domain([0, commits.length])
-      .range([height - margin.bottom, margin.top]);
-
-    // Create SVG
+      .range([height - margin.bottom, margin.top]);    // Create SVG
     const svg = d3.select(svgRef.current)
       .attr('width', width)
       .attr('height', height);
 
-    // Add zoom behavior
-    const zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.5, 5])
-      .on('zoom', (event) => {
-        setZoom(event.transform.k);
-        svg.selectAll('.commit-circle')
-          .attr('transform', event.transform);
-      });
-
-    svg.call(zoomBehavior);
-
     // Draw commit lines
-    const line = d3.line<AnalysisCommit>()
-      .x(d => xScale(new Date(d.author.date)))
-      .y((d, i) => yScale(i));
+    const line = d3.line<ProcessedCommit>()
+      .x(d => xScale(new Date(d.date)))
+      .y((_d, i) => yScale(i));
 
     svg.append('path')
       .datum(commits)
@@ -76,28 +67,26 @@ const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
       .data(commits)
       .enter()
       .append('g')
-      .attr('class', 'commit-circle')
-      .on('click', (event, d) => {
+      .attr('class', 'commit-circle')      .on('click', (_event, d) => {
         setSelectedCommit(d);
         onCommitSelect?.(d);
       });
 
     commitCircles.append('circle')
-      .attr('cx', d => xScale(new Date(d.author.date)))
-      .attr('cy', (d, i) => yScale(i))
+      .attr('cx', d => xScale(new Date(d.date)))
+      .attr('cy', (_d, i) => yScale(i))
       .attr('r', 6)
       .attr('fill', d => {
         const contributor = contributors.find(c => 
-          c.login.toLowerCase() === d.author.name.toLowerCase()
+          c.login.toLowerCase() === d.author.toLowerCase()
         );
         return contributor ? '#4f46e5' : '#94a3b8';
-      })
-      .attr('stroke', '#fff')
+      })      .attr('stroke', '#fff')
       .attr('stroke-width', 2);
 
     // Add hover effects
     commitCircles
-      .on('mouseover', function(event, d) {
+      .on('mouseover', function() {
         d3.select(this)
           .select('circle')
           .attr('r', 8)
@@ -120,47 +109,35 @@ const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
 
     svg.append('g')
       .attr('transform', `translate(${margin.left},0)`)
-      .call(yAxis);
-
-    // Update time range
+      .call(yAxis);    // Update time range
     setTimeRange([
-      new Date(commits[commits.length - 1].author.date),
-      new Date(commits[0].author.date)
+      new Date(commits[commits.length - 1].date),
+      new Date(commits[0].date)
     ]);
-
   }, [commits, contributors, onCommitSelect]);
+
+  // Show empty state if no commits
+  if (!commits || commits.length === 0) {
+    return (
+      <div className="relative bg-white rounded-xl shadow-lg p-8">
+        <div className="text-center">
+          <GitCommit className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Git History Available</h3>
+          <p className="text-gray-500">
+            No commits found for this repository. The repository might be empty or commit data couldn't be retrieved.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative bg-white rounded-xl shadow-lg p-4">
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Git History</h3>
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => setZoom(z => Math.min(z + 0.5, 5))}
-            className="p-2 hover:bg-gray-100 rounded-lg"
-          >
-            <ZoomIn className="w-5 h-5 text-gray-600" />
-          </button>
-          <button
-            onClick={() => setZoom(z => Math.max(z - 0.5, 0.5))}
-            className="p-2 hover:bg-gray-100 rounded-lg"
-          >
-            <ZoomOut className="w-5 h-5 text-gray-600" />
-          </button>
-          <button
-            onClick={() => {
-              if (svgRef.current) {
-                d3.select(svgRef.current)
-                  .transition()
-                  .duration(750)
-                  .call(d3.zoom<SVGSVGElement, unknown>().transform, d3.zoomIdentity);
-                setZoom(1);
-              }
-            }}
-            className="p-2 hover:bg-gray-100 rounded-lg"
-          >
-            <RefreshCw className="w-5 h-5 text-gray-600" />
-          </button>
+        <h3 className="text-lg font-semibold text-gray-900">Git History</h3>        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1 text-sm text-gray-600">
+            <span>{commits.length} commits</span>
+          </div>
         </div>
       </div>
 
@@ -191,13 +168,12 @@ const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
           <div className="space-y-2 text-sm">
             <p className="text-gray-600">
               <span className="font-medium">Message:</span> {selectedCommit.message}
-            </p>
-            <p className="text-gray-600">
-              <span className="font-medium">Author:</span> {selectedCommit.author.name}
+            </p>            <p className="text-gray-600">
+              <span className="font-medium">Author:</span> {selectedCommit.author}
             </p>
             <p className="text-gray-600">
               <span className="font-medium">Date:</span>{' '}
-              {new Date(selectedCommit.author.date).toLocaleString()}
+              {new Date(selectedCommit.date).toLocaleString()}
             </p>
             <p className="text-gray-600">
               <span className="font-medium">SHA:</span> {selectedCommit.sha.substring(0, 7)}

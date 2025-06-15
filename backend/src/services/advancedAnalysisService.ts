@@ -6,7 +6,7 @@ import {
   FileInfo,
   FunctionInfo
 } from '../types';
-import { LLMService, LLMError as CustomLLMError } from './llmService'; // Import custom LLMError
+import { LLMService, LLMError as CustomLLMError } from './llmService';
 
 // Custom error types for better error handling
 export class AnalysisError extends Error {
@@ -16,7 +16,6 @@ export class AnalysisError extends Error {
   }
 }
 
-// LLMError is now imported from llmService
 interface SecretPattern {
   pattern: RegExp;
   type: string;
@@ -29,13 +28,13 @@ export class AdvancedAnalysisService {
   
   private readonly secretPatterns: SecretPattern[] = [
     { 
-      pattern: /(?:api[_-]?key|token|secret)\s*[:=]\s*['"]([a-zA-Z0-9\-_]{20,})['"]/gi, // Generic high entropy string
+      pattern: /(?:api[_-]?key|token|secret)\s*[:=]\s*['"]([a-zA-Z0-9\-_]{20,})['"]/gi,
       type: 'Generic API Key/Token',
       severity: 'high',
-      cwe: 'CWE-798' // Use of Hard-coded Credentials
+      cwe: 'CWE-798'
     },
     { 
-      pattern: /(?:password|pwd)\s*[:=]\s*['"](.{8,})['"]/gi, // Password-like string
+      pattern: /(?:password|pwd)\s*[:=]\s*['"](.{8,})['"]/gi,
       type: 'Password',
       severity: 'critical',
       cwe: 'CWE-798'
@@ -44,7 +43,7 @@ export class AdvancedAnalysisService {
       pattern: /private[_-]?key-----BEGIN ((?:RSA|EC|OPENSSH|PGP) )?PRIVATE KEY-----/gi,
       type: 'Private Key Block',
       severity: 'critical',
-      cwe: 'CWE-320' // Key Management Errors
+      cwe: 'CWE-320'
     },
     {
       pattern: /AWS_ACCESS_KEY_ID\s*[:=]\s*['"](AKIA[0-9A-Z]{16})['"]/gi,
@@ -58,7 +57,7 @@ export class AdvancedAnalysisService {
       severity: 'critical',
       cwe: 'CWE-798'
     },
-    { // For connection strings with credentials
+    { 
       pattern: /(?:mongodb|mysql|postgres|sqlserver|redis):\/\/(?:[^:@\s]+:[^@\s]+@)/gi,
       type: 'Database Connection String with Credentials',
       severity: 'high',
@@ -66,7 +65,7 @@ export class AdvancedAnalysisService {
     }
   ];
 
-  constructor(llmService: LLMService) { // LLMService is now mandatory
+  constructor(llmService: LLMService) {
     this.llmService = llmService;
   }
 
@@ -77,8 +76,7 @@ export class AdvancedAnalysisService {
 
     const cleanedStringInitial = jsonString.trim();
     let finalJsonString = cleanedStringInitial; 
-    
-    // Handle markdown code blocks
+      // Handle markdown code blocks
     if (finalJsonString.startsWith('```') && finalJsonString.endsWith('```')) {
       const endIndex = finalJsonString.lastIndexOf('```');
       if (endIndex === -1) {
@@ -99,7 +97,7 @@ export class AdvancedAnalysisService {
     } catch (e: unknown) { 
       const fixedJsonAttempt = finalJsonString
           .replace(/,\s*([}\]])/g, '$1') 
-          .replace(/([{[,:])\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":'); // More specific regex for unquoted keys
+          .replace(/([{[,:])\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
       try {
         return JSON.parse(fixedJsonAttempt) as T;
       } catch (parseError: unknown) { 
@@ -124,6 +122,7 @@ export class AdvancedAnalysisService {
       let match: RegExpMatchArray | null;
       let count = 0;
       const MAX_MATCHES = 1000;
+      
       try {
         // Reset lastIndex in case of global regex reuse
         pattern.lastIndex = 0;
@@ -143,8 +142,12 @@ export class AdvancedAnalysisService {
   async analyzeSecurityIssues(files: FileInfo[]): Promise<SecurityIssue[]> {
     const issues: SecurityIssue[] = [];
     const CODE_SNIPPET_CONTEXT_LINES = 2;
+    let llmVulnCheckCounter = 0;
+    const MAX_FILES_FOR_LLM_VULN_CHECK = 10;
+
     for (const file of files) {
       if (!file.content) continue;
+      
       const lines = file.content.split('\n');
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -156,10 +159,16 @@ export class AdvancedAnalysisService {
               const end = Math.min(lines.length, i + CODE_SNIPPET_CONTEXT_LINES + 1);
               const snippet = lines.slice(start, end).join('\n');
               matches.forEach(() => {
-                issues.push({ type: 'secret', severity, file: file.path, line: i+1,
+                issues.push({ 
+                  type: 'secret', 
+                  severity, 
+                  file: file.path, 
+                  line: i + 1,
                   description: `Potential ${type} detected.`,
                   recommendation: `Validate and remove credentials from code; use secure vaults instead.`,
-                  cwe, codeSnippet: snippet });
+                  cwe, 
+                  codeSnippet: snippet 
+                });
               });
             }
           } catch (err) {
@@ -167,9 +176,7 @@ export class AdvancedAnalysisService {
           }
         }
       }
-      // LLM-based vulnerability check for a limited number of files
-      let llmVulnCheckCounter = 0;
-      const MAX_FILES_FOR_LLM_VULN_CHECK = 10;
+      
       // LLM-based vulnerability check for a limited number of files
       if (this.llmService.isConfigured() && llmVulnCheckCounter < MAX_FILES_FOR_LLM_VULN_CHECK) {
         const analyzableExtensions = ['.js', '.ts', '.py', '.java', '.php', '.rb', '.go', '.cs', '.c', '.cpp', '.jsx', '.tsx', '.html', '.sql'];
@@ -193,8 +200,7 @@ export class AdvancedAnalysisService {
     const fileExtension = `.${file.name.split('.').pop()?.toLowerCase()}`;
     if (!analyzableExtensions.includes(fileExtension)) return;
     
-    const contentToAnalyze = file.content.substring(0, 4000); 
-
+    const contentToAnalyze = file.content.substring(0, 4000);
     const prompt = `
 Analyze the following code snippet from "${file.path}" for common security vulnerabilities like XSS, SQL Injection, CSRF, insecure deserialization, command injection, path traversal, hardcoded secrets (if missed by regex), or insecure library usage.
 For each potential vulnerability found, provide a JSON object with: "type": "vulnerability", "severity": "low|medium|high|critical", "line": number, "description": string, "recommendation": string, "cwe": "CWE-ID (optional)".
@@ -218,7 +224,7 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
           }
         });
       }
-    } catch (error: unknown) { // Catch unknown
+    } catch (error: unknown) {
         if (error instanceof CustomLLMError) {
             console.warn(`AdvancedAnalysisService: LLM error during vulnerability check for ${file.path}: ${error.message}`, error.details);
         } else {
@@ -237,7 +243,14 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
       return codeFileExtensions.includes(extension) && file.content && file.content.length > 100;
     });
 
-    for (const file of codeFiles.slice(0, 3)) { // Reduced from 10 to 3
+    const perfMetricsFileLimit = Number(process.env.PERF_METRICS_FILE_LIMIT) || 5;
+    const filesToProcessPerf = codeFiles.slice(0, perfMetricsFileLimit);
+
+    if (codeFiles.length > perfMetricsFileLimit) {
+      console.warn(`AdvancedAnalysisService (analyzePerformanceMetrics): Processing limited to ${perfMetricsFileLimit} of ${codeFiles.length} eligible files. Set PERF_METRICS_FILE_LIMIT to adjust.`);
+    }
+
+    for (const file of filesToProcessPerf) {
       if (file.content) {
         try {
           const llmPerfAnalysis = await this.llmService.analyzeAlgorithmicComplexity(file.content, file.path);
@@ -250,7 +263,7 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
               recommendation: llmPerfAnalysis.recommendation || ''
             });
           }
-        } catch (error: unknown) { // Catch unknown
+        } catch (error: unknown) {
            if (error instanceof CustomLLMError) {
              console.warn(`AdvancedAnalysisService: LLM error during performance analysis for ${file.path}: ${error.message}`, error.details);
            } else {
@@ -264,6 +277,7 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
 
   async analyzeTechnicalDebt(files: FileInfo[]): Promise<TechnicalDebt[]> {
     const debt: TechnicalDebt[] = [];
+    
     if (!this.llmService.isConfigured()) {
         files.forEach(file => {
             if (file.content) {
@@ -296,10 +310,17 @@ Return ONLY a JSON array of vulnerability objects, or an empty array.
         return debt;
     }
 
-    for (const file of files.slice(0, 3)) { // Reduced from 15 to 3
-        if (file.content && file.content.length > 100) { 
-            const contentToAnalyze = file.content.substring(0, 4000);
-            const prompt = `
+    const techDebtFileLimit = Number(process.env.TECH_DEBT_FILE_LIMIT) || 5;
+    const eligibleFilesForTechDebt = files.filter(f => f.content && f.content.length > 100);
+    const filesToProcessTechDebt = eligibleFilesForTechDebt.slice(0, techDebtFileLimit);
+
+    if (eligibleFilesForTechDebt.length > techDebtFileLimit) {
+      console.warn(`AdvancedAnalysisService (analyzeTechnicalDebt): Processing limited to ${techDebtFileLimit} of ${eligibleFilesForTechDebt.length} eligible files. Set TECH_DEBT_FILE_LIMIT to adjust.`);
+    }
+
+    for (const file of filesToProcessTechDebt) {
+        const contentToAnalyze = file.content!.substring(0, 4000);
+        const prompt = `
 Analyze the following code from "${file.path}" for technical debt.
 Identify issues like code smells (e.g., long methods, large classes, duplicated code, dead code, magic numbers), outdated practices, or areas needing refactoring for better maintainability or readability.
 For each issue, provide a JSON object: {"type": "complexity|duplication|smell|outdated|documentation", "severity": "low|medium|high", "line": number (approximate), "description": string, "effort": "e.g., 1h, 4h, 1d", "impact": "e.g., Improved readability, Reduced bugs", "recommendation": "string"}.
@@ -311,22 +332,21 @@ ${contentToAnalyze}
 \`\`\`
 Return ONLY a JSON array of technical debt objects, or an empty array.
 `;
-            try {
-                const response = await this.llmService.generateText(prompt, 600);
-                const parsedDebt = this._cleanAndParseJson<Omit<TechnicalDebt, 'file'>[]>(response);
-                if (parsedDebt && Array.isArray(parsedDebt)) {
-                    parsedDebt.forEach(item => {
-                        if (item.description && item.severity) { 
-                           debt.push({ ...item, file: file.path });
-                        }
-                    });
-                }
-            } catch (error: unknown) { // Catch unknown
-                if (error instanceof CustomLLMError) {
-                    console.warn(`AdvancedAnalysisService: LLM error during tech debt analysis for ${file.path}: ${error.message}`, error.details);
-                } else {
-                    console.error(`AdvancedAnalysisService: Unexpected error during tech debt analysis for ${file.path}:`, error);
-                }
+        try {
+            const response = await this.llmService.generateText(prompt, 600);
+            const parsedDebt = this._cleanAndParseJson<Omit<TechnicalDebt, 'file'>[]>(response);
+            if (parsedDebt && Array.isArray(parsedDebt)) {
+                parsedDebt.forEach(item => {
+                    if (item.description && item.severity) { 
+                       debt.push({ ...item, file: file.path });
+                    }
+                });
+            }
+        } catch (error: unknown) {
+            if (error instanceof CustomLLMError) {
+                console.warn(`AdvancedAnalysisService: LLM error during tech debt analysis for ${file.path}: ${error.message}`, error.details);
+            } else {
+                console.error(`AdvancedAnalysisService: Unexpected error during tech debt analysis for ${file.path}:`, error);
             }
         }
     }
@@ -335,6 +355,7 @@ Return ONLY a JSON array of technical debt objects, or an empty array.
 
   async detectAPIEndpoints(files: FileInfo[]): Promise<APIEndpoint[]> {
     const endpoints: APIEndpoint[] = [];
+    
     if (!this.llmService.isConfigured()) {
         files.forEach(file => {
             if (file.content) {
@@ -355,11 +376,20 @@ Return ONLY a JSON array of technical debt objects, or an empty array.
         return endpoints;
     }
 
-    // Reduced from 10 to 3 for LLM analysis of API endpoints
-    for (const file of files.filter(f => f.path.includes('route') || f.path.includes('controller') || f.path.includes('api') || f.name.match(/\.(?:js|ts|py|go|java|rb)$/i)).slice(0,3)) { 
-      if (file.content && file.content.length > 100) {
-        const contentToAnalyze = file.content.substring(0, 4000);
-        const prompt = `
+    const apiEndpointFileLimit = Number(process.env.API_ENDPOINT_FILE_LIMIT) || 5;
+    const eligibleFilesForApi = files.filter(f => 
+        (f.path.includes('route') || f.path.includes('controller') || f.path.includes('api') || f.name.match(/\.(?:js|ts|py|go|java|rb)$/i)) &&
+        f.content && f.content.length > 100
+    );
+    const filesToProcessApi = eligibleFilesForApi.slice(0, apiEndpointFileLimit);
+
+    if (eligibleFilesForApi.length > apiEndpointFileLimit) {
+      console.warn(`AdvancedAnalysisService (detectAPIEndpoints): Processing limited to ${apiEndpointFileLimit} of ${eligibleFilesForApi.length} eligible files. Set API_ENDPOINT_FILE_LIMIT to adjust.`);
+    }
+    
+    for (const file of filesToProcessApi) { 
+      const contentToAnalyze = file.content!.substring(0, 4000);
+      const prompt = `
 Analyze the following code from "${file.path}" to detect API endpoint definitions.
 For each endpoint, provide a JSON object: {"method": "GET|POST|PUT|DELETE|PATCH", "path": string, "handlerFunction": "string (name of handler function/method)", "parameters": [{"name": string, "type": string, "in": "query|path|body"}], "responses": [{"statusCode": string, "description": string, "schema": any}], "documentation": "string (brief description if available from comments or context)", "security": ["array of security schemes"]}.
 If no endpoints are found, return an empty array [].
@@ -380,21 +410,29 @@ Return ONLY a JSON array of endpoint objects, or an empty array.
               }
             });
           }
-        } catch (error: unknown) { // Catch unknown
+        } catch (error: unknown) {
             if (error instanceof CustomLLMError) {
                 console.warn(`AdvancedAnalysisService: LLM error during API endpoint detection for ${file.path}: ${error.message}`, error.details);
             } else {
                 console.error(`AdvancedAnalysisService: Unexpected error during API endpoint detection for ${file.path}:`, error);
             }
         }
-      }
     }
     return endpoints;
   }
 
   async generateRefactoringRoadmap(
     technicalDebt: TechnicalDebt[],
-    hotspots: Array<{ file: string; path: string; complexity: number; changes: number; explanation?: string; size?: number; riskLevel: 'low' | 'medium' | 'high' | 'critical'; primaryContributors?: string[]; }> | undefined,
+    hotspots: Array<{ 
+      file: string; 
+      path: string; 
+      complexity: number; 
+      changes: number; 
+      explanation?: string; 
+      size?: number; 
+      riskLevel: 'low' | 'medium' | 'high' | 'critical'; 
+      primaryContributors?: string[]; 
+    }> | undefined,
     fileCount: number
   ): Promise<Array<{
     priority: number;
@@ -406,8 +444,13 @@ Return ONLY a JSON array of endpoint objects, or an empty array.
   }>> {
     if (!this.llmService.isConfigured()) return [];
 
-    const debtText = technicalDebt.slice(0, 10).map(td => `- ${td.file}: ${td.description} (Severity: ${td.severity}, Effort: ${td.effort})`).join('\n') || 'N/A';
-    const hotspotsText = (hotspots || []).slice(0, 5).map(h => `- ${h.path}: Risk ${h.riskLevel}, Complexity ${h.complexity}%, Changes ${h.changes}`).join('\n') || 'N/A';
+    const debtText = technicalDebt.slice(0, 10).map(td => 
+      `- ${td.file}: ${td.description} (Severity: ${td.severity}, Effort: ${td.effort})`
+    ).join('\n') || 'N/A';
+    
+    const hotspotsText = (hotspots || []).slice(0, 5).map(h => 
+      `- ${h.path}: Risk ${h.riskLevel}, Complexity ${h.complexity}%, Changes ${h.changes}`
+    ).join('\n') || 'N/A';
     
     const prompt = `
 Generate a prioritized refactoring roadmap (3-5 items) based on the following analysis:
@@ -423,9 +466,16 @@ Return ONLY a JSON array of roadmap items.
 `;
     try {
       const response = await this.llmService.generateText(prompt, 1000);
-      const parsedRoadmap = this._cleanAndParseJson<Array<{ priority: number; title: string; description: string; effort: string; impact: string; files: string[]; }>>(response);
+      const parsedRoadmap = this._cleanAndParseJson<Array<{ 
+        priority: number; 
+        title: string; 
+        description: string; 
+        effort: string; 
+        impact: string; 
+        files: string[]; 
+      }>>(response);
       return parsedRoadmap || [];
-    } catch (error: unknown) { // Catch unknown
+    } catch (error: unknown) {
       if (error instanceof CustomLLMError) {
         console.warn(`AdvancedAnalysisService: LLM error during refactoring roadmap generation: ${error.message}`, error.details);
       } else {
@@ -439,11 +489,11 @@ Return ONLY a JSON array of roadmap items.
     const functions: FunctionInfo[] = [];
     if (!fileContent) return functions;
 
-    let regex;
+    let regex: RegExp;
     switch (language?.toLowerCase()) {
         case 'javascript':
         case 'typescript':
-            regex = /(?:async\s+)?function\s*([a-zA-Z0-9_]+)\s*\(([^)]*)\)\s*{|const\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>\s*{|(?:class\s+\w+\s*{(?:[\s\S]*?)(?:constructor\s*\(([^)]*)\)\s*{|([a-zA-Z0-9_]+)\s*\(([^)]*)\)\s*{))}/g;
+            regex = /(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)|const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>|([a-zA-Z0-9_$]+)\s*\(([^)]*)\)\s*(?:\{|=>)/g;
             break;
         case 'python':
             regex = /def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\):/g;
@@ -454,12 +504,35 @@ Return ONLY a JSON array of roadmap items.
 
     let match;
     const lines = fileContent.split('\n');
-    while ((match = regex.exec(fileContent)) !== null) {
-        const functionName = match[1] || match[3] || match[6] || 'anonymous';
-        const matchIndex = match.index;
+    while ((match = regex.exec(fileContent)) !== null) {        const functionName = match[1] || match[3] || match[5] || 'anonymous';
+        const paramsString = match[2] || match[4] || match[6] || '';
+        
+        const parameters: FunctionInfo['parameters'] = paramsString
+            .split(',')
+            .map(param => param.trim())
+            .filter(param => param.length > 0)
+            .map(param => {
+                const parts = param.split(/[:=?]/).map(p => p.trim());
+                const name = parts[0];
+                let type: string | undefined = undefined;
+                if (param.includes(':')) {
+                    const typeMatch = param.match(/:\s*([^{}\[\],]+)/);
+                    if (typeMatch && typeMatch[1]) {
+                        type = typeMatch[1].trim();
+                    }
+                }
+
+                return {
+                    name: name,
+                    type: type || 'any',
+                    optional: param.includes('?'),
+                };
+            });
+
+        const matchIndex = match.index!;
         let currentChars = 0;
         let startLine = 0;
-        for(let i=0; i<lines.length; i++) {
+        for(let i = 0; i < lines.length; i++) {
             currentChars += lines[i].length + 1; 
             if(currentChars >= matchIndex) {
                 startLine = i + 1;
@@ -467,14 +540,19 @@ Return ONLY a JSON array of roadmap items.
             }
         }
         
+        const functionBodyMatch = match[0];
+        const sloc = functionBodyMatch.split('\n').length;
+
         functions.push({
             name: functionName,
-            complexity: Math.floor(Math.random() * 50) + 10, 
-            dependencies: [], 
-            calls: [], 
-            description: `Function ${functionName}`, 
             startLine: startLine,
-            endLine: startLine + (match[0].split('\n').length -1) 
+            endLine: startLine + (sloc - 1),
+            parameters: parameters,
+            sloc: sloc,
+            calls: [],
+            description: `Function ${functionName}`,
+            isAsync: !!match[0].match(/^async\s+/),
+            content: functionBodyMatch
         });
     }
     return functions;

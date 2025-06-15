@@ -5,27 +5,10 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({ analysisResult }: OverviewPageProps) {
-  // Add safety checks for analysisResult
-  if (!analysisResult) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-center text-gray-500">
-            <p>No analysis data available</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  console.log('[OverviewPage] Received analysisResult:', analysisResult);
-  
   // Use optional chaining and default values directly for cleaner access
   const basicInfo = analysisResult?.basicInfo || {};
   const metrics = analysisResult?.metrics || {};
   const aiSummary = analysisResult?.aiSummary || '';
-
-  console.log('[OverviewPage] Processed data:', { basicInfo, metrics, aiSummary });
 
   const vitals = [
     { name: 'Stars', value: basicInfo.stars, icon: '⭐' },

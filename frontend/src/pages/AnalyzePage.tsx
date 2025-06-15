@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'; // Added useEffect
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect, useLayoutEffect } from 'react'; // Added useLayoutEffect
+import { Link, useNavigate } from 'react-router-dom'; // Added useNavigate
 import { 
   Search, 
   Github, 
@@ -19,24 +19,23 @@ import {
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
-import { LLMConfig, ReportCategory } from '../types/index';
+import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index'; // Added AnalysisResult
+import { AnalysisService } from '../services/analysisService'; // Added AnalysisService
 
-interface AnalyzePageProps {
-  onAnalysisStart: (repoUrl: string) => void;
-  isAnalyzing: boolean;
-  error?: string;
-  progress: number;
-  currentStep: string;
-  onCancel: () => void;
-  onErrorClear: () => void;
-}
-
-const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentStep, onCancel, onErrorClear }: AnalyzePageProps) => {
+const AnalyzePage = () => {
+  const navigate = useNavigate();
   const [githubUrl, setGithubUrl] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('comprehensive');
   const [showSettings, setShowSettings] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig | undefined>();
   const [githubToken, setGithubToken] = useState<string | undefined>();
+
+  // State for analysis lifecycle, moved from App.tsx
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState('');
+  const [eventSource, setEventSource] = useState<EventSource | null>(null);
 
   const reportCategories: ReportCategory[] = [
     {
@@ -137,7 +136,7 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
         if (parsedConfig && parsedConfig.provider && parsedConfig.apiKey) {
           setLlmConfig(parsedConfig);
         } else {
-          localStorage.removeItem('llmConfig'); // Clear invalid config
+          localStorage.removeItem('llmConfig'); 
         }
       } catch (e) {
         console.error("Failed to parse LLM config from localStorage", e);
@@ -149,6 +148,27 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
       setGithubToken(savedGithubToken);
     }
   }, []);
+
+  // Effect for body overflow, moved from App.tsx
+  useLayoutEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalPaddingRight = document.body.style.paddingRight;
+    const isModalOpen = isAnalyzing || !!error;
+
+    if (isModalOpen) {
+      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      document.body.style.overflow = 'hidden';
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    } else {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.paddingRight = originalPaddingRight;
+    }
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.paddingRight = originalPaddingRight;
+    };
+  }, [isAnalyzing, error]);
 
 
   const handleSettingsSave = (config: LLMConfig, token?: string) => {
@@ -164,10 +184,53 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleAnalysisSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!githubUrl.trim()) return;
-    onAnalysisStart(githubUrl);
+
+    setIsAnalyzing(true);
+    setError(undefined);
+    setProgress(0);
+    setCurrentStep('Initializing analysis...');
+    
+    const savedToken = localStorage.getItem('githubToken');
+    const analysisService = new AnalysisService(savedToken || undefined);
+    
+    const { eventSource: newEventSource, analysisPromise } = analysisService.analyzeRepository(
+      githubUrl,
+      (step: string, progressValue: number) => {
+        setCurrentStep(step);
+        setProgress(progressValue);
+      }
+    );
+
+    setEventSource(newEventSource);
+
+    analysisPromise
+      .then((result: AnalysisResult) => {
+        setIsAnalyzing(false);
+        // persistReport(result); // If you have a local storage persistence helper
+        const reportId = result.id;
+        const navigationPath = `/report/${reportId}`;
+        navigate(navigationPath, { state: { analysisResultFromNavigation: result } });
+      })
+      .catch((err) => {
+        console.error('Analysis failed:', err);
+        setError(err.message || 'Analysis failed. Please try again.');
+        setIsAnalyzing(false);
+      });
+  };
+  
+  const handleCancelAnalysis = () => {
+    if (eventSource) {
+      eventSource.close();
+    }
+    setIsAnalyzing(false);
+    setError('Analysis cancelled by user.');
+  };
+
+  const handleErrorClear = () => {
+    setError(undefined);
   };
 
   const getIconComponent = (iconName: string) => {
@@ -287,7 +350,7 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   {category.name}
                 </h3>
-                <p className="text-gray-600 text-sm mb-4 min-h-[3em]"> {/* Ensure consistent height */}
+                <p className="text-gray-600 text-sm mb-4 min-h-[3em]">
                   {category.description}
                 </p>
                 <div className="space-y-1.5">
@@ -309,7 +372,7 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
         </div>
 
         <div className="max-w-3xl mx-auto">
-          <form onSubmit={handleSubmit} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-gray-200">
+          <form onSubmit={handleAnalysisSubmit} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-gray-200">
             <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">
               Enter GitHub Repository URL
             </h3>
@@ -383,11 +446,11 @@ const AnalyzePage = ({ onAnalysisStart, isAnalyzing, error, progress, currentSte
         currentStep={currentStep}
         progress={progress}
         error={error}
-        onClose={onErrorClear}
+        onClose={handleErrorClear} // Use local handler
         onOpenSettings={() => {
           setShowSettings(true);
         }}
-        onCancel={onCancel}
+        onCancel={handleCancelAnalysis} // Use local handler
       />
     </>
   );

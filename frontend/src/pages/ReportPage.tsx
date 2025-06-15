@@ -47,37 +47,37 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
   
   // Attempt to get analysisResult from navigation state first
   const analysisResultFromNavigation = location.state?.analysisResultFromNavigation as AnalysisResult | undefined;
+
   useEffect(() => {
     console.log('[ReportPage] useEffect triggered. analysisResultFromNavigation:', analysisResultFromNavigation, 'analysisResult prop:', analysisResult, 'repoId:', repoId);
     const loadReport = async () => {
+      // Reset error and loading state at the beginning of any load attempt
+      setError(null); 
+      setIsLoading(true);
+
       if (analysisResultFromNavigation) {
         console.log('[ReportPage] Using analysisResult from navigation state:', analysisResultFromNavigation);
+        // Ensure the URL matches the ID of the navigated report
+        if (repoId && analysisResultFromNavigation.id !== repoId) {
+          console.warn(`[ReportPage] URL repoId (${repoId}) mismatches navigated report ID (${analysisResultFromNavigation.id}). Navigating to correct URL.`);
+          // Navigate to the correct URL for the freshly analyzed report
+          // This will also cause this useEffect to re-run with the new repoId
+          navigate(`/report/${analysisResultFromNavigation.id}`, { replace: true, state: { analysisResultFromNavigation } });
+          // setIsLoading(false); // Don't set loading to false yet, let the re-run handle it.
+          return; // Exit early, the navigation will trigger a new load sequence
+        }
         setReportData(analysisResultFromNavigation);
         setIsLoading(false);
-        return;
-      } 
-      
-      if (analysisResult) { 
+      } else if (analysisResult) { // Fallback to prop if navigation state is not available
         console.log('[ReportPage] Using analysisResult prop:', analysisResult);
         setReportData(analysisResult);
         setIsLoading(false);
-        return;
-      } 
-      
-      if (repoId) { 
+      } else if (repoId && repoId.trim() !== "") { // Fallback to loading from storage by ID, ensure repoId is valid
         console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
-        setIsLoading(true);
+        // setIsLoading(true); // Already set above
         try {
-          // First try to get the latest result if no specific ID match
-          let storedResult = await StorageService.getAnalysisResultById(repoId);
-          
-          if (!storedResult) {
-            // Fallback to latest result
-            console.log('[ReportPage] No result found by ID, trying latest result...');
-            storedResult = await StorageService.getLatestAnalysisResult();
-          }
-          
-          console.log('[ReportPage] Result from StorageService:', storedResult);
+          const storedResult = await StorageService.getAnalysisResultById(repoId);
+          console.log('[ReportPage] Result from StorageService.getAnalysisResultById:', storedResult);
           if (storedResult) {
             setReportData(storedResult);
           } else {
@@ -90,27 +90,14 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
         } finally {
           setIsLoading(false);
         }
-      } else {
-        // No repoId and no direct data
-        console.log('[ReportPage] No repoId provided, trying to load latest result...');
-        try {
-          const latestResult = await StorageService.getLatestAnalysisResult();
-          if (latestResult) {
-            setReportData(latestResult);
-            setIsLoading(false);
-          } else {
-            setError("No analysis results found. Please analyze a repository first.");
-            setIsLoading(false);
-          }
-        } catch (err) {
-          console.error('[ReportPage] Error loading latest result:', err);
-          setError("Failed to load report data. Please try again.");
-          setIsLoading(false);
-        }
+      } else { // Added else to handle missing repoId when other sources fail
+        console.error('[ReportPage] repoId is missing or invalid, and no data from props or navigation state.');
+        setError("Invalid report identifier or data not available. Cannot load report.");
+        setIsLoading(false);
       }
     };
     loadReport();
-  }, [analysisResultFromNavigation, analysisResult, repoId]);
+  }, [analysisResultFromNavigation, analysisResult, repoId, navigate]); // Added navigate
 
   // Add a new useEffect to log reportData changes
   useEffect(() => {
@@ -206,29 +193,17 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
       </div>
     );
   }
+
   if (!reportData) {
-    console.log('[ReportPage] Rendering fallback because reportData is null/undefined and not loading/error.');
+    console.log('[ReportPage] Rendering null because reportData is null/undefined and not loading/error.');
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-100 p-4">
-        <div className="bg-white p-8 rounded-xl shadow-xl text-center max-w-md">
-          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4 mx-auto" />
-          <p className="text-lg text-slate-700 mb-2">Preparing report...</p>
-          <p className="text-sm text-slate-500 mb-4">If this takes too long, please ensure you have a valid report ID or try re-analyzing.</p>
-          <div className="space-y-2">
-            <Link 
-              to="/analyze" 
-              className="block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-            >
-              Analyze a New Repository
-            </Link>
-            <Link 
-              to="/dashboard" 
-              className="block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-            >
-              View Dashboard
-            </Link>
-          </div>
-        </div>
+        <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+        <p className="text-lg text-slate-700">Preparing report...</p>
+        <p className="text-sm text-slate-500 mt-2">If this takes too long, please ensure you have a valid report ID or try re-analyzing.</p>
+        <Link to="/analyze" className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+          Analyze a New Repository
+        </Link>
       </div>
     );
   }

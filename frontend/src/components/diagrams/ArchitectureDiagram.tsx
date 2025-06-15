@@ -68,14 +68,12 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
       mermaidInitialized.current = true;
     }
   }, []);
-
   useEffect(() => {
     const checkService = async () => {
-      if (useLLM) {
+      if (useLLM && llmConfig) {
         try {
-          // Pass llmConfig to the check if your backend /api/llm/check now requires it
-          // For now, assuming /api/llm/check doesn't need specific config for a simple ping
-          const available = await checkLLMAvailabilityClient();
+          // Pass llmConfig to the check - backend requires it
+          const available = await checkLLMAvailabilityClient(llmConfig as unknown as import('../../types').LLMConfig);
           setIsLLMServiceAvailable(available);
         } catch (err) {
           console.warn('LLM service availability check failed:', err);
@@ -86,7 +84,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
       }
     };
     checkService();
-  }, [useLLM]);
+  }, [useLLM, llmConfig]);
 
   const enhanceDiagramWithLLM = useCallback(async (baseDiagram: string) => {
     if (!useLLM || !isLLMServiceAvailable || !llmConfig || !fileInfo || Object.keys(fileInfo).length === 0) {
@@ -162,7 +160,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
             } else {
                 console.warn(`No FileInfo found for node ID: ${nodeId}`); // Changed ExtendedFileInfo
                 onNodeClick?.(nodeId, undefined);
-                setSelectedNodeInfo({ name: nodeId, path: 'N/A', size: 0, type: 'unknown' } as FileInfo); // Basic fallback - Changed ExtendedFileInfo
+                setSelectedNodeInfo({ name: nodeId, path: 'N/A', size: 0, type: 'file' } as FileInfo); // Basic fallback
             }
           }
         };

@@ -17,6 +17,7 @@ import { AnalysisResult, FileInfo } from '../../types'; // Changed ExtendedFileI
 import { defaultDependencyConfig } from '../../config/dependencies.config';
 import { defaultSecurityConfig } from '../../config/security.config';
 import { checkLLMAvailability } from '../../api/llm';
+import { DependencyMetricsDisplay } from '../DependencyMetrics';
 
 
 interface ComplexityData {
@@ -37,9 +38,22 @@ interface ArchitecturePageProps {
 const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: reportData }) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('architecture'); 
   const [useLLM, setUseLLM] = useState(true);
+  const [llmConfig, setLlmConfig] = useState<import('../../types').LLMConfig | null>(null);
   
-  const { hotspots, architectureAnalysis, metrics, files, securityIssues } = reportData; // Removed apiEndpoints
-  const [isLLMAvailable, setIsLLMAvailable] = useState(true); 
+  const { hotspots, architectureAnalysis, metrics, files = [], securityIssues, dependencyMetrics } = reportData;
+  const [isLLMAvailable, setIsLLMAvailable] = useState(true);
+
+  // Get LLM config from localStorage
+  React.useEffect(() => {
+    const savedLlmConfig = localStorage.getItem('llmConfig');
+    if (savedLlmConfig) {
+      try {
+        setLlmConfig(JSON.parse(savedLlmConfig));
+      } catch (err) {
+        console.warn('Failed to parse saved LLM config:', err);
+      }
+    }
+  }, []);
 
   React.useEffect(() => {
     const check = async () => {
@@ -260,8 +274,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
       
       case 'architecture':
         return (
-          <div className="w-full h-full min-h-[600px]">
-            <ArchitectureDiagram
+          <div className="w-full h-full min-h-[600px]">            <ArchitectureDiagram
               title="System Architecture"
               description="High-level overview of the system components and their interactions"
               diagram={dynamicMermaidDiagram} 
@@ -271,41 +284,67 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
               fileInfo={architectureDiagramFileInfo} 
               showDetails={true}
               useLLM={useLLM}
+              llmConfig={llmConfig as unknown as Record<string, unknown> || undefined}
             />
           </div>
-        );
-
-      case 'vulnerability': {
-        const vulnerabilityData = [ 
-          { name: 'Critical', value: metrics.criticalVulnerabilities || 0, color: '#DC2626' },
-          { name: 'High', value: metrics.highVulnerabilities || 0, color: '#F59E0B' },
-          { name: 'Medium', value: metrics.mediumVulnerabilities || 0, color: '#FBBF24' },
-          { name: 'Low', value: metrics.lowVulnerabilities || 0, color: '#3B82F6' }
-        ].filter(v => v.value > 0); 
+        );      case 'vulnerability': {
+        // Use dependency metrics if available, otherwise fall back to basic metrics
+        const vulnerabilityData = dependencyMetrics?.vulnerabilityDistribution || [ 
+          { severity: 'Critical', count: metrics.criticalVulnerabilities || 0, color: '#DC2626' },
+          { severity: 'High', count: metrics.highVulnerabilities || 0, color: '#F59E0B' },
+          { severity: 'Medium', count: metrics.mediumVulnerabilities || 0, color: '#FBBF24' },
+          { severity: 'Low', count: metrics.lowVulnerabilities || 0, color: '#3B82F6' }
+        ].filter(v => v.count > 0); 
 
         if (vulnerabilityData.length === 0) {
-          return <div className="text-center p-8">No vulnerability data available or all counts are zero.</div>;
+          return (
+            <div className="text-center p-8">
+              <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h4 className="text-lg font-semibold text-gray-600 mb-2">No Vulnerabilities Found</h4>
+              <p className="text-gray-500">Great news! No security vulnerabilities were detected in your dependencies.</p>
+            </div>
+          );
         }
 
         return (
-          <div className="w-full h-full min-h-[500px]">
-            <h4 className="text-lg font-semibold text-gray-900 mb-4">Vulnerability Distribution</h4>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={vulnerabilityData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" allowDecimals={false} />
-                <YAxis type="category" dataKey="name" />
-                <RechartsTooltip />
-                <Legend />
-                <Bar dataKey="value" name="Vulnerabilities">
-                  {vulnerabilityData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        );
+          <div className="w-full space-y-6">
+            <div className="bg-white rounded-lg p-6 border border-gray-200">
+              <h4 className="text-lg font-semibold text-gray-900 mb-4">Vulnerability Distribution</h4>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={vulnerabilityData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="severity" />
+                  <RechartsTooltip />
+                  <Legend />
+                  <Bar dataKey="count" name="Vulnerabilities">
+                    {vulnerabilityData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            
+            {/* Add dependency metrics display if available */}
+            {dependencyMetrics && (
+              <div className="bg-white rounded-lg p-6 border border-gray-200">
+                <DependencyMetricsDisplay
+                  config={defaultDependencyConfig}
+                  currentMetrics={{
+                    totalDependencies: dependencyMetrics.totalDependencies,
+                    devDependencies: dependencyMetrics.devDependencies,
+                    outdatedPackages: dependencyMetrics.outdatedPackages,
+                    vulnerablePackages: dependencyMetrics.vulnerablePackages,
+                    criticalVulnerabilities: dependencyMetrics.criticalVulnerabilities,
+                    highVulnerabilities: dependencyMetrics.highVulnerabilities,
+                    lastScan: dependencyMetrics.lastScan,
+                    dependencyScore: dependencyMetrics.dependencyScore
+                  }}
+                />
+              </div>
+            )}
+          </div>        );
       }
       default:
         return <div className="p-8 text-center text-gray-500">Select a diagram to view.</div>;

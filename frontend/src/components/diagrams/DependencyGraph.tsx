@@ -115,7 +115,8 @@ export const DependencyGraph = ({ nodes, links }: DependencyGraphProps) => {
   }, []);
 
   useEffect(() => {
-    if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0) return;
+    // Guard against invalid data in the useEffect
+    if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0 || !nodes || !links || nodes.length === 0 || links.length === 0) return;
 
     const { width, height } = dimensions;
 
@@ -367,6 +368,34 @@ export const DependencyGraph = ({ nodes, links }: DependencyGraphProps) => {
       simulation.stop();
     };
   }, [nodes, links, dimensions]);
+
+  // Guard against empty or invalid data
+  if (!nodes || !links || nodes.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+        <div className="text-center">
+          <div className="text-gray-500 text-lg mb-2">No Dependency Graph Available</div>
+          <div className="text-gray-400 text-sm">
+            No internal imports detected or analysis incomplete
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Guard against empty links (which crashes the visualization)
+  if (links.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+        <div className="text-center">
+          <div className="text-gray-500 text-lg mb-2">No Dependencies Found</div>
+          <div className="text-gray-400 text-sm">
+            Files analyzed: {nodes.length}, but no internal imports detected
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="dependency-graph-container">

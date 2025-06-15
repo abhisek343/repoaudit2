@@ -1,6 +1,6 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import { LLMService, LLMProcessingError as CustomLLMError } from './src/services/llmService';
+import { LLMService } from './src/services/llmService';
 import { BackendAnalysisService } from './src/services/backendAnalysisService';
 import type { LLMConfig } from './src/types';
 
@@ -13,7 +13,7 @@ app.use(express.json({ limit: '50mb' }));
 // Safe serialization preserving all data and handling circular references
 function safeSerializeReport(report: any): string {
   const seen = new WeakSet();
-  return JSON.stringify(report, (key, value) => {
+  return JSON.stringify(report, (_key, value) => {
     if (typeof value === 'object' && value !== null) {
       if (seen.has(value)) return '[Circular]';
       seen.add(value);
@@ -56,6 +56,22 @@ app.post('/api/llm/check', (async (req: Request, res: Response) => {
   }
 }) as express.RequestHandler);
 
+// Endpoint to validate LLM API key (endpoint expected by frontend)
+app.post('/api/validate-llm-key', (async (req: Request, res: Response) => {
+  try {
+    const { llmConfig } = req.body;
+    if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
+      return res.status(200).json({ isValid: false, error: 'LLM configuration missing.' });
+    }
+    const llmService = new LLMService(llmConfig);
+    const isValid = await llmService.checkAvailability();
+    res.status(200).json({ isValid });
+  } catch (error) {
+    const err = error as Error;
+    res.status(200).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
+  }
+}) as express.RequestHandler);
+
 // Endpoint to handle diagram enhancement
 app.post('/api/llm/enhance-diagram', (async (req: Request, res: Response) => {
   try {
@@ -65,10 +81,113 @@ app.post('/api/llm/enhance-diagram', (async (req: Request, res: Response) => {
     }
     const llmService = new LLMService(llmConfig);
     const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
-    res.json(result);
+    res.json({ enhancedDiagram: result.enhancedCode });
   } catch (error) {
     const err = error as Error;
     res.status(500).json({ error: `Error enhancing diagram: ${err.message}` });
+  }
+}) as express.RequestHandler);
+
+// Endpoint to generate AI summary
+app.post('/api/llm/generate-summary', (async (req: Request, res: Response) => {
+  try {
+    const { llmConfig, codebaseContext } = req.body;
+    if (!llmConfig || !codebaseContext) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    const llmService = new LLMService(llmConfig);
+    const result = await llmService.generateSummary(codebaseContext);
+    res.json(result);
+  } catch (error) {
+    const err = error as Error;
+    res.status(500).json({ error: `Error generating summary: ${err.message}` });
+  }
+}) as express.RequestHandler);
+
+// Endpoint to analyze architecture
+app.post('/api/llm/analyze-architecture', (async (req: Request, res: Response) => {
+  try {
+    const { llmConfig, codeStructure } = req.body;
+    if (!llmConfig || !codeStructure) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    const llmService = new LLMService(llmConfig);
+    const result = await llmService.generateText(
+      `Analyze the architecture of this codebase:
+      File Structure: ${JSON.stringify(codeStructure.files)}
+      Dependencies: ${JSON.stringify(codeStructure.dependencies)}
+      
+      Provide:
+      1. Architecture pattern identification
+      2. Structural analysis
+      3. Improvement recommendations
+      4. Potential issues or anti-patterns`,
+      1500
+    );
+    res.json({ analysis: result });
+  } catch (error) {
+    const err = error as Error;
+    res.status(500).json({ error: `Error analyzing architecture: ${err.message}` });
+  }
+}) as express.RequestHandler);
+
+// Endpoint to perform security analysis
+app.post('/api/llm/security-analysis', (async (req: Request, res: Response) => {
+  try {
+    const { llmConfig, securityData } = req.body;
+    if (!llmConfig || !securityData) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    const llmService = new LLMService(llmConfig);
+    const result = await llmService.generateText(
+      `Perform security analysis on this repository:
+      Security Issues: ${JSON.stringify(securityData.issues)}
+      Dependencies: ${JSON.stringify(securityData.dependencies)}
+      
+      Analyze:
+      1. Vulnerability assessment
+      2. Security best practices compliance
+      3. Risk level evaluation
+      4. Remediation recommendations`,
+      1200
+    );    res.json({ analysis: result });
+  } catch (error) {
+    const err = error as Error;
+    res.status(500).json({ error: `Error performing security analysis: ${err.message}` });
+  }
+}) as express.RequestHandler);
+
+// Endpoint to generate AI insights for overview page
+app.post('/api/llm/generate-insights', (async (req: Request, res: Response) => {
+  try {
+    const { llmConfig, repoData } = req.body;
+    if (!llmConfig || !repoData) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    const llmService = new LLMService(llmConfig);
+    const result = await llmService.generateSummary(`
+Repository Analysis Data:
+Name: ${repoData.name}
+Description: ${repoData.description}
+Languages: ${JSON.stringify(repoData.languages)}
+Metrics: ${JSON.stringify(repoData.metrics)}
+
+Generate comprehensive insights about this repository including:
+1. Technology stack assessment
+2. Project health indicators  
+3. Development patterns observed
+4. Key strengths and areas for improvement
+5. Recommendations for maintainers
+
+Provide actionable insights in a clear, structured format.`);
+    
+    // Return the summary text from the response
+    const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(insights);
+  } catch (error) {
+    const err = error as Error;
+    res.status(500).json({ error: `Error generating insights: ${err.message}` });
   }
 }) as express.RequestHandler);
 
@@ -101,6 +220,9 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
     console.log('Received query:', req.query); // Add this line for debugging
     // Get parameters from query (GET) or body (POST)
     const { repoUrl, llmConfig: llmConfigString, githubToken: rawGithubToken } = req.method === 'POST' ? req.body : req.query;
+
+    console.log('Received llmConfigString:', llmConfigString); // ADD THIS
+
     const githubToken = typeof rawGithubToken === 'string' && rawGithubToken.trim() !== '' ? rawGithubToken : undefined;
     
     if (!repoUrl) {
@@ -117,6 +239,7 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
         llmConfig = typeof llmConfigString === 'string' ? 
           JSON.parse(llmConfigString) : 
           llmConfigString;
+        console.log('Parsed LLM config:', llmConfig); // ADD THIS
       } catch (err) {
         const errorMessage = `Invalid llmConfig parameter: ${err instanceof Error ? err.message : 'Invalid JSON format'}`;
         console.error(errorMessage);
@@ -173,24 +296,6 @@ app.post('/api/validate-github-token', (async (req: Request, res: Response) => {
     res.status(200).json({ isValid: false, error: `Token validation failed: ${err.message}` });
   }
 }) as express.RequestHandler);
-
-// Endpoint to validate LLM API key
-app.post('/api/validate-llm-key', (async (req: Request, res: Response) => {
-  try {
-    const { llmConfig } = req.body;
-    if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-      return res.status(400).json({ isValid: false, error: 'LLM configuration (provider and apiKey) is required.' });
-    }
-    const llmService = new LLMService(llmConfig);
-    const isValid = await llmService.checkAvailability(); // Using existing checkAvailability
-    res.status(200).json({ isValid });
-  } catch (error) {
-    const err = error as Error;
-    console.error('LLM key validation error:', err.message);
-    res.status(200).json({ isValid: false, error: `LLM key validation failed: ${err.message}` });
-  }
-}) as express.RequestHandler);
-
 
 app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);

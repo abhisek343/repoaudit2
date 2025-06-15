@@ -12,7 +12,8 @@ import {
   Route, 
   GitCommit, 
   GitMerge, 
-  ListChecks
+  ListChecks,
+  Share2 // Added for Dependency Graph
 } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 import { 
@@ -23,6 +24,7 @@ import {
 } from '../../types/advanced';
 
 // Import diagram components
+import VisualizationErrorBoundary from '../VisualizationErrorBoundary'; // Added
 import ComponentDependencyWheel from '../diagrams/ComponentDependencyWheel';
 import FileSystemIcicle from '../diagrams/FileSystemIcicle';
 import APIRouteTree from '../diagrams/APIRouteTree';
@@ -32,6 +34,7 @@ import TemporalCouplingGraph from '../diagrams/TemporalCouplingGraph';
 import ContributorStreamgraph from '../diagrams/ContributorStreamgraph'; 
 import DataTransformationSankey from '../diagrams/DataTransformationSankey';
 import PRLifecycleGantt from '../diagrams/PRLifecycleGantt';
+import { DependencyGraph, DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLink } from '../diagrams/DependencyGraph'; // Added
 import { CheckCircle } from 'lucide-react'; 
 
 interface DiagramsPageProps {
@@ -48,6 +51,7 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
   const {
     files = [],
     dependencies
+    // dependencyMetrics // Removed as reportData.dependencies is used as primary and fallback
   } = reportData || {};
 
   const {
@@ -60,6 +64,7 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     contributorStreamData = [],
     dataTransformationSankey,
     prLifecycleData,
+    // dependencyGraphData // This might be a more suitable source if available
   } = reportData?.advancedAnalysis || {};
 
   // Generate fallback data if not provided by backend
@@ -103,10 +108,10 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
 
     // Original logic for when apiEndpoints exist
     const root: RouteNode = { name: 'API', path: '/api', children: [] };
-    apiEndpoints.forEach(endpoint => {
-      const pathParts = endpoint.path.replace(/^\//, '').split('/').filter(p => p);
+    apiEndpoints.forEach((endpoint: import('../../types').APIEndpoint) => {
+      const pathParts = endpoint.path.replace(/^\//, '').split('/').filter((p: string) => p);
       let currentNode = root;
-      pathParts.forEach((part, index) => {
+      pathParts.forEach((part: string, index: number) => {
           let childNode = (currentNode.children || []).find(child => child.name === part && child.path === `/${pathParts.slice(0, index + 1).join('/')}`);
           if (!childNode) {
               childNode = { 
@@ -154,6 +159,49 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     return [];
   }, [dependencyWheelData, dependencies]);
 
+  const preparedDependencyGraphData = useMemo(() => {
+    const depData = reportData.dependencies; // Simplified: directly use reportData.dependencies
+
+    if (!depData || !depData.nodes || !depData.links) {
+      return { nodes: [], links: [] };
+    }
+
+    // Use types from frontend/src/types/index.ts for initial mapping
+    const typedNodes = depData.nodes as import('../../types').DependencyNode[];
+    const typedLinks = depData.links as import('../../types').DependencyLink[];
+
+    const visNodes: VisDependencyNode[] = typedNodes.map((n) => ({
+      id: n.id || n.name || `node-${Math.random().toString(36).substr(2, 9)}`,
+      name: n.name || 'Unknown Node',
+      type: n.type || 'dependency',
+      // @ts-expect-error // n.size might not exist on import('../../types').DependencyNode, handle gracefully
+      size: n.size || (n.metrics?.linesOfCode) || 100,
+      // @ts-expect-error // n.metrics might not exist or match VisDependencyNode structure
+      metrics: n.metrics || { complexity: 0, dependencies: 0, dependents: 0, lastModified: 'N/A' },
+    }));
+
+    const visLinks: VisDependencyLink[] = typedLinks.map((l) => {
+      // The source/target in typedLinks are strings, but VisDependencyLink expects objects.
+      // We find the corresponding VisDependencyNode.
+      const sourceNode = visNodes.find(vn => vn.id === l.source);
+      const targetNode = visNodes.find(vn => vn.id === l.target);
+      
+      if (!sourceNode || !targetNode) {
+        console.warn('Skipping link due to missing source/target node in DependencyGraph:', l, { availableNodeIds: visNodes.map(vn => vn.id) });
+        return null; 
+      }
+
+      return {
+        source: sourceNode, 
+        target: targetNode,
+        type: 'related', // Default type, as l.type doesn't exist on DependencyLink from types/index.ts
+        strength: 1, // Default strength, as l.strength doesn't exist
+      };
+    }).filter(l => l !== null) as VisDependencyLink[];
+
+    return { nodes: visNodes, links: visLinks };
+  }, [reportData.dependencies]);
+
   const fallbackFileSystemTree = useMemo(() => {
     if (fileSystemTree) return fileSystemTree;
     
@@ -198,7 +246,8 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     { id: 'temporal-coupling', title: 'Temporal Coupling Graph', description: 'Shows files that are frequently changed together in commits.', icon: <GitMerge /> , category: 'Temporal'},
     { id: 'contributor-stream', title: 'Contributor Streamgraph', description: 'Illustrates contributor activity over time.', icon: <Users /> , category: 'Temporal'},
     { id: 'data-pipeline', title: 'Data Transformation Sankey', description: 'Visualizes data flow and transformations within the application.', icon: <Shuffle /> , category: 'Data Flow'},
-    { id: 'pr-lifecycle', title: 'PR Lifecycle Gantt', description: 'Shows typical phases and durations of pull requests.', icon: <GitBranch /> , category: 'Process'}
+    { id: 'pr-lifecycle', title: 'PR Lifecycle Gantt', description: 'Shows typical phases and durations of pull requests.', icon: <GitBranch /> , category: 'Process'},
+    { id: 'dependency-graph', title: 'Project Dependency Graph', description: 'Visualizes the overall project dependencies and their relationships.', icon: <Share2 /> , category: 'Architecture'}
   ];
   
   if (!reportData) {
@@ -215,6 +264,9 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
 
   // Update renderDiagramComponent to use fallback data
   const renderDiagramComponent = () => {
+    if (selectedDiagram === 'dependency-graph') {
+      console.log('Prepared Dependency Graph Data:', preparedDependencyGraphData);
+    }
     switch (selectedDiagram) {
       case 'dependency-wheel':
         return fallbackDependencyWheelData.length > 0 ? 
@@ -250,9 +302,20 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
       }
       case 'temporal-coupling': {
         const tcData = temporalCouplingData || { nodes: [], links: [] };
-        return (tcData.nodes.length > 0) ? (
+        // Ensure each node has id, name, and path, providing defaults if necessary
+        const processedNodes = tcData.nodes.map((n: import('../../types/advanced').DependencyNode) => {
+          const { id, name, path, group, ...rest } = n;
+          return {
+            ...rest,
+            id: id || path || `node-${Math.random().toString(36).substr(2, 9)}`, // Fallback id
+            name: name || path || 'Unknown Node', // Fallback name
+            path: path || '', // Fallback path
+            group: group || 1
+          };
+        });
+        return (processedNodes.length > 0) ? (
           <TemporalCouplingGraph 
-            nodes={tcData.nodes.map(n => ({ ...n, group: n.group || 1 }))}
+            nodes={processedNodes}
             links={tcData.links}
             width={700} height={500}
           />
@@ -292,6 +355,14 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
           />
         ) : <EmptyState message="No PR lifecycle data available." />;
       }
+      case 'dependency-graph':
+        return (
+          <VisualizationErrorBoundary>
+            {(preparedDependencyGraphData.nodes.length > 0 && preparedDependencyGraphData.links.length > 0) ?
+              <DependencyGraph nodes={preparedDependencyGraphData.nodes} links={preparedDependencyGraphData.links} /> :
+              <EmptyState message="No data available for Project Dependency Graph (either no nodes/links or data processing issue)." />}
+          </VisualizationErrorBoundary>
+        );
       default:
         return <EmptyState message="Select a diagram to view." />;
     }

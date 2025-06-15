@@ -1,0 +1,42 @@
+{
+  "name": "repo-auditor",
+  "version": "1.0.0",
+  "description": "Advanced repository analysis tool with AI-powered insights. Bring your own LLM API key.",
+  "keywords": [
+    "code-analysis",
+    "repository-audit",
+    "static-analysis",
+    "ai-powered",
+    "llm",
+    "typescript",
+    "react",
+    "open-source"
+  ],
+  "homepage": "https://github.com/your-org/repo-auditor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/repo-auditor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/repo-auditor/issues"
+  },
+  "license": "MIT",
+  "author": "Repo Auditor Contributors",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix frontend\" \"npm run dev --prefix backend\"",
+    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "start": "npm run start --prefix backend",
+    "test": "npm run test --prefix frontend && npm run test --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "react-syntax-highlighter": "^15.6.1"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}

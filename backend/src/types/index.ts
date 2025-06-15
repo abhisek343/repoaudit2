@@ -211,15 +211,21 @@ export interface Hotspot {
 
 export interface KeyFunction {
   name: string;
-  file: string;
-  path?: string;
-  complexity: number;
+  file: string; // Path to the file
+  path?: string; // Redundant if file is full path, but kept for now if used elsewhere
+  complexity: number; // Keep as number, default to 0 if undefined from source
   explanation: string;
-  linesOfCode?: number;
-  performance?: {
-    estimatedRuntime: string;
-    complexity: string;
-  };
+  linesOfCode?: number; // This is SLOC from FunctionInfo
+  // Add new fields from FunctionInfo
+  parameters?: FunctionParameter[];
+  returnType?: string;
+  calls?: string[];
+  isAsync?: boolean;
+  visibility?: 'public' | 'private' | 'protected';
+  content?: string; // For showing source code
+  startLine?: number;
+  endLine?: number;
+  // performance?: { estimatedRuntime: string; complexity: string; }; // Can be added later
 }
 
 // Enhanced FileNode for diagrams
@@ -262,10 +268,23 @@ export interface AnalysisResult {
   contributors: ProcessedContributor[];
   files: FileInfo[];
   languages: Record<string, number>;
-  
-  // Architecture & Dependencies  
+    // Architecture & Dependencies  
   dependencies: DependencyInfo;
   dependencyGraph: ArchitectureData;
+  dependencyMetrics?: {
+    totalDependencies: number;
+    devDependencies: number;
+    outdatedPackages: number;
+    vulnerablePackages: number;
+    criticalVulnerabilities: number;
+    highVulnerabilities: number;
+    mediumVulnerabilities: number;
+    lowVulnerabilities: number;
+    lastScan: string;
+    dependencyScore: number;
+    dependencyGraph: { nodes: any[]; links: any[] };
+    vulnerabilityDistribution: Array<{ severity: string; count: number; color: string }>;
+  };
   qualityMetrics: QualityMetrics;
   
   // Analysis results
@@ -299,6 +318,8 @@ export interface AnalysisResult {
     lowVulnerabilities: number;
   };
   
+  analysisWarnings?: AnalysisWarning[]; // Added to store non-critical warnings
+
   // Diagram-specific data
   dependencyWheelData?: Array<{ source: string; target: string; value: number }>;
   fileSystemTree?: FileNode;
@@ -310,17 +331,43 @@ export interface AnalysisResult {
   prLifecycleData?: { phases: PRPhase[]; totalDuration: number };
 }
 
+export interface AnalysisWarning {
+  step: string; // The analysis step where the warning occurred
+  message: string; // A user-friendly message
+  error?: string; // Optional technical error details
+}
 
 // --- Other miscellaneous types ---
 
+export interface FunctionParameter {
+  name: string;
+  type?: string;      // e.g., 'string', 'number', 'any' or interface name
+  optional?: boolean;
+  initializer?: string; // e.g., default value
+}
+
+// Configuration for LLM services
+export interface LLMConfig {
+  provider: 'openai' | 'gemini' | 'claude';
+  apiKey: string;
+  model?: string;
+}
+
+// Represents information about a parsed function in a file
 export interface FunctionInfo {
   name: string;
-  complexity: number;
-  dependencies: string[];
-  calls: string[];
-  description?: string;
   startLine: number;
   endLine: number;
+  parameters: Array<{ name: string; type: string; optional: boolean }>;
+  sloc: number;
+  calls: string[];
+  description?: string;
+  isAsync: boolean;
+  content?: string;
+  // Optional fields for deeper analysis
+  returnType?: string;
+  visibility?: 'public' | 'private' | 'protected';
+  cyclomaticComplexity?: number;
 }
 
 export interface RecentActivity {
@@ -330,26 +377,4 @@ export interface RecentActivity {
 export interface CommitDistribution {
   byDayOfWeek: number[];
   byHourOfDay: number[];
-}
-
-export interface LLMConfig {
-  provider: 'openai' | 'claude' | 'gemini';
-  apiKey: string;
-  model?: string;
-}
-
-export interface ReportCategory {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  features: string[];
-  requiredPlan: 'free' | 'pro' | 'enterprise';
-}
-
-export interface SavedReport {
-  id: string;
-  name: string;
-  createdAt: string;
-  summary: string;
 }

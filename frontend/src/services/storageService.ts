@@ -67,8 +67,10 @@ export class StorageService {
       console.log('Cleared all analysis results from IndexedDB');
     } catch (error) {
       console.error('Failed to clear analysis results from IndexedDB:', error);
+      throw error; // Re-throw error
     }
   }
+
   /**
    * Utility to list all results (for debugging)
    */
