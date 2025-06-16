@@ -1,4 +1,5 @@
 import { AnalysisResult } from '../../types';
+import ExecutiveSummary from '../ExecutiveSummary'; // Import ExecutiveSummary
 
 interface OverviewPageProps {
   analysisResult: AnalysisResult;
@@ -60,12 +61,13 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
         </div>
       </div>
 
-      {/* AI Summary */}
+      {/* AI Summary using ExecutiveSummary component */}
       {aiSummary && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-xl font-bold mb-3">AI Summary</h3>
-          <p className="text-gray-700">{aiSummary}</p>
-        </div>
+        <ExecutiveSummary reportData={{ 
+          basicInfo: analysisResult.basicInfo, 
+          aiSummary: analysisResult.aiSummary, 
+          metrics: analysisResult.metrics 
+        }} />
       )}
 
       {/* Repository Details */}

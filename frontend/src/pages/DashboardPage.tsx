@@ -188,13 +188,13 @@ const DashboardPage = () => {
               </div>
             </div>
 
-            <Link
+            {/* <Link
               to="/analyze"
               className="flex items-center space-x-2 px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all duration-200"
             >
               <Plus className="w-5 h-5" />
               <span>New Analysis</span>
-            </Link>
+            </Link> */}
           </div>
         </div>
 

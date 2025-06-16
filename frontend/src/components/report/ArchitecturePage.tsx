@@ -360,10 +360,16 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
             AI Architecture Analysis
           </h3>
           <div className="prose prose-indigo max-w-none">
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-500">
-              <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-                {architectureAnalysis}
-              </p>
+            <div className="relative bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-500 rounded-2xl p-8 mb-8 shadow-2xl overflow-hidden transform transition-all duration-500 hover:scale-[1.01] hover:shadow-3xl">
+              <div className="absolute inset-0 bg-pattern opacity-10"></div> {/* Subtle pattern overlay */}
+              <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
+                {architectureAnalysis.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0).map((line, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
+                    <span>{line.trim()}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         </div>

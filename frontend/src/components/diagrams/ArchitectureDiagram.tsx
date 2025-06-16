@@ -129,8 +129,21 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
         const diagramId = `arch-diag-${uniqueId.replace(/:/g, '-')}`;
         
         let finalDiagram = cleanDiagram;
+        // Ensure the diagram starts with 'graph TD' for a vertical layout if it's a flowchart
+        // Check if it's a flowchart and doesn't already specify a direction or is empty
+        if (finalDiagram.startsWith('graph')) {
+            const firstLine = finalDiagram.split('\n')[0];
+            if (!firstLine.includes('TD') && !firstLine.includes('LR') && !firstLine.includes('BT') && !firstLine.includes('RL')) {
+                // If it's a graph but no direction specified, default to TD
+                finalDiagram = `graph TD\n${finalDiagram.substring(firstLine.length).trim()}`;
+            }
+        } else if (!finalDiagram.startsWith('sequenceDiagram') && !finalDiagram.startsWith('gantt') && !finalDiagram.startsWith('classDiagram')) {
+            // If it's not explicitly a graph or another diagram type, assume flowchart and prepend graph TD
+            finalDiagram = `graph TD\n${finalDiagram}`;
+        }
+
         if (detailedViewActive) {
-            finalDiagram = await enhanceDiagramWithLLM(cleanDiagram);
+            finalDiagram = await enhanceDiagramWithLLM(finalDiagram);
         }
         
         // Add click handlers if interactive
@@ -285,7 +298,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
       <div
         ref={containerRef} // This ref is for fullscreen
         className="w-full h-full flex justify-center items-center bg-white rounded-md border border-gray-200 overflow-hidden shadow-inner"
-        style={{ minHeight: '400px', maxHeight: isFullscreen ? '100vh' : '70vh' }} 
+        style={{ minHeight: '600px', maxHeight: isFullscreen ? '100vh' : '80vh' }} 
       >
         <div 
             ref={svgContainerRef} // This ref for the SVG itself to apply zoom

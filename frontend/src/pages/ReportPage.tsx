@@ -233,7 +233,7 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-blue-100">
-      <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+      <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 sticky top-0 w-full z-50 shadow-sm">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -287,7 +287,7 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
         </div>
       </header>
 
-      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-[65px] z-10 shadow-sm">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-[65px] w-full z-40 shadow-sm">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-1 sm:space-x-4 overflow-x-auto no-scrollbar">
             {pages.map((page, index) => (
@@ -309,48 +309,51 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
         </div>
       </nav>
 
-      <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <VisualizationErrorBoundary>
-          <CurrentPageComponent analysisResult={reportData} reportData={reportData} />
-        </VisualizationErrorBoundary>
-      </main>
+      {/* New wrapper div for main content and footer */}
+      <div className="pt-[150px]">
+        <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+          <VisualizationErrorBoundary>
+            <CurrentPageComponent analysisResult={reportData} reportData={reportData} />
+          </VisualizationErrorBoundary>
+        </main>
 
-      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200 sticky bottom-0 z-10 py-3">
-        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-              disabled={currentPage === 0}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Previous</span>
-            </button>
+        <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200 sticky bottom-0 z-10 py-3">
+          <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                disabled={currentPage === 0}
+                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Previous</span>
+              </button>
 
-            <div className="flex items-center space-x-1.5">
-              {pages.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCurrentPage(index)}
-                  className={`w-2.5 h-2.5 rounded-full transition-colors duration-200 focus:outline-none ${
-                    currentPage === index ? 'bg-indigo-600 scale-125' : 'bg-gray-300 hover:bg-gray-400'
-                  }`}
-                  aria-label={`Go to page ${index + 1}`}
-                />
-              ))}
+              <div className="flex items-center space-x-1.5">
+                {pages.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setCurrentPage(index)}
+                    className={`w-2.5 h-2.5 rounded-full transition-colors duration-200 focus:outline-none ${
+                      currentPage === index ? 'bg-indigo-600 scale-125' : 'bg-gray-300 hover:bg-gray-400'
+                    }`}
+                    aria-label={`Go to page ${index + 1}`}
+                  />
+                ))}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(Math.min(pages.length - 1, currentPage + 1))}
+                disabled={currentPage === pages.length - 1}
+                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
+              >
+                <span>Next</span>
+                <ArrowLeft className="w-4 h-4 rotate-180" />
+              </button>
             </div>
-
-            <button
-              onClick={() => setCurrentPage(Math.min(pages.length - 1, currentPage + 1))}
-              disabled={currentPage === pages.length - 1}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-sm"
-            >
-              <span>Next</span>
-              <ArrowLeft className="w-4 h-4 rotate-180" />
-            </button>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div> {/* Closing tag for the new wrapper div */}
     </div>
   );
 };

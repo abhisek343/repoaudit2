@@ -1,11 +1,17 @@
 import localforage from 'localforage';
 import { AnalysisResult } from '../types';
 
-// Create an IndexedDB store using localforage
-const analysisStore = localforage.createInstance({
-  name: 'repo-auditor',
-  storeName: 'analysis-results'
-});
+let analysisStore: LocalForage;
+
+// Initialize the storage service
+export const initializeStorage = async () => {
+  analysisStore = localforage.createInstance({
+    name: 'repo-auditor',
+    storeName: 'analysis-results'
+  });
+  await analysisStore.ready();
+  console.log('StorageService initialized');
+};
 
 export class StorageService {
   private static readonly MAX_RESULTS = 10; // Keep only the last 10 results

@@ -338,20 +338,20 @@ Analyze the following codebase context and provide a structured summary.
 Context (e.g., key file contents, structure overview):
 ${codebaseContext.substring(0, 3500)} 
 Respond with a JSON object with three keys:
-1.  "summary": A concise overall summary of the codebase (2-3 sentences).
-2.  "keyPoints": An array of 3-5 bullet points highlighting key aspects (e.g., main functionality, technologies used, architectural style).
-3.  "recommendations": An array of 2-3 actionable recommendations for improvement or further investigation.
+1.  "summary": A human-readable summary of the codebase formatted as a heading 'Codebase Overview' followed by exactly 10 bullet points. Each bullet point should be a concise statement (max 20 words) written in plain English without markdown or additional formatting. Focus on the most valuable insights for quick understanding.
+2.  "keyPoints": An array of 3-5 short phrases highlighting key aspects (e.g., main functionality, technologies used, architectural style) without markdown.
+3.  "recommendations": An array of 2-3 actionable recommendations for improvement or further investigation, written as concise sentences without markdown.
 Example JSON format:
 {
-  "summary": "This is a web application backend built with Node.js and Express, providing RESTful APIs for user management.",
+  "summary": "Codebase Overview\n- First key insight about the codebase.\n- Second key insight about the codebase.\n- Third key insight.\n- Fourth key insight.\n- Fifth key insight.\n- Sixth key insight.\n- Seventh key insight.\n- Eighth key insight.\n- Ninth key insight.\n- Tenth key insight.",
   "keyPoints": [
-    "Uses TypeScript for type safety.",
-    "Implements JWT for authentication.",
-    "Connects to a PostgreSQL database."
+    "Uses TypeScript for type safety",
+    "Implements JWT for authentication",
+    "Connects to a PostgreSQL database"
   ],
   "recommendations": [
-    "Add more comprehensive unit tests.",
-    "Consider implementing rate limiting for public APIs."
+    "Add more comprehensive unit tests",
+    "Consider implementing rate limiting for public APIs"
   ]
 }
 Return ONLY the JSON object.`;
@@ -451,7 +451,7 @@ Provide a detailed technical analysis (400-500 words) covering:
 4.  Deep observations on code organization, modularity, and separation of concerns.
 5.  Thorough discussion of scalability, maintainability, and potential bottlenecks.
 6.  Specific, actionable architectural improvements with justifications.
-Provide a comprehensive and detailed analysis. Aim for 400-500 words. Return only the analysis text.`;
+Provide a comprehensive and detailed analysis in plain English without markdown or bullet points. Aim for 400-500 words. Return only the analysis text.`;
     return this.generateText(prompt, 800);
   }
   
