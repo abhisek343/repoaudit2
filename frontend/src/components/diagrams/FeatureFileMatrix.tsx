@@ -1,121 +1,224 @@
-import { BarChart3 } from 'lucide-react'; // For empty state
+// frontend/src/components/diagrams/FeatureFileMatrix.tsx
+import React, { useEffect, useRef } from 'react';
+import * as d3 from 'd3';
+import { FeatureFileMatrixItem } from '../../types/advanced';
+import ErrorDisplay from '../ui/ErrorDisplay';
+import VisualizationErrorBoundary from '../VisualizationErrorBoundary';
 
-interface FeatureFileMatrixProps {
-  features: string[];
-  files: string[];
-  matrix: number[][]; // matrix[feature][file] = intensity (0-1)
+interface Props {
+  data: FeatureFileMatrixItem[];
   width?: number;
   height?: number;
 }
 
-const FeatureFileMatrix = ({ 
-  features, 
-  files, 
-  matrix, 
-  width = 800, 
-  height = 600 
-}: FeatureFileMatrixProps) => {
-  if (!features || features.length === 0 || !files || files.length === 0 || !matrix) {
+const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }) => {
+  const ref = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    if (!data || data.length === 0 || !ref.current) {
+      console.log('[FeatureFileMatrix] No data available:', { data, length: data?.length });
+      return;
+    }
+
+    console.log('[FeatureFileMatrix] Rendering with data:', data);
+
+    const svg = d3.select(ref.current);
+    svg.selectAll("*").remove();
+
+    // Prepare data
+    const features = data.map(d => d.featureFile);
+    const allFiles = Array.from(new Set(data.flatMap(d => d.sourceFiles)))
+      .sort((a, b) => {
+        // Sort files by feature association count for better grouping
+        const aCount = data.filter(d => d.sourceFiles.includes(a)).length;
+        const bCount = data.filter(d => d.sourceFiles.includes(b)).length;
+        return bCount - aCount;
+      })
+      .slice(0, 30); // Limit files for better visualization
+    
+    // Create matrix data structure
+    const matrixData: { feature: string; file: string; value: number }[] = [];
+    data.forEach((item) => {
+      item.sourceFiles.forEach(file => {
+        if (allFiles.includes(file)) {
+          matrixData.push({ 
+            feature: item.featureFile, 
+            file: file, 
+            value: 1
+          });
+        }
+      });
+    });
+
+    // Set up dimensions
+    const margin = { top: 100, right: 50, bottom: 200, left: 250 };
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
+
+    // Create main container
+    const container = svg
+      .attr('width', width)
+      .attr('height', height)
+      .append('g')
+      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    // Create scales
+    const xScale = d3.scaleBand()
+      .domain(allFiles)
+      .range([0, innerWidth])
+      .padding(0.1);
+
+    const yScale = d3.scaleBand()
+      .domain(features)
+      .range([0, innerHeight])
+      .padding(0.1);
+
+    // Color scale for features
+    const colorScale = d3.scaleOrdinal(d3.schemeCategory10)
+      .domain(features);
+
+    // Add title
+    svg.append('text')
+      .attr('x', width / 2)
+      .attr('y', 30)
+      .attr('text-anchor', 'middle')
+      .style('font-size', '18px')
+      .style('font-weight', 'bold')
+      .style('fill', 'var(--text-color-primary)')
+      .text('Feature-to-File Mapping Matrix');
+
+    // Create tooltip
+    const tooltip = d3.select('body').append('div')
+      .attr('class', 'feature-matrix-tooltip')
+      .style('position', 'absolute')
+      .style('visibility', 'hidden')
+      .style('background', 'rgba(0, 0, 0, 0.9)')
+      .style('color', 'white')
+      .style('padding', '10px')
+      .style('border-radius', '6px')
+      .style('font-size', '12px')
+      .style('pointer-events', 'none')
+      .style('z-index', '1000')
+      .style('box-shadow', '0 4px 6px rgba(0, 0, 0, 0.1)');
+
+    // Add cells
+    container.selectAll('.cell')
+      .data(matrixData)
+      .enter()
+      .append('rect')
+      .attr('class', 'cell')
+      .attr('x', d => xScale(d.file)!)
+      .attr('y', d => yScale(d.feature)!)
+      .attr('width', xScale.bandwidth())
+      .attr('height', yScale.bandwidth())
+      .style('fill', d => colorScale(d.feature) as string)
+      .style('opacity', 0.7)
+      .style('stroke', '#fff')
+      .style('stroke-width', 1)
+      .style('cursor', 'pointer')      .on('mouseover', function(_event: MouseEvent, d: { feature: string; file: string; value: number }) {
+        d3.select(this).style('opacity', 1).style('stroke-width', 2);
+        tooltip.style('visibility', 'visible')
+          .html(`
+            <div style="font-weight: bold; margin-bottom: 5px;">${d.feature}</div>
+            <div><strong>File:</strong> ${d.file.split('/').pop()}</div>
+            <div><strong>Path:</strong> ${d.file}</div>
+          `);
+      })
+      .on('mousemove', function(event: MouseEvent) {
+        tooltip.style('top', (event.pageY - 10) + 'px')
+          .style('left', (event.pageX + 10) + 'px');
+      })
+      .on('mouseout', function() {
+        d3.select(this).style('opacity', 0.7).style('stroke-width', 1);
+        tooltip.style('visibility', 'hidden');
+      });
+
+    // Add Y axis (features)
+    container.append('g')
+      .call(d3.axisLeft(yScale))
+      .selectAll('text')
+      .style('fill', 'var(--text-color-secondary)')
+      .style('font-size', '11px')
+      .style('font-weight', '500');
+
+    // Add X axis (files) - rotated labels
+    container.append('g')
+      .attr('transform', `translate(0, ${innerHeight})`)
+      .call(d3.axisBottom(xScale))
+      .selectAll('text')
+      .style('text-anchor', 'end')
+      .style('fill', 'var(--text-color-secondary)')
+      .style('font-size', '9px')
+      .attr('dx', '-.8em')
+      .attr('dy', '.15em')
+      .attr('transform', 'rotate(-45)');
+
+    // Add axis labels
+    container.append('text')
+      .attr('transform', 'rotate(-90)')
+      .attr('y', 0 - margin.left + 20)
+      .attr('x', 0 - (innerHeight / 2))
+      .style('text-anchor', 'middle')
+      .style('fill', 'var(--text-color-secondary)')
+      .style('font-size', '14px')
+      .style('font-weight', 'bold')
+      .text('Features');
+
+    container.append('text')
+      .attr('transform', `translate(${innerWidth / 2}, ${innerHeight + margin.bottom - 10})`)
+      .style('text-anchor', 'middle')
+      .style('fill', 'var(--text-color-secondary)')
+      .style('font-size', '14px')
+      .style('font-weight', 'bold')
+      .text('Source Files');
+
+    // Add legend
+    const legend = svg.append('g')
+      .attr('class', 'legend')
+      .attr('transform', `translate(${width - 200}, 60)`);
+
+    const legendItems = legend.selectAll('.legend-item')
+      .data(features.slice(0, 8)) // Show only first 8 features in legend
+      .enter()
+      .append('g')
+      .attr('class', 'legend-item')
+      .attr('transform', (_d: string, i: number) => `translate(0, ${i * 20})`);
+
+    legendItems.append('rect')
+      .attr('width', 15)
+      .attr('height', 15)
+      .style('fill', d => colorScale(d) as string)
+      .style('opacity', 0.7);
+
+    legendItems.append('text')
+      .attr('x', 20)
+      .attr('y', 12)
+      .style('fill', 'var(--text-color-secondary)')
+      .style('font-size', '11px')
+      .text(d => d.length > 20 ? d.substring(0, 20) + '...' : d);
+
+    // Cleanup tooltip on unmount
+    return () => {
+      d3.select('.feature-matrix-tooltip').remove();
+    };
+
+  }, [data, width, height]);
+
+  if (!data || data.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center text-gray-500 p-8" style={{ width, height }}>
-        <BarChart3 className="w-16 h-16 mb-4 text-gray-300" /> 
-        <p className="text-lg">No data available for Feature-File Matrix.</p>
-        <p className="text-sm">Ensure features, files, and matrix data are provided.</p>
-      </div>
+      <ErrorDisplay 
+        title="No feature matrix data available" 
+        message="Please ensure the analysis has sufficient data for this visualization."
+      />
     );
   }
 
-  const cellWidth = Math.max(20, (width - 200) / files.length);
-  const cellHeight = Math.max(20, (height - 100) / features.length);
-
-  const getIntensityColor = (intensity: number) => {
-    if (intensity === 0) return '#f3f4f6';
-    const alpha = Math.max(0.1, intensity);
-    return `rgba(59, 130, 246, ${alpha})`;
-  };
-
   return (
-    <div className="flex flex-col items-center">
-      <div className="relative w-full overflow-auto" style={{ width: width, height: height }}>
-        {/* Feature labels */}
-        <div className="absolute left-0 top-20">
-          {features.map((feature) => (
-            <div
-              key={feature}
-              className="text-sm font-medium text-gray-700 text-right pr-2 whitespace-nowrap"
-              style={{
-                height: cellHeight,
-                lineHeight: `${cellHeight}px`,
-                width: 180
-              }}
-            >
-              {feature.length > 25 ? feature.substring(0, 25) + '...' : feature}
-            </div>
-          ))}
-        </div>
-
-        {/* File labels */}
-        <div className="absolute top-0 left-48">
-          {files.map((file, j) => (
-            <div
-              key={file}
-              className="text-xs text-gray-600 absolute origin-bottom-left whitespace-nowrap"
-              style={{
-                left: j * cellWidth + cellWidth / 2,
-                top: 15,
-                transform: 'rotate(-45deg)',
-                width: 100
-              }}
-            >
-              {file.split('/').pop()?.substring(0, 15)}
-            </div>
-          ))}
-        </div>
-
-        {/* Matrix cells */}
-        <div className="absolute top-20 left-48">
-          {features.map((feature, i) => (
-            <div key={feature} className="flex">
-              {files.map((file, j) => {
-                const intensity = matrix[i]?.[j] || 0;
-                return (
-                  <div
-                    key={`${feature}-${file}`}
-                    className="border border-gray-200 cursor-pointer hover:border-gray-400 transition-colors duration-200"
-                    style={{
-                      width: cellWidth,
-                      height: cellHeight,
-                      backgroundColor: getIntensityColor(intensity)
-                    }}
-                    title={`${feature} - ${file}: ${Math.round(intensity * 100)}% involvement`}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
-
-        {/* Legend */}
-        <div className="absolute bottom-4 right-4 bg-white p-3 border border-gray-200 rounded-lg shadow-sm">
-          <div className="text-sm font-medium text-gray-700 mb-2">Involvement Level</div>
-          <div className="flex items-center space-x-2">
-            <div className="w-4 h-4 bg-gray-100 border border-gray-200"></div>
-            <span className="text-xs text-gray-600">None</span>
-            <div className="w-4 h-4" style={{ backgroundColor: 'rgba(59, 130, 246, 0.3)' }}></div>
-            <span className="text-xs text-gray-600">Low</span>
-            <div className="w-4 h-4" style={{ backgroundColor: 'rgba(59, 130, 246, 0.7)' }}></div>
-            <span className="text-xs text-gray-600">Medium</span>
-            <div className="w-4 h-4" style={{ backgroundColor: 'rgba(59, 130, 246, 1)' }}></div>
-            <span className="text-xs text-gray-600">High</span>
-          </div>
-        </div>
+    <VisualizationErrorBoundary>
+      <div className="feature-file-matrix">
+        <svg ref={ref} />
       </div>
-      
-      <div className="mt-4 text-sm text-gray-600 text-center max-w-md">
-        <p>Feature-to-file mapping matrix showing which files are involved in each feature. 
-        Darker cells indicate higher involvement levels.</p>
-      </div>
-    </div>
+    </VisualizationErrorBoundary>
   );
 };
 

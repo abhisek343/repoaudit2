@@ -1,5 +1,25 @@
-import { AdvancedAnalysisResult } from './advanced';
-// Removed import and re-export of Contributor from './contributor'
+import { 
+  AdvancedAnalysisResult, 
+  TemporalCoupling, 
+  SankeyData, 
+  FeatureFileMatrixItem, 
+  PullRequestData, 
+  GitGraphData 
+} from './advanced';
+// Re-export important types from advanced module
+export type { 
+  TemporalCoupling, 
+  SankeyData, 
+  SankeyNode, 
+  SankeyLink,
+  FeatureFileMatrixItem, 
+  PullRequestData, 
+  GitGraphData, 
+  GitGraphNode, 
+  GitGraphLink,
+  FileNode,
+  ChurnNode
+} from './advanced';
 
 export interface Contributor {
     login: string;
@@ -309,10 +329,16 @@ export interface AnalysisResult {
   repository?: RepositoryData; // Using the defined RepositoryData type
   architectureAnalysis?: string;
   analysisWarnings?: AnalysisWarning[];
-
   // Diagram-specific data structures
   dependencyWheelData?: Array<{ source: string; target: string; value: number }>; // Define specific type
   fileSystemTree?: import('./advanced').FileNode; // Define specific type (e.g., FileNode from advanced)
   churnSunburstData?: import('./advanced').ChurnNode; // Define specific type (e.g., ChurnNode from advanced)
   contributorStreamData?: Array<{ date: string; contributors: Record<string, number> }>; // Define specific type
+
+  // ADDED: Data for new advanced diagrams
+  temporalCouplings?: TemporalCoupling[];
+  transformationFlows?: SankeyData;
+  featureFileMatrix?: FeatureFileMatrixItem[];
+  pullRequests?: PullRequestData[];
+  gitGraph?: GitGraphData;
 }

@@ -20,7 +20,7 @@ export const useReport = (repoId?: string) => {
 
       try {
         const report = await loadReport('lastAnalysisResult');
-        if (report && report.id === repoId) {
+        if (report) {
           setReportData(report);
         } else {
           setError('Failed to load report data. It might not exist or is corrupted.');

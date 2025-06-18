@@ -22,6 +22,12 @@ export interface Repository {
   };
 }
 
+export interface RecentActivity {
+  commits: number;
+  pullRequests: number;
+  reviews: number;
+}
+
 export interface Contributor {
   login: string;
   contributions: number;
@@ -56,6 +62,34 @@ export interface Commit {
     status: string;
     patch?: string;
   }>;
+}
+
+export interface LLMConfig {
+  provider: 'openai' | 'gemini' | 'claude';
+  apiKey: string;
+  model?: string;
+}
+
+export interface FunctionParameter {
+  name: string;
+  type: string;
+  optional: boolean;
+  initializer?: string;
+}
+
+export interface FunctionInfo {
+  name: string;
+  startLine: number;
+  endLine: number;
+  sloc?: number;
+  cyclomaticComplexity?: number;
+  parameters?: FunctionParameter[];
+  returnType?: string;
+  isAsync?: boolean;
+  visibility?: 'public' | 'private' | 'protected';
+  description?: string;
+  content?: string;
+  calls?: string[];
 }
 
 export interface FileInfo {
@@ -253,6 +287,63 @@ export interface PRPhase {
   icon: string;
 }
 
+// NEW: Data structures for advanced diagrams
+export interface TemporalCoupling {
+  source: string;
+  target: string;
+  weight: number;
+}
+
+export interface SankeyNode {
+  id: string;
+}
+
+export interface SankeyLink {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface SankeyData {
+  nodes: SankeyNode[];
+  links: SankeyLink[];
+}
+
+export interface FeatureFileMatrixItem {
+  featureFile: string;
+  sourceFiles: string[];
+}
+
+export interface PullRequestData {
+  id: number;
+  title: string;
+  author: string;
+  state: 'open' | 'closed' | 'merged';
+  createdAt: string;
+  closedAt: string | null;
+  mergedAt: string | null;
+  timeToMergeHours?: number | null;
+  timeToCloseHours?: number | null;
+}
+
+export interface GitGraphNode {
+  id: string; // sha
+  message: string;
+  date: string;
+  author: string;
+  parents: string[];
+}
+
+export interface GitGraphLink {
+  source: string;
+  target: string;
+}
+
+export interface GitGraphData {
+  nodes: GitGraphNode[];
+  links: GitGraphLink[];
+}
+
 // --- Main Analysis Result Structure ---
 
 // Update AnalysisResult to include ALL expected fields
@@ -294,13 +385,11 @@ export interface AnalysisResult {
   hotspots: Hotspot[];
   keyFunctions: KeyFunction[];
   apiEndpoints: APIEndpoint[];
-  
-  // AI-generated content
+    // AI-generated content
   aiSummary?: string;
   architectureAnalysis?: string;
-  securityAnalysis?: string;
   
-  // Metrics object that components expect
+  // Summary metrics
   metrics: {
     totalCommits: number;
     totalContributors: number;
@@ -317,64 +406,24 @@ export interface AnalysisResult {
     mediumVulnerabilities: number;
     lowVulnerabilities: number;
   };
+  analysisWarnings?: AnalysisWarning[];
   
-  analysisWarnings?: AnalysisWarning[]; // Added to store non-critical warnings
-
-  // Diagram-specific data
+  // Data for existing diagrams
   dependencyWheelData?: Array<{ source: string; target: string; value: number }>;
   fileSystemTree?: FileNode;
   churnSunburstData?: ChurnNode;
-  temporalCouplingData?: { nodes: any[]; links: any[] };
   contributorStreamData?: Array<{ date: string; contributors: Record<string, number> }>;
-  dataTransformationSankey?: { nodes: any[]; links: any[] };
-  featureFileMatrixData?: { features: string[]; files: string[]; matrix: number[][] };
-  prLifecycleData?: { phases: PRPhase[]; totalDuration: number };
+
+  // ADDED: Data for new advanced diagrams
+  temporalCouplings?: TemporalCoupling[];
+  transformationFlows?: SankeyData;
+  featureFileMatrix?: FeatureFileMatrixItem[];
+  pullRequests?: PullRequestData[];
+  gitGraph?: GitGraphData;
 }
 
 export interface AnalysisWarning {
-  step: string; // The analysis step where the warning occurred
-  message: string; // A user-friendly message
-  error?: string; // Optional technical error details
-}
-
-// --- Other miscellaneous types ---
-
-export interface FunctionParameter {
-  name: string;
-  type?: string;      // e.g., 'string', 'number', 'any' or interface name
-  optional?: boolean;
-  initializer?: string; // e.g., default value
-}
-
-// Configuration for LLM services
-export interface LLMConfig {
-  provider: 'openai' | 'gemini' | 'claude';
-  apiKey: string;
-  model?: string;
-}
-
-// Represents information about a parsed function in a file
-export interface FunctionInfo {
-  name: string;
-  startLine: number;
-  endLine: number;
-  parameters: Array<{ name: string; type: string; optional: boolean }>;
-  sloc: number;
-  calls: string[];
-  description?: string;
-  isAsync: boolean;
-  content?: string;
-  // Optional fields for deeper analysis
-  returnType?: string;
-  visibility?: 'public' | 'private' | 'protected';
-  cyclomaticComplexity?: number;
-}
-
-export interface RecentActivity {
-  [date: string]: number;
-}
-
-export interface CommitDistribution {
-  byDayOfWeek: number[];
-  byHourOfDay: number[];
+  step: string;
+  message: string;
+  error?: string;
 }

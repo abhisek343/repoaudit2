@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import AnalyzePage from './pages/AnalyzePage';
 import ReportPage from './pages/ReportPage';
 import DashboardPage from './pages/DashboardPage';
+import APITreePage from './pages/APITreePage';
 import { AnalysisService } from './services/analysisService';
 import { initializeStorage } from './services/storageService';
 
@@ -43,7 +44,6 @@ function App() {
 
     initializeApp();
   }, []);
-
   const router = createBrowserRouter([
     {
       path: "/",
@@ -60,6 +60,10 @@ function App() {
     {
       path: "/report/:repoId",
       element: <ReportPage />,
+    },
+    {
+      path: "/api-tree/:reportId",
+      element: <APITreePage />,
     },
   ]);
 

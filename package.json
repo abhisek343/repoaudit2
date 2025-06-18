@@ -29,6 +29,7 @@
     "test": "npm run test --prefix frontend && npm run test --prefix backend"
   },
   "devDependencies": {
+    "@types/node": "^24.0.3",
     "concurrently": "^9.1.2"
   },
   "dependencies": {

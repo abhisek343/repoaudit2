@@ -356,6 +356,35 @@ class GitHubService {
             }
         });
     }
+    // ADDED: Method to fetch pull requests for the Gantt chart
+    async getPullRequests(owner, repo) {
+        this.owner = owner;
+        this.repo = repo;
+        try {
+            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/pulls`, {
+                params: { state: 'all', per_page: 100, sort: 'created', direction: 'desc' },
+                headers: this.getHeaders(),
+            });
+            return response.data.map(pr => {
+                let state = pr.state;
+                if (pr.merged_at) {
+                    state = 'merged';
+                }
+                return {
+                    id: pr.id,
+                    title: pr.title,
+                    author: pr.user?.login || 'unknown',
+                    state: state,
+                    createdAt: pr.created_at,
+                    closedAt: pr.closed_at,
+                    mergedAt: pr.merged_at,
+                };
+            });
+        }
+        catch (error) {
+            this.handleGitHubError(error, 'fetching pull requests');
+        }
+    }
 }
 exports.GitHubService = GitHubService;
 // GitHub API Types (ensure these are not duplicated if defined elsewhere globally)

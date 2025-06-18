@@ -333,21 +333,11 @@ Return ONLY a JSON array of technical debt objects, or an empty array.
     }
     async detectAPIEndpoints(files) {
         const endpoints = [];
+        // Enhanced regex-based detection for when LLM is not configured
         if (!this.llmService.isConfigured()) {
             files.forEach(file => {
                 if (file.content) {
-                    const expressRoutes = file.content.match(/(app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g) || [];
-                    expressRoutes.forEach(route => {
-                        const match = route.match(/(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/);
-                        if (match && match[1] && match[2]) {
-                            endpoints.push({
-                                method: match[1].toUpperCase(),
-                                path: match[2],
-                                file: file.path,
-                                handlerFunction: "Unknown (Regex detected)",
-                            });
-                        }
-                    });
+                    endpoints.push(...this.extractEndpointsFromFile(file));
                 }
             });
             return endpoints;
@@ -492,6 +482,124 @@ Return ONLY a JSON array of roadmap items.
             });
         }
         return functions;
+    }
+    extractEndpointsFromFile(file) {
+        const endpoints = [];
+        const content = file.content;
+        // Enhanced patterns for different frameworks and languages
+        const patterns = [
+            // Express.js patterns
+            {
+                regex: /(app|router)\.(get|post|put|delete|patch|use)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+                methodIndex: 2,
+                pathIndex: 3,
+                framework: 'Express.js'
+            },
+            // FastAPI patterns
+            {
+                regex: /@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+                methodIndex: 1,
+                pathIndex: 2,
+                framework: 'FastAPI'
+            },
+            // Flask patterns
+            {
+                regex: /@app\.route\s*\(\s*['"`]([^'"`]+)['"`].*?methods\s*=\s*\[['"`]([^'"`]+)['"`]\]/g,
+                methodIndex: 2,
+                pathIndex: 1,
+                framework: 'Flask'
+            },
+            // ASP.NET patterns
+            {
+                regex: /\[Http(Get|Post|Put|Delete|Patch)\s*\(\s*['"`]([^'"`]+)['"`]\s*\)\]/g,
+                methodIndex: 1,
+                pathIndex: 2,
+                framework: 'ASP.NET'
+            },
+            // Spring Boot patterns
+            {
+                regex: /@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*['"`]([^'"`]+)['"`]/g,
+                methodIndex: 1,
+                pathIndex: 2,
+                framework: 'Spring Boot'
+            },
+            // Gin (Go) patterns
+            {
+                regex: /router\.(GET|POST|PUT|DELETE|PATCH)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+                methodIndex: 1,
+                pathIndex: 2,
+                framework: 'Gin'
+            }
+        ];
+        patterns.forEach(pattern => {
+            let match;
+            while ((match = pattern.regex.exec(content)) !== null) {
+                const method = match[pattern.methodIndex];
+                const path = match[pattern.pathIndex];
+                if (method && path) {
+                    // Extract handler function name if possible
+                    let handlerFunction = 'Unknown';
+                    // Look for function name after the route definition
+                    const remainingContent = content.substring(match.index + match[0].length);
+                    const handlerMatch = remainingContent.match(/[\s,]*([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+                    if (handlerMatch) {
+                        handlerFunction = handlerMatch[1];
+                    }
+                    endpoints.push({
+                        method: method.toUpperCase(),
+                        path: path,
+                        file: file.path,
+                        handlerFunction: `${handlerFunction} (${pattern.framework})`,
+                    });
+                }
+            }
+        });
+        // Also look for RESTful controller methods
+        if (file.path.includes('controller') || file.path.includes('Controller')) {
+            const restfulPatterns = [
+                { regex: /public.*?function\s+(index|show|store|update|destroy)\s*\(/g, method: 'GET', type: 'Laravel' },
+                { regex: /def\s+(index|show|create|update|destroy)\s*\(/g, method: 'GET', type: 'Rails' }
+            ];
+            restfulPatterns.forEach(pattern => {
+                let match;
+                while ((match = pattern.regex.exec(content)) !== null) {
+                    const functionName = match[1];
+                    let method = 'GET';
+                    let path = '/';
+                    // Infer method and path from function name
+                    switch (functionName) {
+                        case 'index':
+                            method = 'GET';
+                            path = '/';
+                            break;
+                        case 'show':
+                            method = 'GET';
+                            path = '/:id';
+                            break;
+                        case 'store':
+                        case 'create':
+                            method = 'POST';
+                            path = '/';
+                            break;
+                        case 'update':
+                            method = 'PUT';
+                            path = '/:id';
+                            break;
+                        case 'destroy':
+                            method = 'DELETE';
+                            path = '/:id';
+                            break;
+                    }
+                    endpoints.push({
+                        method,
+                        path,
+                        file: file.path,
+                        handlerFunction: `${functionName} (${pattern.type} RESTful)`,
+                    });
+                }
+            });
+        }
+        return endpoints;
     }
 }
 exports.AdvancedAnalysisService = AdvancedAnalysisService;

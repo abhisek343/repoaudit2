@@ -1,188 +1,94 @@
-import React, { useEffect, useRef, useState } from 'react';
+// frontend/src/components/diagrams/GitHistoryVisualization.tsx
+import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import { Calendar, GitCommit, Users } from 'lucide-react';
-import { ProcessedCommit } from '../../types';
+import { GitGraphData } from '../../types/advanced';
+import ErrorDisplay from '../ui/ErrorDisplay';
+import VisualizationErrorBoundary from '../VisualizationErrorBoundary';
 
-interface GitHistoryVisualizationProps {
-  commits: ProcessedCommit[];
-  contributors: Array<{
-    login: string;
-    contributions: number;
-    avatarUrl: string;
-  }>;
-  onCommitSelect?: (commit: ProcessedCommit) => void;
+interface Props {
+  data: GitGraphData;
 }
 
-const GitHistoryVisualization: React.FC<GitHistoryVisualizationProps> = ({
-  commits,
-  contributors,
-  onCommitSelect
-}) => {
-  const svgRef = useRef<SVGSVGElement>(null);  const [selectedCommit, setSelectedCommit] = useState<ProcessedCommit | null>(null);
-  const [timeRange, setTimeRange] = useState<[Date, Date]>([new Date(), new Date()]);
+const GitHistoryVisualization: React.FC<Props> = ({ data }) => {
+  const ref = useRef<SVGSVGElement>(null);
+
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!data || !data.nodes || data.nodes.length === 0 || !ref.current) return;    const svg = d3.select(ref.current);
+    svg.selectAll("*").remove();
+
+    const margin = { top: 20, right: 20, bottom: 20, left: 20 };
     
-    // Guard against empty commits
-    if (!commits || commits.length === 0) {
-      // Clear previous visualization and show empty state
-      d3.select(svgRef.current).selectAll('*').remove();
-      return;
-    }
+    // Simple layout algorithm
+    const nodesById = new Map(data.nodes.map(node => [node.id, node]));
+    const children = new Map(data.nodes.map(node => [node.id, [] as string[]]));
+    data.links.forEach(link => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        children.get(sourceId)?.push(targetId);
+    });
 
-    // Clear previous visualization
-    d3.select(svgRef.current).selectAll('*').remove();
+    let y = margin.top;
+    const xPositions: { [key: number]: number } = {};
+    let column = 0;
+    
+    data.nodes.forEach(node => {
+        node.y = y;
+        y += 40;
+        
+        const nodeColumn = Object.keys(xPositions).find(col => xPositions[parseInt(col)] < node.y!);
+        if (nodeColumn === undefined) {
+            node.x = margin.left + (column * 30);
+            xPositions[column] = node.y + 100; // Reserve space
+            column++;
+        } else {
+            node.x = margin.left + (parseInt(nodeColumn) * 30);
+            xPositions[parseInt(nodeColumn)] = node.y + 100;
+        }
+    });
 
-    const width = svgRef.current.clientWidth;
-    const height = svgRef.current.clientHeight;
-    const margin = { top: 20, right: 20, bottom: 30, left: 40 };
+    const g = svg.append("g");
 
-    // Create scales - Fix: use d.date instead of d.author.date
-    const xScale = d3.scaleTime()
-      .domain(d3.extent(commits, d => new Date(d.date)) as [Date, Date])
-      .range([margin.left, width - margin.right]);
-
-    const yScale = d3.scaleLinear()
-      .domain([0, commits.length])
-      .range([height - margin.bottom, margin.top]);    // Create SVG
-    const svg = d3.select(svgRef.current)
-      .attr('width', width)
-      .attr('height', height);
-
-    // Draw commit lines
-    const line = d3.line<ProcessedCommit>()
-      .x(d => xScale(new Date(d.date)))
-      .y((_d, i) => yScale(i));
-
-    svg.append('path')
-      .datum(commits)
-      .attr('class', 'commit-line')
-      .attr('d', line)
-      .attr('fill', 'none')
-      .attr('stroke', '#e2e8f0')
-      .attr('stroke-width', 2);
-
-    // Draw commit circles
-    const commitCircles = svg.selectAll('.commit-circle')
-      .data(commits)
-      .enter()
-      .append('g')
-      .attr('class', 'commit-circle')      .on('click', (_event, d) => {
-        setSelectedCommit(d);
-        onCommitSelect?.(d);
+    g.append("g")
+      .attr("fill", "none")
+      .attr("stroke", "#94a3b8")
+      .attr("stroke-width", 1.5)
+      .selectAll("path")
+      .data(data.links)
+      .join("path")
+      .attr("d", d => {
+        const source = nodesById.get(typeof d.source === 'string' ? d.source : d.source.id)!;
+        const target = nodesById.get(typeof d.target === 'string' ? d.target : d.target.id)!;
+        return `M${source.x},${source.y} C${source.x},${(source.y! + target.y!) / 2} ${target.x},${(source.y! + target.y!) / 2} ${target.x},${target.y}`;
       });
 
-    commitCircles.append('circle')
-      .attr('cx', d => xScale(new Date(d.date)))
-      .attr('cy', (_d, i) => yScale(i))
-      .attr('r', 6)
-      .attr('fill', d => {
-        const contributor = contributors.find(c => 
-          c.login.toLowerCase() === d.author.toLowerCase()
-        );
-        return contributor ? '#4f46e5' : '#94a3b8';
-      })      .attr('stroke', '#fff')
-      .attr('stroke-width', 2);
+    g.append("g")
+      .selectAll("circle")
+      .data(data.nodes)
+      .join("circle")
+      .attr("cx", d => d.x!)
+      .attr("cy", d => d.y!)
+      .attr("r", 5)
+      .attr("fill", "#6366f1")
+      .append("title")
+      .text(d => `${d.id.substring(0, 7)}\nAuthor: ${d.author}\n${d.message}`);
 
-    // Add hover effects
-    commitCircles
-      .on('mouseover', function() {
-        d3.select(this)
-          .select('circle')
-          .attr('r', 8)
-          .attr('stroke', '#4f46e5');
-      })
-      .on('mouseout', function() {
-        d3.select(this)
-          .select('circle')
-          .attr('r', 6)
-          .attr('stroke', '#fff');
-      });
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.1, 8])
+        .on("zoom", (event) => g.attr("transform", event.transform));
 
-    // Add axes
-    const xAxis = d3.axisBottom(xScale);
-    const yAxis = d3.axisLeft(yScale);
+    svg.call(zoom);
 
-    svg.append('g')
-      .attr('transform', `translate(0,${height - margin.bottom})`)
-      .call(xAxis);
+  }, [data]);
 
-    svg.append('g')
-      .attr('transform', `translate(${margin.left},0)`)
-      .call(yAxis);    // Update time range
-    setTimeRange([
-      new Date(commits[commits.length - 1].date),
-      new Date(commits[0].date)
-    ]);
-  }, [commits, contributors, onCommitSelect]);
-
-  // Show empty state if no commits
-  if (!commits || commits.length === 0) {
-    return (
-      <div className="relative bg-white rounded-xl shadow-lg p-8">
-        <div className="text-center">
-          <GitCommit className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Git History Available</h3>
-          <p className="text-gray-500">
-            No commits found for this repository. The repository might be empty or commit data couldn't be retrieved.
-          </p>
-        </div>
-      </div>
-    );
+  if (!data || !data.nodes || data.nodes.length === 0) {
+    return <ErrorDisplay message="No Git History Data" />;
   }
 
   return (
-    <div className="relative bg-white rounded-xl shadow-lg p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Git History</h3>        <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-1 text-sm text-gray-600">
-            <span>{commits.length} commits</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center space-x-4 mb-4 text-sm text-gray-600">
-        <div className="flex items-center">
-          <Calendar className="w-4 h-4 mr-1" />
-          <span>
-            {timeRange[0].toLocaleDateString()} - {timeRange[1].toLocaleDateString()}
-          </span>
-        </div>
-        <div className="flex items-center">
-          <GitCommit className="w-4 h-4 mr-1" />
-          <span>{commits.length} commits</span>
-        </div>
-        <div className="flex items-center">
-          <Users className="w-4 h-4 mr-1" />
-          <span>{contributors.length} contributors</span>
-        </div>
-      </div>
-
-      <div className="relative w-full h-[500px]">
-        <svg ref={svgRef} className="w-full h-full" />
-      </div>
-
-      {selectedCommit && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-          <h4 className="font-medium text-gray-900 mb-2">Selected Commit</h4>
-          <div className="space-y-2 text-sm">
-            <p className="text-gray-600">
-              <span className="font-medium">Message:</span> {selectedCommit.message}
-            </p>            <p className="text-gray-600">
-              <span className="font-medium">Author:</span> {selectedCommit.author}
-            </p>
-            <p className="text-gray-600">
-              <span className="font-medium">Date:</span>{' '}
-              {new Date(selectedCommit.date).toLocaleString()}
-            </p>
-            <p className="text-gray-600">
-              <span className="font-medium">SHA:</span> {selectedCommit.sha.substring(0, 7)}
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
+    <VisualizationErrorBoundary fallbackMessage="Could not render the Git History Graph.">
+      <svg ref={ref} style={{ width: '100%', height: '100%' }}></svg>
+    </VisualizationErrorBoundary>
   );
 };
 
-export default GitHistoryVisualization; 
+export default GitHistoryVisualization;

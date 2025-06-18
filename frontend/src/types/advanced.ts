@@ -45,12 +45,23 @@ export interface FeatureFileMatrix {
   matrix: number[][];
 }
 
+export interface FeatureFileMatrixItem {
+  featureFile: string;
+  sourceFiles: string[];
+}
+
 export interface ChurnNode {
   name: string;
   path: string;
   type: 'file' | 'directory';
   churnRate: number;
   children?: ChurnNode[];
+}
+
+export interface TemporalCoupling {
+  source: string;
+  target: string;
+  weight: number;
 }
 
 export interface TemporalCouplingData {
@@ -66,15 +77,18 @@ export interface ContributorStreamPoint {
 
 export interface SankeyNode {
   id: string;
-  name: string;
-  category: string;
-  [key: string]: string | number | undefined;
+  nodeId?: string; // d3-sankey compatibility
 }
 
 export interface SankeyLink {
-  source: string;
-  target: string;
+  source: string | SankeyNode;
+  target: string | SankeyNode;
   value: number;
+}
+
+export interface SankeyData {
+  nodes: SankeyNode[];
+  links: SankeyLink[];
 }
 
 export interface DataTransformationSankey {
@@ -94,6 +108,39 @@ export interface PRLifecycleData {
   totalDuration: number;
 }
 
+export interface PullRequestData {
+  id: number;
+  title: string;
+  author: string;
+  state: 'open' | 'closed' | 'merged';
+  createdAt: string;
+  closedAt: string | null;
+  mergedAt: string | null;
+  timeToMergeHours?: number | null;
+  timeToCloseHours?: number | null;
+}
+
+export interface GitGraphNode {
+  id: string; // sha
+  message: string;
+  date: string;
+  author: string;
+  parents: string[];
+  // For layout
+  x?: number;
+  y?: number;
+}
+
+export interface GitGraphLink {
+  source: string | GitGraphNode;
+  target: string | GitGraphNode;
+}
+
+export interface GitGraphData {
+  nodes: GitGraphNode[];
+  links: GitGraphLink[];
+}
+
 export interface ApiEndpoint {
   path: string;
   method: string;
@@ -111,4 +158,11 @@ export interface AdvancedAnalysisResult {
   contributorStreamData?: ContributorStreamPoint[];
   dataTransformationSankey?: DataTransformationSankey;
   prLifecycleData?: PRLifecycleData;
+  
+  // ADDED: New advanced diagram data
+  temporalCouplings?: TemporalCoupling[];
+  transformationFlows?: SankeyData;
+  featureFileMatrix?: FeatureFileMatrixItem[];
+  pullRequests?: PullRequestData[];
+  gitGraph?: GitGraphData;
 }

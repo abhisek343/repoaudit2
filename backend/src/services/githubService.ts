@@ -1,6 +1,6 @@
 import axios, { AxiosResponse } from 'axios';
 import { Base64 } from 'js-base64';
-import { Repository, Contributor, Commit, FileInfo } from '../types';
+import { Repository, Contributor, Commit, FileInfo, PullRequestData } from '../types';
 
 // Define interfaces for raw GitHub API responses to type axios calls
 interface RawGitHubRepository {
@@ -69,6 +69,20 @@ interface GitHubTreeItem { // Already defined at the bottom, but good to have it
   size?: number;
   sha: string; // Tree items also have sha
   url: string; // And URL
+}
+
+// NEW: Interface for GitHub Pull Request API response
+interface RawGitHubPullRequest {
+    id: number;
+    title: string;
+    user: {
+        login: string;
+    } | null;
+    state: 'open' | 'closed';
+    created_at: string;
+    updated_at: string;
+    closed_at: string | null;
+    merged_at: string | null;
 }
 
 
@@ -470,6 +484,39 @@ export class GitHubService {
         eventStream.close();
       }
     });
+  }
+
+  // ADDED: Method to fetch pull requests for the Gantt chart
+  async getPullRequests(owner: string, repo: string): Promise<PullRequestData[]> {
+    this.owner = owner;
+    this.repo = repo;
+    try {
+      const response = await axios.get<RawGitHubPullRequest[]>(
+        `${this.baseURL}/repos/${owner}/${repo}/pulls`,
+        {
+          params: { state: 'all', per_page: 100, sort: 'created', direction: 'desc' },
+          headers: this.getHeaders(),
+        }
+      );
+      return response.data.map(pr => {
+        let state: 'open' | 'closed' | 'merged' = pr.state;
+        if (pr.merged_at) {
+          state = 'merged';
+        }
+
+        return {
+          id: pr.id,
+          title: pr.title,
+          author: pr.user?.login || 'unknown',
+          state: state,
+          createdAt: pr.created_at,
+          closedAt: pr.closed_at,
+          mergedAt: pr.merged_at,
+        };
+      });
+    } catch (error) {
+      this.handleGitHubError(error, 'fetching pull requests');
+    }
   }
 }
 

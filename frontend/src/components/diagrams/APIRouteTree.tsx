@@ -1,214 +1,470 @@
-import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
-import { ServerCrash } from 'lucide-react'; // For error/empty state
-import ReactDOMServer from 'react-dom/server';
+import React, { useState } from 'react';
 
-export interface RouteNode { // Exporting for use in DiagramsPage if needed for type consistency
+// Interfaces
+export interface RouteNode {
   name: string;
   path: string;
   method?: string;
   children?: RouteNode[];
-  file?: string; // File where the route is defined
+  file?: string;
 }
 
 interface APIRouteTreeProps {
-  routes?: RouteNode; // Make routes optional to handle cases where it might be undefined
+  routes?: RouteNode;
   width?: number;
   height?: number;
 }
 
-const APIRouteTree = ({ routes, width = 800, height = 600 }: APIRouteTreeProps) => {
-  const svgRef = useRef<SVGSVGElement>(null);
+interface NodeDetails {
+  node: RouteNode;
+  connections: {
+    parent?: RouteNode;
+    children: RouteNode[];
+    siblings: RouteNode[];
+  };
+}
 
-  useEffect(() => {
-    if (!svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove(); // Clear previous render
+const NodeDetailModal: React.FC<{
+  details: NodeDetails | null;
+  onClose: () => void;
+}> = ({ details, onClose }) => {
+  if (!details) return null;
 
-    if (!routes || !routes.children || routes.children.length === 0) {
-      // Display empty state or error message
-      const g = svg
-        .attr("width", width)
-        .attr("height", height)
-        .append("g")
-        .attr("transform", `translate(${width / 2}, ${height / 2})`);
+  const { node, connections } = details;
 
-      const iconHtml = ReactDOMServer.renderToStaticMarkup(React.createElement(ServerCrash, { className: "w-16 h-16 text-gray-400" }));
-      g.append('g').attr('transform', 'translate(-32, -50)').html(iconHtml);
-      
-      g.append("text")
-        .attr("text-anchor", "middle")
-        .attr("dy", "0.35em")
-        .attr("y", 20)
-        .style("font-size", "14px")
-        .style("fill", "#6B7280") // gray-500
-        .text("No API route data available to display.");
-      return;
+  const getRequestDescription = (method?: string) => {
+    switch(method?.toUpperCase()) {
+      case 'GET': return 'Retrieves data from the server. Safe and idempotent operation.';
+      case 'POST': return 'Creates new resources on the server. Not idempotent.';
+      case 'PUT': return 'Updates or creates resources. Idempotent operation.';
+      case 'DELETE': return 'Removes resources from the server. Idempotent operation.';
+      case 'PATCH': return 'Partially updates existing resources. May not be idempotent.';
+      default: return 'Path segment - organizes API endpoints hierarchically.';
     }
-
-    const margin = { top: 20, right: 120, bottom: 80, left: 120 }; // Increased bottom margin for legend
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
-
-    const tree = d3.tree<RouteNode>()
-      .size([innerHeight, innerWidth]);
-
-    const root = d3.hierarchy(routes);
-    tree(root);
-
-    const g = svg
-      .attr("width", width)
-      .attr("height", height)
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    // Links
-    g.selectAll(".link")
-      .data(root.links())
-      .enter().append("path")
-      .attr("class", "link")
-      .attr("d", d3.linkHorizontal<d3.HierarchyLink<RouteNode>, d3.HierarchyPointNode<RouteNode>>()
-        .x(d => d.y)
-        .y(d => d.x))
-      .style("fill", "none")
-      .style("stroke", "#9CA3AF") // gray-400
-      .style("stroke-width", 1.5);
-
-    // Nodes
-    const node = g.selectAll(".node")
-      .data(root.descendants())
-      .enter().append("g")
-      .attr("class", (d: d3.HierarchyNode<RouteNode>) => `node ${d.children ? "node--internal" : "node--leaf"}`)
-      .attr("transform", (dNode: d3.HierarchyNode<RouteNode>) => {
-        const d = dNode as d3.HierarchyPointNode<RouteNode>;
-        return `translate(${d.y},${d.x})`;
-      });
-
-    node.append("circle")
-      .attr("r", (d: d3.HierarchyNode<RouteNode>) => d.data.method ? 7 : 5)
-      .style("fill", (d: d3.HierarchyNode<RouteNode>) => {
-        if (d.data.method) {
-          switch (d.data.method.toUpperCase()) {
-            case 'GET': return '#10B981'; // green-500
-            case 'POST': return '#3B82F6'; // blue-500
-            case 'PUT': return '#F59E0B'; // amber-500
-            case 'DELETE': return '#EF4444'; // red-500
-            case 'PATCH': return '#8B5CF6'; // violet-500
-            default: return '#6B7280'; // gray-500
-          }
-        }
-        return d.children ? '#4B5563' : '#9CA3AF'; // gray-700 for parent, gray-400 for segment
-      })
-      .style("stroke", "#fff")
-      .style("stroke-width", 1.5)
-      .style("cursor", "default") // No specific click action defined yet
-      .on("mouseover", function(event, d: d3.HierarchyNode<RouteNode>) { // Changed d to HierarchyNode
-        const dPoint = d as d3.HierarchyPointNode<RouteNode>; // Cast for properties if needed, though d.data is fine
-        d3.select(this)
-          .transition().duration(150)
-          .attr("r", dPoint.data.method ? 9 : 7)
-          .style("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.2))");
-
-        const tooltip = d3.select("body").append("div")
-          .attr("class", "tooltip") // Ensure this class is styled globally or via Tailwind
-          .style("position", "absolute")
-          .style("background", "rgba(0,0,0,0.85)")
-          .style("color", "white")
-          .style("padding", "8px 12px")
-          .style("border-radius", "6px")
-          .style("font-size", "12px")
-          .style("pointer-events", "none")
-          .style("opacity", 0)
-          .style("z-index", "1000")
-          .style("transition", "opacity 0.2s");
-
-        tooltip.html(`
-          <strong class="font-semibold block mb-0.5">${d.data.name}</strong>
-          ${d.data.method ? `<span class="text-xs uppercase font-medium px-1.5 py-0.5 rounded ${
-            d.data.method.toUpperCase() === 'GET' ? 'bg-green-600' :
-            d.data.method.toUpperCase() === 'POST' ? 'bg-blue-600' :
-            d.data.method.toUpperCase() === 'PUT' ? 'bg-amber-600' :
-            d.data.method.toUpperCase() === 'DELETE' ? 'bg-red-600' :
-            d.data.method.toUpperCase() === 'PATCH' ? 'bg-violet-600' : 'bg-gray-600'
-          }">${d.data.method.toUpperCase()}</span><br/>` : ''}
-          Path: <code class="text-xs">${d.data.path}</code><br/>
-          ${d.data.file ? `File: <span class="text-gray-300 text-xs">${d.data.file}</span>` : ''}
-        `)
-          .style("left", (event.pageX + 15) + "px")
-          .style("top", (event.pageY - 15) + "px")
-          .transition().duration(150)
-          .style("opacity", 1);
-      })
-      .on("mouseout", function(_event, d: d3.HierarchyNode<RouteNode>) { // Changed event to _event to indicate unused
-        const dPoint = d as d3.HierarchyPointNode<RouteNode>; // Cast for properties if needed
-        d3.select(this)
-          .transition().duration(150)
-          .attr("r", dPoint.data.method ? 7 : 5)
-          .style("filter", "none");
-        d3.selectAll(".tooltip").remove();
-      });
-
-    // Labels
-    node.append("text")
-      .attr("dy", "0.32em")
-      .attr("x", (dNode: d3.HierarchyNode<RouteNode>) => {
-        const d = dNode as d3.HierarchyPointNode<RouteNode>;
-        return d.children ? -10 : 10;
-      })
-      .style("text-anchor", (dNode: d3.HierarchyNode<RouteNode>) => {
-        const d = dNode as d3.HierarchyPointNode<RouteNode>;
-        return d.children ? "end" : "start";
-      })
-      .style("font-size", "11px")
-      .style("font-weight", (d: d3.HierarchyNode<RouteNode>) => d.data.method ? "600" : "400")
-      .style("fill", "#1F2937") // gray-800
-      .text((d: d3.HierarchyNode<RouteNode>) => {
-        const name = d.data.method ? `${d.data.method.toUpperCase()} ${d.data.name}` : d.data.name;
-        return name.length > 20 ? name.substring(0, 18) + "..." : name;
-      });
-
-    // Legend
-    const methods = [
-        { name: 'GET', color: '#10B981'}, 
-        { name: 'POST', color: '#3B82F6'}, 
-        { name: 'PUT', color: '#F59E0B'}, 
-        { name: 'DELETE', color: '#EF4444'}, 
-        { name: 'PATCH', color: '#8B5CF6'},
-        { name: 'Path Segment', color: '#4B5563'}
-    ];
-
-    const legend = svg.append("g")
-      .attr("class", "legend")
-      .attr("transform", `translate(${margin.left}, ${innerHeight + margin.top + 30})`); // Position legend below chart
-
-    const legendItem = legend.selectAll(".legend-item")
-      .data(methods)
-      .enter().append("g")
-      .attr("class", "legend-item")
-      .attr("transform", (_d, i) => `translate(${i * 110}, 0)`); // Changed d to _d if not used
-
-    legendItem.append("circle")
-      .attr("r", 5)
-      .style("fill", d => d.color);
-
-    legendItem.append("text")
-      .attr("x", 10)
-      .attr("y", 0)
-      .attr("dy", "0.32em")
-      .style("font-size", "10px")
-      .style("fill", "#374151") // gray-700
-      .text(d => d.name);
-
-  }, [routes, width, height]);
+  };
 
   return (
-    <div className="flex flex-col items-center p-4 bg-white rounded-lg shadow border border-gray-200">
-      <svg ref={svgRef} className="w-full h-auto" viewBox={`0 0 ${width} ${height}`}></svg>
-      <div className="mt-4 text-xs text-gray-500 text-center max-w-md">
-        <p>This tree visualizes the API route structure. Circles represent path segments or HTTP methods. Hover for details.</p>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900">Endpoint Details</h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        
+        <div className="p-6 space-y-6">
+          {/* Basic Info */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+              <p className="text-lg font-semibold text-gray-900">{node.name}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+              <div className="flex items-center space-x-2">
+                {node.method ? (
+                  <>
+                    <span className="text-lg">{getMethodIcon(node.method)}</span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getMethodColor(node.method)}`}>
+                      {node.method}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-lg">📁</span>
+                    <span className="text-gray-500">Path Segment</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Path</label>
+            <code className="block bg-gray-100 p-3 rounded-md text-sm font-mono text-gray-900">
+              {node.path}
+            </code>
+          </div>
+
+          {node.file && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Source File</label>
+              <code className="text-sm text-gray-700 bg-gray-100 px-2 py-1 rounded">{node.file}</code>
+            </div>
+          )}
+
+          {/* Request Description */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+            <div className="bg-blue-50 p-4 rounded-md">
+              <p className="text-sm text-blue-800">{getRequestDescription(node.method)}</p>
+            </div>
+          </div>
+
+          {/* Connections */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-900">Connections</h3>
+            
+            {connections.parent && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parent</label>
+                <div className="bg-gray-50 p-3 rounded-md">
+                  <div className="flex items-center space-x-2">
+                    <span>{connections.parent.method ? getMethodIcon(connections.parent.method) : '📁'}</span>
+                    <span className="font-medium">{connections.parent.name}</span>
+                    <code className="text-xs text-gray-500">{connections.parent.path}</code>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {connections.children.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Children ({connections.children.length})
+                </label>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {connections.children.map((child, index) => (
+                    <div key={index} className="bg-gray-50 p-2 rounded-md">
+                      <div className="flex items-center space-x-2">
+                        <span>{child.method ? getMethodIcon(child.method) : '📁'}</span>
+                        <span className="font-medium text-sm">{child.name}</span>
+                        {child.method && (
+                          <span className={`px-1.5 py-0.5 rounded-full text-xs ${getMethodColor(child.method)}`}>
+                            {child.method}
+                          </span>
+                        )}
+                        <code className="text-xs text-gray-500">{child.path}</code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {connections.siblings.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Siblings ({connections.siblings.length})
+                </label>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {connections.siblings.map((sibling, index) => (
+                    <div key={index} className="bg-gray-50 p-2 rounded-md">
+                      <div className="flex items-center space-x-2">
+                        <span>{sibling.method ? getMethodIcon(sibling.method) : '📁'}</span>
+                        <span className="font-medium text-sm">{sibling.name}</span>
+                        {sibling.method && (
+                          <span className={`px-1.5 py-0.5 rounded-full text-xs ${getMethodColor(sibling.method)}`}>
+                            {sibling.method}
+                          </span>
+                        )}
+                        <code className="text-xs text-gray-500">{sibling.path}</code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!connections.parent && connections.children.length === 0 && connections.siblings.length === 0 && (
+              <div className="text-center py-4 text-gray-500">
+                <p>No connections found</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
-export default APIRouteTree;
+const TreeNode: React.FC<{ 
+  node: RouteNode; 
+  level: number; 
+  isExpanded: boolean;
+  onToggle: () => void;
+  onNodeClick: () => void;
+}> = ({ node, level, isExpanded, onToggle, onNodeClick }) => {
+  const hasChildren = node.children && node.children.length > 0;
+  const indent = level * 20;
+  
+  const getMethodColor = (method?: string) => {
+    switch(method?.toUpperCase()) {
+      case 'GET': return 'text-green-600 bg-green-100';
+      case 'POST': return 'text-blue-600 bg-blue-100';
+      case 'PUT': return 'text-yellow-600 bg-yellow-100';
+      case 'DELETE': return 'text-red-600 bg-red-100';
+      case 'PATCH': return 'text-purple-600 bg-purple-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getMethodIcon = (method?: string) => {
+    switch(method?.toUpperCase()) {
+      case 'GET': return '📖'; // Book - reading data
+      case 'POST': return '➕'; // Plus - creating data
+      case 'PUT': return '✏️'; // Pencil - updating data
+      case 'DELETE': return '🗑️'; // Trash - deleting data
+      case 'PATCH': return '🔧'; // Wrench - modifying data
+      default: return '🔗'; // Link - generic endpoint
+    }
+  };
+
+  return (
+    <div className="select-none">
+      <div 
+        className="flex items-center py-1 px-2 hover:bg-gray-50 cursor-pointer rounded"
+        style={{ paddingLeft: `${indent + 8}px` }}
+        onClick={(e) => {
+          if (e.ctrlKey || e.metaKey) {
+            onNodeClick();
+          } else if (hasChildren) {
+            onToggle();
+          } else {
+            onNodeClick();
+          }
+        }}
+      >
+        {hasChildren && (
+          <span className="mr-2 text-gray-500 font-mono text-sm">
+            {isExpanded ? '▼' : '▶'}
+          </span>
+        )}
+        {!hasChildren && <span className="w-6"></span>}
+        
+        <div className="flex items-center space-x-2 flex-1" onClick={onNodeClick}>
+          <span className="text-lg mr-1">
+            {node.method ? getMethodIcon(node.method) : '📁'}
+          </span>
+          <span className="font-medium text-gray-900">
+            {node.name}
+          </span>
+          {node.method && (
+            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getMethodColor(node.method)}`}>
+              {node.method}
+            </span>
+          )}
+          {!node.method && (
+            <span className="text-xs text-gray-500 font-mono">{node.path}</span>
+          )}
+        </div>
+        
+        {node.file && (
+          <span className="text-xs text-gray-400 ml-auto">{node.file}</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ExpandableTree: React.FC<{ 
+  node: RouteNode; 
+  level?: number;
+  expandedNodes: Set<string>;
+  onToggle: (path: string) => void;
+  onNodeClick: (node: RouteNode, parent?: RouteNode, siblings?: RouteNode[]) => void;
+  parent?: RouteNode;
+  siblings?: RouteNode[];
+}> = ({ node, level = 0, expandedNodes, onToggle, onNodeClick, parent, siblings = [] }) => {
+  const hasChildren = node.children && node.children.length > 0;
+  const isExpanded = expandedNodes.has(node.path);
+
+  return (
+    <div>
+      <TreeNode
+        node={node}
+        level={level}
+        isExpanded={isExpanded}
+        onToggle={() => onToggle(node.path)}
+        onNodeClick={() => onNodeClick(node, parent, siblings)}
+      />
+      {hasChildren && isExpanded && (
+        <div>
+          {node.children!.map((child, index) => (
+            <ExpandableTree
+              key={`${child.path}-${index}`}
+              node={child}
+              level={level + 1}
+              expandedNodes={expandedNodes}
+              onToggle={onToggle}
+              onNodeClick={onNodeClick}
+              parent={node}
+              siblings={node.children!.filter((_, i) => i !== index)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default function APIRouteTree({ routes }: APIRouteTreeProps) {
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(['/api']));
+  const [nodeDetails, setNodeDetails] = useState<NodeDetails | null>(null);
+  const [showModal, setShowModal] = useState(false);
+
+  const toggleNode = (path: string) => {
+    setExpandedNodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(path)) {
+        newSet.delete(path);
+      } else {
+        newSet.add(path);
+      }
+      return newSet;
+    });
+  };
+
+  const expandAll = () => {
+    if (!routes) return;
+    const allPaths = new Set<string>();
+    
+    const collectPaths = (node: RouteNode) => {
+      allPaths.add(node.path);
+      if (node.children) {
+        node.children.forEach(collectPaths);
+      }
+    };
+    
+    collectPaths(routes);
+    setExpandedNodes(allPaths);
+  };
+
+  const collapseAll = () => {
+    setExpandedNodes(new Set(['/api']));
+  };
+
+  const getMethodColor = (method?: string) => {
+    switch(method?.toUpperCase()) {
+      case 'GET': return 'text-green-600 bg-green-100';
+      case 'POST': return 'text-blue-600 bg-blue-100';
+      case 'PUT': return 'text-yellow-600 bg-yellow-100';
+      case 'DELETE': return 'text-red-600 bg-red-100';
+      case 'PATCH': return 'text-purple-600 bg-purple-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getMethodIcon = (method?: string) => {
+    switch(method?.toUpperCase()) {
+      case 'GET': return '📖';
+      case 'POST': return '➕';
+      case 'PUT': return '✏️';
+      case 'DELETE': return '🗑️';
+      case 'PATCH': return '🔧';
+      default: return '🔗';
+    }
+  };
+
+  const handleNodeClick = (node: RouteNode, parent?: RouteNode, siblings: RouteNode[] = []) => {
+    setNodeDetails({
+      node,
+      connections: {
+        parent,
+        children: node.children || [],
+        siblings
+      }
+    });
+    setShowModal(true);
+  };
+
+  if (!routes) {
+    return (
+      <div className="flex items-center justify-center h-64 text-gray-500">
+        <div className="text-center">
+          <div className="text-4xl mb-2">🌳</div>
+          <p>No API routes found</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full bg-white rounded-lg shadow border overflow-auto">
+      {/* Controls */}
+      <div className="flex items-center justify-between p-4 border-b bg-gray-50">
+        <h3 className="text-lg font-semibold text-gray-900">API Route Tree</h3>
+        <div className="flex space-x-2">
+          <button
+            onClick={expandAll}
+            className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={collapseAll}
+            className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+          >
+            Collapse All
+          </button>
+        </div>
+      </div>
+
+      {/* Tree */}
+      <div className="p-4">
+        <div className="mb-4 text-sm text-gray-600">
+          <div className="flex items-center space-x-4">
+            <span>📁 = Path segment</span>
+            <span>📖 = GET</span>
+            <span>➕ = POST</span>
+            <span>✏️ = PUT</span>
+            <span>🗑️ = DELETE</span>
+            <span>🔧 = PATCH</span>
+          </div>
+        </div>
+         <ExpandableTree
+           node={routes}
+           expandedNodes={expandedNodes}
+           onToggle={toggleNode}
+           onNodeClick={handleNodeClick}
+         />
+       </div>
+
+      {/* Legend */}
+      <div className="border-t p-4 bg-gray-50">
+        <div className="flex flex-wrap gap-3 text-sm">
+          <div className="flex items-center gap-1">
+            <span className="px-2 py-1 rounded-full text-xs font-semibold text-green-600 bg-green-100">GET</span>
+            <span className="text-gray-600">Read data</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="px-2 py-1 rounded-full text-xs font-semibold text-blue-600 bg-blue-100">POST</span>
+            <span className="text-gray-600">Create data</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="px-2 py-1 rounded-full text-xs font-semibold text-yellow-600 bg-yellow-100">PUT</span>
+            <span className="text-gray-600">Update data</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="px-2 py-1 rounded-full text-xs font-semibold text-red-600 bg-red-100">DELETE</span>
+            <span className="text-gray-600">Remove data</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal */}
+      <NodeDetailModal
+        details={nodeDetails}
+        onClose={() => {
+          setShowModal(false);
+          setNodeDetails(null);
+        }}
+      />
+    </div>
+  );
+}
