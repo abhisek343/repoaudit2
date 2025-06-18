@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { AnalysisService } from '../services/analysisService';
@@ -56,14 +55,17 @@ const FeatureMatrixPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-900 mb-4">Feature-to-File Mapping Matrix</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Features vs. Code Files</h1>
+        <p className="text-gray-700 mb-6">
+          This interactive chart shows which features (described in your .feature files) are implemented by which code files. Each colored cell indicates that a feature and a file are linked—helpful for understanding how high-level requirements map to your code.
+        </p>
         <div className="bg-white shadow-lg rounded-lg p-4 overflow-x-auto">
           {featureMatrixData.length > 0 ? (
             <FeatureFileMatrix data={featureMatrixData} width={1200} height={800} />
           ) : (
             <ErrorDisplay 
-              title="No Data Available"
-              message="The analysis did not generate any data for the feature-file matrix."
+              title="No Feature Data"
+              message="We couldn't find any feature-to-file mappings. Try running the analysis again or check your project's feature files."
             />
           )}
         </div>

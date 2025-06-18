@@ -202,6 +202,35 @@ const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }
       .style('font-size', '11px')
       .text(d => d.length > 20 ? d.substring(0, 20) + '...' : d);
 
+    // Enable zoom and pan
+    const zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([1, 8])
+      .on('zoom', (event) => {
+        container.attr('transform', event.transform);
+      });
+    svg.call(zoomBehavior);
+
+    // Add gridlines for better readability
+    const xAxisGrid = d3.axisBottom(xScale)
+      .tickSize(-innerHeight)
+      .tickFormat(() => '');
+    const yAxisGrid = d3.axisLeft(yScale)
+      .tickSize(-innerWidth)
+      .tickFormat(() => '');
+
+    container.append('g')
+      .attr('class', 'x grid')
+      .attr('transform', `translate(0, ${innerHeight})`)
+      .call(xAxisGrid)
+      .selectAll('line')
+      .style('stroke', '#ddd');
+
+    container.append('g')
+      .attr('class', 'y grid')
+      .call(yAxisGrid)
+      .selectAll('line')
+      .style('stroke', '#ddd');
+
     // Cleanup tooltip on unmount
     return () => {
       d3.select('.feature-matrix-tooltip').remove();
