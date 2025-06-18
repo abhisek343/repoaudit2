@@ -13,7 +13,6 @@ interface Props {
 
 const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }) => {
   const ref = useRef<SVGSVGElement>(null);
-
   useEffect(() => {
     if (!data || data.length === 0 || !ref.current) {
       console.log('[FeatureFileMatrix] No data available:', { data, length: data?.length });
@@ -34,7 +33,9 @@ const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }
         const bCount = data.filter(d => d.sourceFiles.includes(b)).length;
         return bCount - aCount;
       })
-      .slice(0, 30); // Limit files for better visualization
+      .slice(0, 50); // Increased from 30 to 50 for better visualization
+    
+    console.log(`[FeatureFileMatrix] Processing ${features.length} features and ${allFiles.length} files`);
     
     // Create matrix data structure
     const matrixData: { feature: string; file: string; value: number }[] = [];
@@ -49,6 +50,8 @@ const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }
         }
       });
     });
+
+    console.log(`[FeatureFileMatrix] Created ${matrixData.length} matrix cells`);
 
     // Set up dimensions
     const margin = { top: 100, right: 50, bottom: 200, left: 250 };
@@ -131,15 +134,17 @@ const FeatureFileMatrix: React.FC<Props> = ({ data, width = 1000, height = 700 }
       .on('mouseout', function() {
         d3.select(this).style('opacity', 0.7).style('stroke-width', 1);
         tooltip.style('visibility', 'hidden');
-      });
-
-    // Add Y axis (features)
+      });    // Add Y axis (features)
     container.append('g')
       .call(d3.axisLeft(yScale))
       .selectAll('text')
       .style('fill', 'var(--text-color-secondary)')
-      .style('font-size', '11px')
-      .style('font-weight', '500');
+      .style('font-size', '10px')
+      .style('font-weight', '500')
+      .text(function(d) { 
+        const text = d as string;
+        return text.length > 25 ? text.substring(0, 25) + '...' : text;
+      }); // Truncate long feature names
 
     // Add X axis (files) - rotated labels
     container.append('g')

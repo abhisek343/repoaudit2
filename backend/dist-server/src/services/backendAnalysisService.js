@@ -594,7 +594,7 @@ class BackendAnalysisService {
             this.addWarning('Dependency Parsing', 'Could not parse package.json.', e);
         }
         onProgress('Processing files with content', 50);
-        const MAX_CONTENT = 200;
+        const MAX_CONTENT = Number(process.env.MAX_CONTENT) || 800; // Increased from 200 to 800
         const MAX_FILE_SIZE = 200 * 1024;
         const repoTreeWithPaths = repoTree.map(f => ({ path: f.path }));
         const rawFiles = repoTree.filter(f => f.type === 'file' && f.size < MAX_FILE_SIZE).slice(0, MAX_CONTENT);
@@ -796,13 +796,19 @@ class BackendAnalysisService {
             });
         }
         onProgress('Running advanced analysis', 70);
-        const [securityIssues, technicalDebt, performanceMetrics, apiEndpoints, pullRequests] = await Promise.all([
+        console.log(`[Analysis] Starting advanced analysis with ${files.length} files`);
+        const [securityIssues, technicalDebt, performanceMetrics, apiEndpoints, pullRequests, featureFileMatrix] = await Promise.all([
             this.advancedAnalysisService.analyzeSecurityIssues(files),
             this.advancedAnalysisService.analyzeTechnicalDebt(files),
             this.advancedAnalysisService.analyzePerformanceMetrics(files),
             this.advancedAnalysisService.detectAPIEndpoints(files),
-            this.githubService.getPullRequests(owner, repo) // Fetch PR data
+            this.githubService.getPullRequests(owner, repo), // Fetch PR data
+            this.advancedAnalysisService.analyzeFeatureFileMatrix(files)
         ]);
+        console.log(`[Analysis] Feature file matrix generated: ${featureFileMatrix.length} mappings`);
+        featureFileMatrix.forEach((mapping, i) => {
+            console.log(`[Analysis] Feature ${i + 1}: ${mapping.featureFile} -> ${mapping.sourceFiles.length} files`);
+        });
         // Add fallback for API endpoints if LLM fails
         if (apiEndpoints.length === 0) {
             apiEndpoints.push(...this.generateFallbackAPIEndpoints(files));
@@ -818,7 +824,6 @@ class BackendAnalysisService {
         // Call NEW data generators with error handling
         let temporalCouplings = [];
         let transformationFlows = { nodes: [], links: [] };
-        let featureFileMatrix = [];
         let gitGraph = { nodes: [], links: [] };
         let processedPullRequests = [];
         try {
@@ -842,26 +847,6 @@ class BackendAnalysisService {
                 message: 'Failed to generate data transformation flows',
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
-        }
-        try {
-            featureFileMatrix = this.generateFeatureFileMatrix(files);
-            // Ensure we always have some data for the feature matrix
-            if (featureFileMatrix.length === 0 && files.length > 0) {
-                console.log('[Analysis] No feature matrix generated, creating fallback data');
-                featureFileMatrix = this.createFallbackFeatureMatrix(files);
-            }
-        }
-        catch (error) {
-            console.error('[Analysis] Error generating feature file matrix:', error);
-            this.analysisWarnings.push({
-                step: 'Feature File Matrix Generation',
-                message: 'Failed to generate feature file matrix',
-                error: error instanceof Error ? error.message : 'Unknown error'
-            });
-            // Provide fallback even on error
-            if (files.length > 0) {
-                featureFileMatrix = this.createFallbackFeatureMatrix(files);
-            }
         }
         try {
             gitGraph = this.generateGitGraphData(commits); // Use original commits with parent info
@@ -955,33 +940,18 @@ class BackendAnalysisService {
             keyFunctions: generatedKeyFunctions,
             apiEndpoints,
             aiSummary,
-            architectureAnalysis: aiArchitectureDescription,
-            metrics: summaryMetrics,
+            architectureAnalysis: aiArchitectureDescription, metrics: summaryMetrics,
             analysisWarnings: this.analysisWarnings,
             dependencyWheelData,
             fileSystemTree,
             churnSunburstData,
             contributorStreamData,
-            // ADDED: New diagram data
             temporalCouplings,
             transformationFlows,
             featureFileMatrix,
             pullRequests: processedPullRequests,
-            gitGraph, // ADDED: Advanced analysis object for frontend compatibility
-            advancedAnalysis: {
-                securityIssues,
-                technicalDebt,
-                performanceMetrics,
-                apiEndpoints,
-                temporalCouplings,
-                transformationFlows,
-                featureFileMatrix,
-                pullRequests: processedPullRequests,
-                gitGraph,
-            },
+            gitGraph,
         };
-        console.log('[Backend Analysis] Feature matrix data:', featureFileMatrix.length, 'items');
-        console.log('[Backend Analysis] Advanced analysis keys:', Object.keys(result.advancedAnalysis || {}));
         return result;
     }
     detectLanguage(filePath) {
@@ -1086,7 +1056,6 @@ class BackendAnalysisService {
             f.path.includes('controller') ||
             f.path.includes('endpoint') ||
             f.path.includes('handler') ||
-            f.path.includes('service') ||
             f.name.match(/\.(ts|js|py|go|java|rb|php)$/i));
         apiFiles.forEach(file => {
             if (file.content) {
@@ -1568,154 +1537,6 @@ Provide a professional, well-structured architectural overview in 3-4 paragraphs
             };
         }
         return { nodes, links };
-    }
-    generateFeatureFileMatrix(files) {
-        const featureFiles = files.filter(f => f.path.endsWith('.feature'));
-        const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-        const matrix = [];
-        if (featureFiles.length === 0) {
-            // Generate feature-to-code mapping based on file analysis
-            const features = this.inferFeaturesFromFileStructure(files);
-            console.log(`[Feature Matrix] Generated ${features.length} features from file structure`);
-            return features;
-        }
-        featureFiles.forEach(featureFile => {
-            const linkedSourceFiles = new Set();
-            // Simple logic: link if feature file name part appears in source file name
-            const featureName = path.basename(featureFile.name, '.feature').toLowerCase();
-            sourceFiles.forEach(sourceFile => {
-                if (sourceFile.name.toLowerCase().includes(featureName)) {
-                    linkedSourceFiles.add(sourceFile.path);
-                }
-            });
-            if (linkedSourceFiles.size > 0) {
-                matrix.push({
-                    featureFile: featureFile.path,
-                    sourceFiles: Array.from(linkedSourceFiles),
-                });
-            }
-        });
-        console.log(`[Feature Matrix] Generated ${matrix.length} feature file mappings`);
-        return matrix;
-    }
-    inferFeaturesFromFileStructure(files) {
-        const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-        const featureMap = new Map();
-        console.log(`[Feature Inference V2] Processing ${sourceFiles.length} source files`);
-        if (sourceFiles.length === 0) {
-            console.log('[Feature Inference V2] No source files found to infer features from.');
-            return [];
-        }
-        sourceFiles.forEach(file => {
-            const dir = path.dirname(file.path);
-            if (dir === '.' || dir === '') {
-                this.addToFeatureMap(featureMap, 'Root Files', file.path);
-                return;
-            }
-            // Create a more human-readable feature name from the path
-            const featureName = dir
-                .replace(/\\/g, '/') // Normalize separators
-                .split('/')
-                .filter(p => p.length > 0 && p !== 'src' && p !== 'app') // Filter out common noise
-                .map(part => part.charAt(0).toUpperCase() + part.slice(1)) // Capitalize each part
-                .join(' / ');
-            if (featureName) {
-                this.addToFeatureMap(featureMap, featureName, file.path);
-            }
-            else {
-                this.addToFeatureMap(featureMap, 'Core Logic', file.path);
-            }
-        });
-        const result = Array.from(featureMap.entries())
-            .map(([feature, files]) => ({
-            featureFile: feature,
-            sourceFiles: files
-        }))
-            .filter(item => item.sourceFiles.length > 0)
-            .sort((a, b) => b.sourceFiles.length - a.sourceFiles.length);
-        console.log(`[Feature Inference V2] Generated ${result.length} raw features.`);
-        // Consolidate small features
-        const MIN_FILES_FOR_FEATURE = 2;
-        const finalResult = [];
-        const miscFeature = {
-            featureFile: 'Miscellaneous Modules',
-            sourceFiles: []
-        };
-        for (const feature of result) {
-            if (feature.sourceFiles.length >= MIN_FILES_FOR_FEATURE) {
-                finalResult.push(feature);
-            }
-            else {
-                miscFeature.sourceFiles.push(...feature.sourceFiles);
-            }
-        }
-        if (miscFeature.sourceFiles.length > 0) {
-            finalResult.push(miscFeature);
-        }
-        if (finalResult.length === 0 && sourceFiles.length > 0) {
-            console.log('[Feature Inference V2] No features met criteria, creating a single fallback feature.');
-            return [{
-                    featureFile: 'Main Application',
-                    sourceFiles: sourceFiles.map(f => f.path)
-                }];
-        }
-        console.log(`[Feature Inference V2] Final result has ${finalResult.length} features.`);
-        return finalResult.sort((a, b) => b.sourceFiles.length - a.sourceFiles.length);
-    }
-    addToFeatureMap(featureMap, feature, filePath) {
-        if (!featureMap.has(feature)) {
-            featureMap.set(feature, []);
-        }
-        featureMap.get(feature).push(filePath);
-    }
-    createFallbackFeatureMatrix(files) {
-        const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-        if (sourceFiles.length === 0) {
-            return [];
-        }
-        console.log(`[Fallback Feature Matrix] Creating fallback with ${sourceFiles.length} source files`);
-        // Create basic features based on common patterns
-        const features = [
-            {
-                featureFile: 'Frontend Components',
-                sourceFiles: sourceFiles
-                    .filter(f => f.path.includes('component') || f.path.includes('ui'))
-                    .map(f => f.path)
-                    .slice(0, 10)
-            },
-            {
-                featureFile: 'Backend Services',
-                sourceFiles: sourceFiles
-                    .filter(f => f.path.includes('service') || f.path.includes('api') || f.path.includes('backend'))
-                    .map(f => f.path)
-                    .slice(0, 10)
-            },
-            {
-                featureFile: 'Configuration & Utils',
-                sourceFiles: sourceFiles
-                    .filter(f => f.path.includes('config') || f.path.includes('util') || f.path.includes('helper'))
-                    .map(f => f.path)
-                    .slice(0, 10)
-            },
-            {
-                featureFile: 'Main Application',
-                sourceFiles: sourceFiles
-                    .filter(f => !f.path.includes('test') && !f.path.includes('spec'))
-                    .map(f => f.path)
-                    .slice(0, 15)
-            }
-        ];
-        // Filter out empty features and ensure we have at least one
-        const nonEmptyFeatures = features.filter(f => f.sourceFiles.length > 0);
-        if (nonEmptyFeatures.length === 0) {
-            // Last resort: create a single feature with all source files
-            return [{
-                    featureFile: 'All Source Files',
-                    sourceFiles: sourceFiles.map(f => f.path).slice(0, 20)
-                }];
-        }
-        console.log(`[Fallback Feature Matrix] Generated ${nonEmptyFeatures.length} fallback features`);
-        return nonEmptyFeatures;
     }
     processPullRequestData(pullRequests) {
         return pullRequests.map(pr => {

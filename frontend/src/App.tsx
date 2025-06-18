@@ -6,6 +6,7 @@ import AnalyzePage from './pages/AnalyzePage';
 import ReportPage from './pages/ReportPage';
 import DashboardPage from './pages/DashboardPage';
 import APITreePage from './pages/APITreePage';
+import FeatureMatrixPage from './pages/FeatureMatrixPage'; // Import the new page
 import { AnalysisService } from './services/analysisService';
 import { initializeStorage } from './services/storageService';
 
@@ -64,6 +65,10 @@ function App() {
     {
       path: "/api-tree/:reportId",
       element: <APITreePage />,
+    },
+    {
+      path: "/feature-matrix/:reportId",
+      element: <FeatureMatrixPage />,
     },
   ]);
 

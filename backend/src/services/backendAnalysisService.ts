@@ -5,9 +5,8 @@ import {
   AnalysisResult, FileInfo, LLMConfig, Repository, Commit, Contributor, BasicRepositoryInfo,
   ProcessedCommit, ProcessedContributor, DependencyInfo, ArchitectureData, QualityMetrics,
   Hotspot, KeyFunction, SecurityIssue, TechnicalDebt, APIEndpoint, FileNode,
-  ChurnNode, FunctionInfo, FileMetrics, AnalysisWarning, FunctionParameter,
-  // ADDED: Import new types for advanced diagrams
-  TemporalCoupling, SankeyData, SankeyNode, SankeyLink, FeatureFileMatrixItem, PullRequestData, GitGraphData, GitGraphLink
+  ChurnNode, FunctionInfo, FileMetrics, AnalysisWarning, FunctionParameter,  // ADDED: Import new types for advanced diagrams
+  TemporalCoupling, SankeyData, SankeyNode, SankeyLink, PullRequestData, GitGraphData, GitGraphLink
 } from '../types';
 // @ts-ignore - escomplex doesn't have TypeScript definitions
 import { analyse } from 'escomplex';
@@ -625,9 +624,8 @@ export class BackendAnalysisService {
   } catch (e) {
     this.addWarning('Dependency Parsing', 'Could not parse package.json.', e);
   }
-
   onProgress('Processing files with content', 50);
-  const MAX_CONTENT = 200;
+  const MAX_CONTENT = Number(process.env.MAX_CONTENT) || 800; // Increased from 200 to 800
   const MAX_FILE_SIZE = 200 * 1024;
 
   const repoTreeWithPaths = repoTree.map(f => ({ path: f.path }));
@@ -842,13 +840,21 @@ export class BackendAnalysisService {
       }
     });
   }    onProgress('Running advanced analysis', 70);
-    const [securityIssues, technicalDebt, performanceMetrics, apiEndpoints, pullRequests] = await Promise.all([
+    console.log(`[Analysis] Starting advanced analysis with ${files.length} files`);
+    
+    const [securityIssues, technicalDebt, performanceMetrics, apiEndpoints, pullRequests, featureFileMatrix] = await Promise.all([
         this.advancedAnalysisService.analyzeSecurityIssues(files),
         this.advancedAnalysisService.analyzeTechnicalDebt(files),
         this.advancedAnalysisService.analyzePerformanceMetrics(files),
         this.advancedAnalysisService.detectAPIEndpoints(files),
-        this.githubService.getPullRequests(owner, repo) // Fetch PR data
+        this.githubService.getPullRequests(owner, repo), // Fetch PR data
+        this.advancedAnalysisService.analyzeFeatureFileMatrix(files)
     ]);
+    
+    console.log(`[Analysis] Feature file matrix generated: ${featureFileMatrix.length} mappings`);
+    featureFileMatrix.forEach((mapping, i) => {
+      console.log(`[Analysis] Feature ${i + 1}: ${mapping.featureFile} -> ${mapping.sourceFiles.length} files`);
+    });
     
     // Add fallback for API endpoints if LLM fails
     if (apiEndpoints.length === 0) {
@@ -867,7 +873,6 @@ export class BackendAnalysisService {
     // Call NEW data generators with error handling
     let temporalCouplings: TemporalCoupling[] = [];
     let transformationFlows: SankeyData = { nodes: [], links: [] };
-    let featureFileMatrix: FeatureFileMatrixItem[] = [];
     let gitGraph: GitGraphData = { nodes: [], links: [] };
     let processedPullRequests: PullRequestData[] = [];    try {
         temporalCouplings = this.generateTemporalCouplings(processedCommits);
@@ -887,17 +892,6 @@ export class BackendAnalysisService {
         this.analysisWarnings.push({
             step: 'Data Transformation Generation',
             message: 'Failed to generate data transformation flows',
-            error: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-
-    try {
-        featureFileMatrix = this.generateFeatureFileMatrix(files);
-    } catch (error) {
-        console.error('[Analysis] Error generating feature file matrix:', error);
-        this.analysisWarnings.push({
-            step: 'Feature File Matrix Generation',
-            message: 'Failed to generate feature file matrix',
             error: error instanceof Error ? error.message : 'Unknown error'
         });
     }
@@ -992,14 +986,12 @@ export class BackendAnalysisService {
     keyFunctions: generatedKeyFunctions,
     apiEndpoints,
     aiSummary,
-    architectureAnalysis: aiArchitectureDescription, 
-    metrics: summaryMetrics,
+    architectureAnalysis: aiArchitectureDescription,    metrics: summaryMetrics,
     analysisWarnings: this.analysisWarnings, 
     dependencyWheelData,
     fileSystemTree,
     churnSunburstData,
     contributorStreamData,
-    // ADDED: New diagram data
     temporalCouplings,
     transformationFlows,
     featureFileMatrix,
@@ -1689,176 +1681,10 @@ Provide a professional, well-structured architectural overview in 3-4 paragraphs
                 { source: 'Transform', target: 'Load', value: 8 },
                 { source: 'Enrich', target: 'Load', value: 2 },
             ],
-        };
-    }
-    
-    return { nodes, links };
-  }    private generateFeatureFileMatrix(files: FileInfo[]): FeatureFileMatrixItem[] {
-      const featureFiles = files.filter(f => f.path.endsWith('.feature'));
-      const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-      const matrix: FeatureFileMatrixItem[] = [];
-
-      if (featureFiles.length === 0) {
-        // Generate feature-to-code mapping based on file analysis
-        const features = this.inferFeaturesFromFileStructure(files);
-        console.log(`[Feature Matrix] Generated ${features.length} features from file structure`);
-        return features;
-      }
-      
-      featureFiles.forEach(featureFile => {
-          const linkedSourceFiles = new Set<string>();
-          // Simple logic: link if feature file name part appears in source file name
-          const featureName = path.basename(featureFile.name, '.feature').toLowerCase();
-          sourceFiles.forEach(sourceFile => {
-              if (sourceFile.name.toLowerCase().includes(featureName)) {
-                  linkedSourceFiles.add(sourceFile.path);
-              }
-          });
-          if (linkedSourceFiles.size > 0) {
-              matrix.push({
-                  featureFile: featureFile.path,
-                  sourceFiles: Array.from(linkedSourceFiles),
-              });
-          }
-      });
-
-      console.log(`[Feature Matrix] Generated ${matrix.length} feature file mappings`);
-      return matrix;
-  }
-  private inferFeaturesFromFileStructure(files: FileInfo[]): FeatureFileMatrixItem[] {
-      const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-      const featureMap = new Map<string, string[]>();
-
-      console.log(`[Feature Inference] Processing ${sourceFiles.length} source files`);      sourceFiles.forEach(file => {
-          const pathParts = file.path.split('/').map(p => p.toLowerCase());
-          const fileName = file.name.toLowerCase();
-          
-          // Enhanced feature detection based on project structure
-          let featureAssigned = false;
-
-          // Authentication & Security
-          if (this.matchesPattern(fileName, pathParts, ['auth', 'login', 'signup', 'security', 'jwt', 'token'])) {
-              this.addToFeatureMap(featureMap, 'Authentication & Security', file.path);
-              featureAssigned = true;
-          }
-          
-          // User Management & Profiles
-          else if (this.matchesPattern(fileName, pathParts, ['user', 'profile', 'account', 'member'])) {
-              this.addToFeatureMap(featureMap, 'User Management', file.path);
-              featureAssigned = true;
-          }
-          
-          // Dashboard & Home
-          else if (this.matchesPattern(fileName, pathParts, ['dashboard', 'home', 'main', 'index']) && 
-                   !fileName.includes('test') && !fileName.includes('spec')) {
-              this.addToFeatureMap(featureMap, 'Dashboard & Home', file.path);
-              featureAssigned = true;
-          }
-          
-          // Analytics & Reporting
-          else if (this.matchesPattern(fileName, pathParts, ['analytics', 'metric', 'report', 'chart', 'graph', 'data', 'analysis'])) {
-              this.addToFeatureMap(featureMap, 'Analytics & Reporting', file.path);
-              featureAssigned = true;
-          }
-          
-          // API & Backend Services
-          else if (this.matchesPattern(fileName, pathParts, ['api', 'route', 'controller', 'endpoint', 'server']) ||
-                   pathParts.includes('backend') || pathParts.includes('api')) {
-              this.addToFeatureMap(featureMap, 'API & Backend Services', file.path);
-              featureAssigned = true;
-          }
-          
-          // Data Processing & Services
-          else if (this.matchesPattern(fileName, pathParts, ['service', 'processor', 'handler', 'manager', 'helper']) ||
-                   pathParts.includes('services')) {
-              this.addToFeatureMap(featureMap, 'Data Processing & Services', file.path);
-              featureAssigned = true;
-          }
-          
-          // UI Components & Layouts
-          else if (this.matchesPattern(fileName, pathParts, ['component', 'layout', 'widget', 'modal', 'dialog', 'form']) ||
-                   pathParts.includes('components') || pathParts.includes('ui')) {
-              this.addToFeatureMap(featureMap, 'UI Components & Layouts', file.path);
-              featureAssigned = true;
-          }
-          
-          // Visualization & Diagrams
-          else if (this.matchesPattern(fileName, pathParts, ['diagram', 'visual', 'chart', 'graph', 'plot', 'd3', 'svg']) ||
-                   pathParts.includes('diagrams') || pathParts.includes('visualization')) {
-              this.addToFeatureMap(featureMap, 'Visualization & Diagrams', file.path);
-              featureAssigned = true;
-          }
-          
-          // Configuration & Setup
-          else if (this.matchesPattern(fileName, pathParts, ['config', 'setting', 'env', 'constant']) ||
-                   fileName.includes('.config.') || pathParts.includes('config')) {
-              this.addToFeatureMap(featureMap, 'Configuration & Setup', file.path);
-              featureAssigned = true;
-          }
-          
-          // Testing & Quality
-          else if (this.matchesPattern(fileName, pathParts, ['test', 'spec', 'mock', 'stub']) ||
-                   pathParts.includes('test') || pathParts.includes('tests')) {
-              this.addToFeatureMap(featureMap, 'Testing & Quality Assurance', file.path);
-              featureAssigned = true;
-          }
-          
-          // Utilities & Helpers
-          else if (this.matchesPattern(fileName, pathParts, ['util', 'helper', 'lib', 'common', 'shared'])) {
-              this.addToFeatureMap(featureMap, 'Utilities & Helpers', file.path);
-              featureAssigned = true;
-          }
-          
-          // Type Definitions & Interfaces
-          else if (this.matchesPattern(fileName, pathParts, ['type', 'interface', 'model', 'schema']) ||
-                   fileName.endsWith('.d.ts') || pathParts.includes('types')) {
-              this.addToFeatureMap(featureMap, 'Type Definitions & Models', file.path);
-              featureAssigned = true;
-          }
-
-          // If no specific feature assigned, categorize by directory structure
-          if (!featureAssigned) {
-              if (pathParts.includes('frontend') || pathParts.includes('src')) {
-                  this.addToFeatureMap(featureMap, 'Frontend Core', file.path);
-              } else if (pathParts.includes('backend')) {
-                  this.addToFeatureMap(featureMap, 'Backend Core', file.path);
-              } else {
-                  this.addToFeatureMap(featureMap, 'Core Infrastructure', file.path);
-              }
-          }
-      });
-
-      // Convert to FeatureFileMatrixItem array and sort by feature size
-      const result = Array.from(featureMap.entries())
-          .map(([feature, files]) => ({
-              featureFile: feature,
-              sourceFiles: files.slice(0, 25) // Limit to prevent overwhelming visualization
-          }))
-          .filter(item => item.sourceFiles.length > 0)
-          .sort((a, b) => b.sourceFiles.length - a.sourceFiles.length); // Sort by number of files
-
-      console.log(`[Feature Inference] Generated ${result.length} features:`);
-      result.forEach(feature => {
-          console.log(`  - ${feature.featureFile}: ${feature.sourceFiles.length} files`);
-      });
-
-      return result;
+        };    }
+      return { nodes, links };
   }
 
-  private matchesPattern(fileName: string, pathParts: string[], patterns: string[]): boolean {
-      return patterns.some(pattern => 
-          fileName.includes(pattern) || 
-          pathParts.some(part => part.includes(pattern))
-      );
-  }
-
-  private addToFeatureMap(featureMap: Map<string, string[]>, feature: string, filePath: string): void {
-      if (!featureMap.has(feature)) {
-          featureMap.set(feature, []);
-      }
-      featureMap.get(feature)!.push(filePath);
-  }
-  
   private processPullRequestData(pullRequests: PullRequestData[]): PullRequestData[] {
       return pullRequests.map(pr => {
           let timeToMergeHours: number | null = null;

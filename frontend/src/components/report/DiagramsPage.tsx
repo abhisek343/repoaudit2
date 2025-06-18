@@ -395,14 +395,14 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
           <EmptyState message="No API endpoint data available." />
         );
       }      case 'feature-matrix': {
-        // Use the actual featureFileMatrix data from advancedAnalysis
-        const fmData = reportData?.advancedAnalysis?.featureFileMatrix || [];
+        // Use the actual featureFileMatrix data from the top-level reportData
+        const fmData = reportData.featureFileMatrix || [];
         return fmData.length > 0 ? (
           <div className="w-full h-full">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Feature-File Matrix</h3>
               <button 
-                onClick={() => navigate('/feature-matrix')}
+                onClick={() => navigate(`/feature-matrix/${reportData.id}`, { state: { reportData } })}
                 className="flex items-center gap-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
                 <ExternalLink className="w-4 h-4" />
