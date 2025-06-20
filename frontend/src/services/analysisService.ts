@@ -1,5 +1,4 @@
 import { LLMConfig, AnalysisResult, Contributor, ArchitectureData, BasicRepositoryInfo, RepositoryData, FileInfo, ProcessedCommit, Hotspot, SecurityIssue, TechnicalDebtItem, PerformanceMetric, KeyFunction, APIEndpoint, QualityMetrics, AnalysisWarning } from '../types';
-import { ChurnNode, FileNode } from '../types/advanced'; // Ensure ChurnNode and FileNode are imported
 import { StorageService } from './storageService';
 
 export class AnalysisService {
@@ -28,13 +27,8 @@ export class AnalysisService {
 
     const eventSource = new EventSource(`/api/analyze?${params.toString()}`);
     
-    const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {      // Add a timeout to help debug hanging requests
-      const timeout = setTimeout(() => {
-        console.log('Analysis timeout - closing EventSource');
-        eventSource.close();
-        reject(new Error('Analysis timed out after 10 minutes'));
-      }, 10 * 60 * 1000); // Increased to 10 minutes
-        eventSource.onopen = () => {
+    const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {      
+      eventSource.onopen = () => {
         console.log('EventSource connection opened');
         console.log('EventSource readyState:', eventSource.readyState);
       };
@@ -73,7 +67,7 @@ export class AnalysisService {
       eventSource.addEventListener('complete', async event => {
         console.log('🎉 COMPLETE EVENT RECEIVED!', event);
         try {
-          clearTimeout(timeout); // Clear timeout on success
+          // Clear timeout removed to avoid premature timeout
           console.log('Received complete event data:', (event as MessageEvent).data);
           const result = JSON.parse((event as MessageEvent).data) as Partial<AnalysisResult>;
           onProgress('Analysis complete!', 100);
@@ -94,14 +88,14 @@ export class AnalysisService {
 
           resolve(finalResult);
         } catch (e) {
-          clearTimeout(timeout); // Clear timeout on error too
+          // Clear timeout removed to avoid premature timeout
           console.error('Failed to parse complete message:', e);
           console.error('Event data:', (event as MessageEvent).data);
           eventSource.close();
           reject(new Error('Failed to parse final analysis result.'));
         }
       });      eventSource.addEventListener('error', (event) => {
-        clearTimeout(timeout); // Clear timeout on error
+        // Clear timeout removed to avoid premature timeout
         console.error('EventSource error:', event);
         console.log('EventSource readyState:', eventSource.readyState);
         console.log('Error event data:', (event as MessageEvent).data); // Log event.data
@@ -249,7 +243,7 @@ export class AnalysisService {
       analysisWarnings: [],
       dependencyWheelData: [],
       fileSystemTree: { name: 'root', path: '/', size: 0, type: 'directory', children: [] },
-      churnSunburstData: { name: 'root', path: '/', type: 'directory', children: [], churnRate: 0 }, // Added churnRate
+      churnSunburstData: { name: 'root', path: '/', type: 'directory', churnRate: 0, children: [] },
       contributorStreamData: [],
     };
 
@@ -299,6 +293,7 @@ export class AnalysisService {
       advancedAnalysis: {
         // ...defaults.advancedAnalysis, // This might be too generic if advancedAnalysis has required fields
         ...(result?.advancedAnalysis || {}), // For now, keep it simple, ensure it's an object
+        churnSunburstData: result?.churnSunburstData || defaults.churnSunburstData,
       },
       files: result?.files || defaults.files as FileInfo[],
       commits: result?.commits || defaults.commits as ProcessedCommit[],
@@ -313,7 +308,6 @@ export class AnalysisService {
       
       dependencyWheelData: result?.dependencyWheelData || defaults.dependencyWheelData as Array<{ source: string; target: string; value: number }>,
       fileSystemTree: result?.fileSystemTree || defaults.fileSystemTree as FileNode,
-      churnSunburstData: result?.churnSunburstData || defaults.churnSunburstData as ChurnNode,
       contributorStreamData: result?.contributorStreamData || defaults.contributorStreamData as Array<{ date: string; contributors: Record<string, number> }>,
     };
     

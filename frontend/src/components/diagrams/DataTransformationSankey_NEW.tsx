@@ -12,6 +12,22 @@ interface Props {
   colors?: string[];
 }
 
+interface D3SankeyNode {
+  id: string;
+  x0?: number;
+  x1?: number;
+  y0?: number;
+  y1?: number;
+  value?: number;
+}
+
+interface D3SankeyLink {
+  source: D3SankeyNode;
+  target: D3SankeyNode;
+  value: number;
+  width?: number;
+}
+
 const DataTransformationSankey: React.FC<Props> = ({ 
   data, 
   width: propWidth = 800, 
@@ -20,6 +36,7 @@ const DataTransformationSankey: React.FC<Props> = ({
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<D3SankeyLink | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; content: string } | null>(null);
 
   // Generate realistic sample data
@@ -79,11 +96,9 @@ const DataTransformationSankey: React.FC<Props> = ({
       .domain(currentData.nodes.map(d => d.id))
       .range(colors);
 
-    // Configure sankey - use any to work around complex d3-sankey typing
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sankeyGenerator: any = sankey()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .nodeId((d: any) => d.id)
+    // Configure sankey
+    const sankeyGenerator = sankey<D3SankeyNode, D3SankeyLink>()
+      .nodeId(d => d.id)
       .nodeWidth(18)
       .nodePadding(12)
       .extent([[margin.left, margin.top], [innerWidth, innerHeight]]);
@@ -101,22 +116,21 @@ const DataTransformationSankey: React.FC<Props> = ({
       // Create gradients for links
       const defs = svg.append("defs");
       
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      graph.links.forEach((link: any, i: number) => {
+      graph.links.forEach((link, i) => {
         const gradient = defs.append("linearGradient")
           .attr("id", `sankey-gradient-${i}`)
           .attr("gradientUnits", "userSpaceOnUse")
-          .attr("x1", link.source?.x1 || 0)
-          .attr("x2", link.target?.x0 || 0);
+          .attr("x1", link.source.x1)
+          .attr("x2", link.target.x0);
 
         gradient.append("stop")
           .attr("offset", "0%")
-          .attr("stop-color", colorScale(link.source?.id || '') as string)
+          .attr("stop-color", colorScale(link.source.id))
           .attr("stop-opacity", 0.7);
 
         gradient.append("stop")
           .attr("offset", "100%")
-          .attr("stop-color", colorScale(link.target?.id || '') as string)
+          .attr("stop-color", colorScale(link.target.id))
           .attr("stop-opacity", 0.7);
       });
 
@@ -126,33 +140,32 @@ const DataTransformationSankey: React.FC<Props> = ({
         .selectAll("path")
         .data(graph.links)
         .join("path")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("d", (d: any) => sankeyLinkHorizontal()(d))
-        .attr("stroke", (_d, i) => `url(#sankey-gradient-${i})`)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("stroke-width", (d: any) => Math.max(1, d.width || 0))
+        .attr("d", sankeyLinkHorizontal())
+        .attr("stroke", (d, i) => `url(#sankey-gradient-${i})`)
+        .attr("stroke-width", d => Math.max(1, d.width))
         .attr("fill", "none")
         .attr("stroke-opacity", 0.6)
         .style("cursor", "pointer")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on("mouseover", function(event, d: any) {
+        .on("mouseover", function(event, d) {
           d3.select(this)
             .attr("stroke-opacity", 0.9)
-            .attr("stroke-width", Math.max(2, (d.width || 0) + 1));
+            .attr("stroke-width", Math.max(2, d.width + 1));
+          
+          setHoveredLink(d);
           
           const [mouseX, mouseY] = d3.pointer(event, document.body);
           setTooltip({
             x: mouseX,
             y: mouseY,
-            content: `${d.source?.id || 'Unknown'} → ${d.target?.id || 'Unknown'}: ${d.value.toLocaleString()}`
+            content: `${d.source.id} → ${d.target.id}: ${d.value.toLocaleString()}`
           });
         })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on("mouseout", function(_event, d: any) {
+        .on("mouseout", function(event, d) {
           d3.select(this)
             .attr("stroke-opacity", 0.6)
-            .attr("stroke-width", Math.max(1, d.width || 0));
+            .attr("stroke-width", Math.max(1, d.width));
           
+          setHoveredLink(null);
           setTooltip(null);
         });
 
@@ -167,21 +180,15 @@ const DataTransformationSankey: React.FC<Props> = ({
 
       // Node rectangles
       nodes.append("rect")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("x", (d: any) => d.x0 || 0)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("y", (d: any) => d.y0 || 0)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("height", (d: any) => (d.y1 || 0) - (d.y0 || 0))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("width", (d: any) => (d.x1 || 0) - (d.x0 || 0))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("fill", (d: any) => colorScale(d.id) as string)
+        .attr("x", d => d.x0)
+        .attr("y", d => d.y0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("width", d => d.x1 - d.x0)
+        .attr("fill", d => colorScale(d.id))
         .attr("stroke", "#fff")
         .attr("stroke-width", 1)
         .attr("rx", 3)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on("mouseover", function(event, d: any) {
+        .on("mouseover", function(event, d) {
           d3.select(this)
             .attr("stroke", "#333")
             .attr("stroke-width", 2);
@@ -189,9 +196,8 @@ const DataTransformationSankey: React.FC<Props> = ({
           setHoveredNode(d.id);
           
           // Highlight connected links
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          links.attr("stroke-opacity", (link: any) => {
-            return (link.source?.id === d.id || link.target?.id === d.id) ? 0.9 : 0.2;
+          links.attr("stroke-opacity", link => {
+            return (link.source.id === d.id || link.target.id === d.id) ? 0.9 : 0.2;
           });
           
           const [mouseX, mouseY] = d3.pointer(event, document.body);
@@ -201,8 +207,7 @@ const DataTransformationSankey: React.FC<Props> = ({
             content: `${d.id}: ${d.value?.toLocaleString() || 'N/A'}`
           });
         })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on("mouseout", function() {
+        .on("mouseout", function(event, d) {
           d3.select(this)
             .attr("stroke", "#fff")
             .attr("stroke-width", 1);
@@ -216,15 +221,11 @@ const DataTransformationSankey: React.FC<Props> = ({
 
       // Node labels
       nodes.append("text")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("x", (d: any) => (d.x0 || 0) < innerWidth / 2 ? (d.x1 || 0) + 6 : (d.x0 || 0) - 6)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("y", (d: any) => ((d.y1 || 0) + (d.y0 || 0)) / 2)
+        .attr("x", d => d.x0 < innerWidth / 2 ? d.x1 + 6 : d.x0 - 6)
+        .attr("y", d => (d.y1 + d.y0) / 2)
         .attr("dy", "0.35em")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("text-anchor", (d: any) => (d.x0 || 0) < innerWidth / 2 ? "start" : "end")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .text((d: any) => d.id)
+        .attr("text-anchor", d => d.x0 < innerWidth / 2 ? "start" : "end")
+        .text(d => d.id)
         .style("font-size", "12px")
         .style("font-weight", "500")
         .style("fill", "#374151")
@@ -232,13 +233,10 @@ const DataTransformationSankey: React.FC<Props> = ({
 
       // Node value labels
       nodes.append("text")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("x", (d: any) => ((d.x0 || 0) + (d.x1 || 0)) / 2)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("y", (d: any) => (d.y1 || 0) + 12)
+        .attr("x", d => (d.x0 + d.x1) / 2)
+        .attr("y", d => d.y1 + 12)
         .attr("text-anchor", "middle")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .text((d: any) => d.value ? d.value.toLocaleString() : '')
+        .text(d => d.value ? d.value.toLocaleString() : '')
         .style("font-size", "10px")
         .style("fill", "#6b7280")
         .style("pointer-events", "none");
@@ -295,6 +293,11 @@ const DataTransformationSankey: React.FC<Props> = ({
           {hoveredNode && (
             <div className="mt-1 text-indigo-600 font-medium">
               Active: {hoveredNode}
+            </div>
+          )}
+          {hoveredLink && (
+            <div className="mt-1 text-purple-600 font-medium">
+              Flow: {hoveredLink.value.toLocaleString()}
             </div>
           )}
         </div>

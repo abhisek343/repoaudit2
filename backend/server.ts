@@ -369,6 +369,17 @@ app.post('/api/validate-github-token', (async (req: Request, res: Response) => {
   }
 }) as express.RequestHandler);
 
+// Endpoint to check for environment keys (for open source setup)
+app.get('/api/check-env-keys', (req: Request, res: Response) => {
+  // Since this is an open source project that works with user-provided keys,
+  // we don't need server-side environment variables
+  res.status(200).json({
+    hasLlmKey: false,
+    hasGithubToken: false,
+    message: 'This is an open source project. Please provide your own API keys in settings.'
+  });
+});
+
 app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);
 });

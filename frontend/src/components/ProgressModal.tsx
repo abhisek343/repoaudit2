@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { X, AlertTriangle, Settings, Key } from 'lucide-react';
 import AnalysisProgress from './AnalysisProgress';
 
@@ -12,6 +13,25 @@ interface ProgressModalProps {
 }
 
 const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel }: ProgressModalProps) => {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isOpen && !error) {
+      setElapsed(0);
+      interval = setInterval(() => setElapsed(prev => prev + 1), 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isOpen, error]);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   const isGitHubRateLimitError = (errorMessage?: string): boolean => {
     if (!errorMessage) return false;
     return errorMessage.includes('rate limit') || 
@@ -153,6 +173,9 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, o
               Analyzing Repository
             </h3>
             <AnalysisProgress progress={progress} currentStep={currentStep} />
+            <div className="text-sm text-gray-600 mt-2">
+              Time elapsed: {formatTime(elapsed)}
+            </div>
             <div className="mt-4">
               <button
                 onClick={onCancel}

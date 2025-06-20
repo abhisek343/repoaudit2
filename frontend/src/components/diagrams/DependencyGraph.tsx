@@ -83,6 +83,7 @@ const DependencyGraph: React.FC<Props> = ({
         graphData={{ nodes, links }}  // ✅ Correct API - single object with nodes and links
         nodeId="id"
         nodeLabel={(node: DependencyNode) => `${node.name || node.id}\n${node.type || 'module'}`}
+        nodeAutoColorBy="type"
         nodeColor={(node: DependencyNode) => {
           // Color nodes by type
           switch (node.type) {
@@ -95,16 +96,19 @@ const DependencyGraph: React.FC<Props> = ({
             default: return '#374151';           // dark gray
           }
         }}
-        nodeVal={(node: DependencyNode) => 5} // Node size
+        nodeVal={(node: DependencyNode) => (node.metrics?.dependencies ?? 1) * 4 + 4} // Node size by dependency count
         linkSource="source"
         linkTarget="target"
-        linkColor={() => '#9ca3af'}
-        linkWidth={2}
+        linkColor={(link: DependencyLink) => link.type === 'devDependency' ? '#f59e0b' : '#9ca3af'}
+        linkWidth={(link: DependencyLink) => Math.log((link.strength ?? 1) + 1) * 2 + 1}
+        linkDirectionalParticles={2}
+        linkDirectionalParticleWidth={1}
+        linkDirectionalParticleSpeed={(link: DependencyLink) => (link.strength ?? 1) * 0.005}
         linkDirectionalArrowLength={3}
         linkDirectionalArrowRelPos={1}
+        backgroundColor="#f3f4f6"
         width={width}
         height={height}
-        backgroundColor="rgba(255, 255, 255, 0)"
         onNodeClick={handleNodeClick}
         onLinkClick={handleLinkClick}
         cooldownTicks={100}

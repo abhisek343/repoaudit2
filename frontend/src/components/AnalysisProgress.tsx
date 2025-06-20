@@ -23,7 +23,7 @@ const AnalysisProgress: React.FC<Props> = ({ progress, currentStep }) => {
         <span>{currentStep}</span>
         <span>{progress}%</span>
         <span>
-          {etaMs != null ? `≈ ${formatMs(etaMs)} remaining` : 'estimating…'}
+          {etaMs != null ? formatMs(etaMs) : 'estimating…'}
         </span>
       </div>
     </div>

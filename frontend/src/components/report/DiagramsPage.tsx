@@ -4,10 +4,7 @@ import {
   BarChart3, 
   GitBranch, 
   Layers, 
-  Clock,
   Network,
-  FileText,
-  Activity,
   Shuffle, 
   Users, 
   Route, 
@@ -19,7 +16,6 @@ import {
 } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 import { 
-  PRPhase, 
   ChurnNode as GlobalChurnNode, 
   FileNode,
   RouteNode
@@ -28,6 +24,7 @@ import {
 // Import diagram components
 import VisualizationErrorBoundary from '../VisualizationErrorBoundary'; // Added
 import ComponentDependencyWheel from '../diagrams/ComponentDependencyWheel';
+import EnhancedDependencyGraph from '../diagrams/EnhancedDependencyGraph';
 import FileSystemIcicle from '../diagrams/FileSystemIcicle';
 import APIRouteTree from '../diagrams/APIRouteTree';
 import FeatureFileMatrix from '../diagrams/FeatureFileMatrix';
@@ -36,9 +33,8 @@ import TemporalCouplingGraph from '../diagrams/TemporalCouplingGraph';
 import ContributorStreamgraph from '../diagrams/ContributorStreamgraph'; 
 import DataTransformationSankey from '../diagrams/DataTransformationSankey';
 import PRLifecycleGantt from '../diagrams/PRLifecycleGantt';
-import DependencyGraph, { DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLink } from '../diagrams/DependencyGraph'; // Added
+import { DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLink } from '../diagrams/DependencyGraph'; // Added
 // import DependencyGraph3D from '../diagrams/DependencyGraph3D'; // Commented out due to missing module
-import { CheckCircle } from 'lucide-react';
 
 interface DiagramsPageProps {
   reportData: AnalysisResult;
@@ -50,24 +46,12 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
   const navigate = useNavigate();
   const [selectedDiagram, setSelectedDiagram] = useState('dependency-wheel');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  // Use actual data from reportData with proper fallbacks
-  const {
-    files = [],
-    // dependencyMetrics // Removed as reportData.dependencies is used as primary and fallback
-  } = reportData || {};
-  const {
-    dependencyWheelData = [],
-    fileSystemTree,
-    apiEndpoints = [],
-    churnSunburstData,
-    temporalCouplingData,
-    contributorStreamData = [],
-    dataTransformationSankey,
-    prLifecycleData,
-    // dependencyGraphData // This might be a more suitable source if available
-  } = reportData?.advancedAnalysis || {};
+
+  // Base data
+  const { files = [] } = reportData;
   // Generate fallback data if not provided by backend
   const apiRoutesTreeData = useMemo(() => {
+    const apiEndpoints = reportData.apiEndpoints || [];
     if (apiEndpoints.length === 0) {
       // Generate from file analysis with enhanced logic
       const apiFiles = files.filter(f => 
@@ -202,32 +186,10 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
           }
           currentNode = childNode;
       });
-    });
-    return root;
-  }, [apiEndpoints, files]);
-  // Add fallback data generation for missing diagram data
-  const fallbackDependencyWheelData = useMemo(() => {
-    if (dependencyWheelData && dependencyWheelData.length > 0) return dependencyWheelData;    // For dependency wheel, use package dependencies from dependencyMetrics
-    if (reportData.dependencyMetrics?.packageDependencyGraph?.links) {
-      const links = reportData.dependencyMetrics.packageDependencyGraph.links as Array<{ source: string; target: string; value?: number }>;
-      return links.slice(0, 50).map(link => ({
-        source: link.source,
-        target: link.target,
-        value: link.value || 1 
-      }));
-    }
-    
-    // Fallback: try to use internal dependency graph if no package dependencies
-    if (reportData.dependencyGraph?.links) {
-      return reportData.dependencyGraph.links.slice(0, 20).map(link => ({
-        source: link.source,
-        target: link.target,
-        value: 1 
-      }));
-    }
-    
-    return [];
-  }, [dependencyWheelData, reportData.dependencyMetrics, reportData.dependencyGraph]);  const preparedDependencyGraphData = useMemo(() => {
+    });    return root;
+  }, [reportData.apiEndpoints, files]);
+
+  const preparedDependencyGraphData = useMemo(() => {
     // Use dependencyGraph for internal module dependencies, not dependencies which contains package.json deps
     const depData = reportData.dependencyGraph; 
 
@@ -299,8 +261,8 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
 
     return { nodes: visNodes, links: visLinks };
   }, [reportData.dependencyGraph, files]);
-
   const fallbackFileSystemTree = useMemo(() => {
+    const fileSystemTree = reportData.fileSystemTree;
     if (fileSystemTree) return fileSystemTree;
     
     // Generate from files
@@ -333,7 +295,7 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     });
     
     return root;
-  }, [fileSystemTree, files]);
+  }, [reportData.fileSystemTree, files]);
   const diagrams = [
     { id: 'dependency-wheel', title: 'Module Dependency Wheel', description: 'Visualizes inter-dependencies between high-level modules or directories.', icon: <Network /> , category: 'Architecture'},
     { id: 'filesystem-icicle', title: 'File System Icicle', description: 'Hierarchical view of files and folders, sized by lines of code or complexity.', icon: <Layers /> , category: 'Architecture'},
@@ -365,11 +327,8 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
     if (selectedDiagram === 'dependency-graph') {
       console.log('Prepared Dependency Graph Data:', preparedDependencyGraphData);
     }
-    switch (selectedDiagram) {
-      case 'dependency-wheel':
-        return fallbackDependencyWheelData.length > 0 ? 
-          <ComponentDependencyWheel dependencies={fallbackDependencyWheelData} width={700} height={700} /> : 
-          <EmptyState message="No dependency data available." />;
+    switch (selectedDiagram) {      case 'dependency-wheel':
+        return <ComponentDependencyWheel reportData={reportData} width={700} height={700} />;
           
       case 'filesystem-icicle':
         return (fallbackFileSystemTree.children && fallbackFileSystemTree.children.length > 0) ?
@@ -395,88 +354,79 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
           <EmptyState message="No API endpoint data available." />
         );
       }      case 'feature-matrix': {
-        // Use the actual featureFileMatrix data from the top-level reportData
-        const fmData = reportData.featureFileMatrix || [];
-        return fmData.length > 0 ? (
-          <div className="w-full h-full">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Feature-File Matrix</h3>
-              <button 
-                onClick={() => navigate(`/feature-matrix/${reportData.id}`, { state: { reportData } })}
-                className="flex items-center gap-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>View Full Page</span>
-              </button>
-            </div>
-            <FeatureFileMatrix 
-              data={fmData}
-              width={900} 
-              height={600}
-            />
-          </div>
-        ) : (
-          <EmptyState message="No feature matrix data available." />
-        );
-      }
-      case 'churn-sunburst': {
-        const csData = churnSunburstData || {name: 'root', path:'/', type: 'directory', churnRate: 0, children: []};
-        return (csData.children && csData.children.length > 0 && csData.churnRate > 0) ?
-            <CodeChurnSunburst data={csData as GlobalChurnNode} width={600} height={600} /> : 
-            <EmptyState message="No code churn data to display." />;
+         const fmData = reportData.featureFileMatrix || [];
+         return fmData.length > 0 ? (
+           <FeatureFileMatrix data={fmData} width={900} height={600} />
+         ) : (
+           <EmptyState message="No feature matrix data available." />
+         );
+       }      case 'churn-sunburst': {
+        // Render Code Churn Sunburst if data present
+        const churnSunburstData = reportData.churnSunburstData;
+        if (!churnSunburstData || !churnSunburstData.children?.length) {
+          return <EmptyState message="No code churn data to display." />;
+        }
+        return <CodeChurnSunburst data={churnSunburstData as GlobalChurnNode} width={600} height={600} />;
       }      case 'temporal-coupling': {
-        const tcData = temporalCouplingData || { nodes: [], links: [] };
-        // Convert to TemporalCoupling array format expected by the component
-        const temporalData = tcData.links?.map(link => ({
-          source: link.source as string,
-          target: link.target as string,
-          weight: link.strength || 1
-        })) || [];
-        
+        // Convert root-level temporalCouplings into chart data
+        const temporalCouplings = reportData.temporalCouplings || [];
+        const temporalData = temporalCouplings.map(link => ({
+           source: link.source,
+           target: link.target,
+           weight: link.weight
+         }));
         return temporalData.length > 0 ? (
-          <TemporalCouplingGraph 
-            data={temporalData}
-          />
+          <TemporalCouplingGraph data={temporalData} />
         ) : <EmptyState message="Not enough data for Temporal Coupling Graph." />;
-      }
-      case 'contributor-stream': {
+      }case 'contributor-stream': {
+        const contributorStreamData = reportData.contributorStreamData;
         return (contributorStreamData && contributorStreamData.length > 0) ?
             <ContributorStreamgraph data={contributorStreamData} width={700} height={400} /> :
             <EmptyState message="No contributor activity stream data available." />;
-      }
-      case 'data-pipeline': {
-        const dpData = dataTransformationSankey || { nodes: [], links: [] };        return (dpData.nodes.length > 0) ? (
+      }      case 'data-pipeline': {
+        // Sankey diagram from transformationFlows
+        const transformationFlows = reportData.transformationFlows;
+        return (transformationFlows && transformationFlows.nodes && transformationFlows.nodes.length > 0) ? (
           <DataTransformationSankey 
-            data={dpData}
+            data={transformationFlows}
           />
         ) : <EmptyState message="No data pipeline data available." />;
-      }
-      case 'pr-lifecycle': {
-        const defaultPhases: PRPhase[] = [
-          { name: 'Open', duration: 2, color: '#3B82F6', icon: <FileText className="w-4 h-4" /> },
-          { name: 'Review', duration: 24, color: '#F59E0B', icon: <Clock className="w-4 h-4" /> },
-          { name: 'Changes', duration: 8, color: '#EF4444', icon: <Activity className="w-4 h-4" /> },
-          { name: 'Approval', duration: 4, color: '#10B981', icon: <CheckCircle className="w-4 h-4" /> },
-          { name: 'Merge', duration: 1, color: '#8B5CF6', icon: <GitBranch className="w-4 h-4" /> }
-        ];
+      }case 'pr-lifecycle': {
+        // Convert pullRequests into Gantt phases if provided else fallback
+        const pullRequests = reportData.pullRequests || [];
+        return (pullRequests.length > 0) ? (
+           <PRLifecycleGantt 
+             data={pullRequests}
+           />
+         ) : <EmptyState message="No PR lifecycle data available." />;
+      }      case 'dependency-graph': {
+        // Create enhanced dependency data from existing data
+        const enhancedDeps = preparedDependencyGraphData.links.map(link => ({
+          source: typeof link.source === 'object' ? link.source.id : link.source,
+          target: typeof link.target === 'object' ? link.target.id : link.target,
+          value: link.strength || 1,          type: (link.type === 'import' || link.type === 'export' || link.type === 'reference' || 
+                 link.type === 'inheritance' || link.type === 'async' || link.type === 'config') 
+                 ? link.type : 'reference' as const,
+          category: preparedDependencyGraphData.nodes.find(n => 
+            n.id === (typeof link.source === 'object' ? link.source.id : link.source))?.type as 
+            ('component' | 'service' | 'utility' | 'api' | 'type' | 'config' | 'test') || 'utility',
+          strength: link.strength || 1,
+          critical: link.strength ? link.strength > 3 : false
+        }));
         
-        const currentPrData = prLifecycleData || { phases: defaultPhases, totalDuration: defaultPhases.reduce((s, p) => s + p.duration, 0) };
-        
-        return (currentPrData.phases.length > 0) ? (
-          <PRLifecycleGantt 
-            phases={currentPrData.phases}
-            totalDuration={currentPrData.totalDuration}
-            width={700} height={350}
-          />
-        ) : <EmptyState message="No PR lifecycle data available." />;
-      }      case 'dependency-graph':
         return (
           <VisualizationErrorBoundary>
-            {(preparedDependencyGraphData.nodes.length > 0) ?
-              <DependencyGraph nodes={preparedDependencyGraphData.nodes} links={preparedDependencyGraphData.links} /> :
+            {enhancedDeps.length > 0 ? 
+              <EnhancedDependencyGraph 
+                dependencies={enhancedDeps} 
+                width={1200} 
+                height={800}
+                title="Advanced Project Dependency Graph"
+              /> :
               <EmptyState message="No data available for Project Dependency Graph (either no nodes/links or data processing issue)." />}
           </VisualizationErrorBoundary>
         );
+      }
       // Commented out due to missing module
       // case 'dependency-graph-3d':
       //   return (

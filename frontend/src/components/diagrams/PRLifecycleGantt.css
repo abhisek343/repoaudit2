@@ -1,0 +1,241 @@
+/* PR Lifecycle Gantt Chart Styles */
+
+.pr-lifecycle-gantt {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+/* Phase bars animations */
+.phase-bar rect {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.phase-bar:hover rect {
+  opacity: 1 !important;
+  transform: scale(1.02);
+  filter: brightness(1.1);
+}
+
+.phase-bar:hover text {
+  font-weight: bold;
+}
+
+/* Timeline bars animations */
+.timeline-bar rect {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.timeline-bar:hover rect {
+  opacity: 0.9 !important;
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+/* Grid lines */
+.grid line {
+  shape-rendering: crispEdges;
+}
+
+.grid text {
+  font-size: 10px;
+  fill: #6B7280;
+}
+
+/* Y-axis styling */
+.y-axis text {
+  font-size: 11px;
+  font-weight: 500;
+  transition: fill 0.2s ease;
+}
+
+.y-axis text:hover {
+  fill: #1F2937 !important;
+  font-weight: 600;
+}
+
+/* Header styling */
+.header text {
+  font-family: inherit;
+}
+
+/* Toggle button styling */
+.toggle-button {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-button:hover rect {
+  fill: #E5E7EB;
+  stroke: #9CA3AF;
+}
+
+.toggle-button:hover text {
+  fill: #374151;
+}
+
+/* Legend styling */
+.legend rect {
+  transition: transform 0.2s ease;
+}
+
+.legend g:hover rect {
+  transform: scale(1.1);
+}
+
+.legend text {
+  font-weight: 500;
+}
+
+/* Stats panel */
+.stats text {
+  font-weight: 500;
+}
+
+/* Tooltip styles for detail panel */
+.pr-detail-panel {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(209, 213, 219, 0.8);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+.pr-detail-panel h4 {
+  line-height: 1.3;
+  max-width: 280px;
+}
+
+.pr-detail-panel .phase-item {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.pr-detail-panel .phase-item:hover {
+  background-color: rgba(243, 244, 246, 0.5);
+}
+
+.pr-detail-panel .close-button {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  transition: all 0.15s ease;
+}
+
+.pr-detail-panel .close-button:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #DC2626;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .pr-detail-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 90vw;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  
+  .y-axis text {
+    font-size: 9px;
+  }
+  
+  .stats text {
+    font-size: 10px;
+  }
+  
+  .legend text {
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header text {
+    font-size: 14px;
+  }
+  
+  .toggle-button text {
+    font-size: 10px;
+  }
+}
+
+/* Animation for phase transitions */
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.phase-bar,
+.timeline-bar {
+  animation: fadeInSlide 0.3s ease-out;
+}
+
+/* Hover effects for interactivity */
+.phase-bar rect,
+.timeline-bar rect {
+  cursor: pointer;
+}
+
+.y-axis text {
+  cursor: pointer;
+}
+
+/* Focus states for accessibility */
+.phase-bar:focus,
+.timeline-bar:focus,
+.y-axis text:focus {
+  outline: 2px solid #3B82F6;
+  outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .grid line {
+    stroke: #000000;
+    stroke-width: 2px;
+  }
+  
+  .y-axis text,
+  .legend text,
+  .stats text {
+    fill: #000000;
+    font-weight: bold;
+  }
+  
+  .phase-bar rect,
+  .timeline-bar rect {
+    stroke: #000000;
+    stroke-width: 2px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .phase-bar rect,
+  .timeline-bar rect,
+  .y-axis text,
+  .legend rect,
+  .toggle-button rect,
+  .toggle-button text {
+    transition: none;
+  }
+  
+  .phase-bar,
+  .timeline-bar {
+    animation: none;
+  }
+}

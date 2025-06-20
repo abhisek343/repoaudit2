@@ -44,8 +44,7 @@ function App() {
     };
 
     initializeApp();
-  }, []);
-  const router = createBrowserRouter([
+  }, []);  const router = createBrowserRouter([
     {
       path: "/",
       element: <ErrorBoundary><HomePage /></ErrorBoundary>,
@@ -69,8 +68,8 @@ function App() {
     {
       path: "/feature-matrix/:reportId",
       element: <FeatureMatrixPage />,
-    },
-  ]);
+    },  ]);
+  // Note: v7_startTransition future flag causes TypeScript errors in current version
 
   if (storageError) {
     console.error('Initialization Error Details:', {

@@ -68,6 +68,7 @@ const FeatureMatrixPage: React.FC = () => {
               message="We couldn't find any feature-to-file mappings. Try running the analysis again or check your project's feature files."
             />
           )}
+          {/* Code Churn section removed as requested */}
         </div>
       </div>
     </div>

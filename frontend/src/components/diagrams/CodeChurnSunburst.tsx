@@ -37,9 +37,7 @@ const CodeChurnSunburst: React.FC<CodeChurnSunburstProps> = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedNode, setSelectedNode] = useState<ChurnNode | null>(null);
   const [tooltipContent, setTooltipContent] = useState<string | null>(null);
-  const [tooltipPosition, setTooltipPosition] = useState<{x: number, y: number} | null>(null);
-
-  const processedData = useMemo(() => {
+  const [tooltipPosition, setTooltipPosition] = useState<{x: number, y: number} | null>(null);  const processedData = useMemo(() => {
     if (!data) return null;
 
     const validateAndLimitData = (node: ChurnNode, depth = 0): ChurnNode | null => {

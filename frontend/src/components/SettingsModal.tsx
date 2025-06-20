@@ -35,6 +35,7 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
   const [llmConfigStatus, setLlmConfigStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
   const [llmConfigError, setLlmConfigError] = useState<string | null>(null);
 
+  // GitHub token validation
   const validateGithubToken = useCallback(async (token: string) => {
     if (!token.trim()) {
       setGithubTokenStatus('idle');
@@ -61,15 +62,30 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setGithubTokenError('Failed to validate GitHub token.');
       console.error('GitHub token validation error:', error);
     }
-  }, []);  const validateLlmConfig = useCallback(async (config: LLMConfig) => {
+  }, []);
+
+  // Debounced GitHub token validation (stable debounced function)
+  const debouncedGithubValidator = useDebounce(
+    useCallback(() => {
+      if (githubToken.trim()) {
+        validateGithubToken(githubToken.trim());
+      } else {
+        setGithubTokenStatus('idle');
+        setGithubTokenError(null);
+      }
+    }, [githubToken, validateGithubToken]),
+    500
+  );
+
+  // Run debounced validator when githubToken changes
+  useEffect(() => {
+    debouncedGithubValidator();
+  }, [debouncedGithubValidator]);
+
+  const validateLlmConfig = useCallback(async (config: LLMConfig) => {
     if (!config.apiKey.trim()) {
       setLlmConfigStatus('idle');
       setLlmConfigError(null);
-      return;
-    }
-    
-    // Prevent rapid revalidation if already validating
-    if (llmConfigStatus === 'validating') {
       return;
     }
     
@@ -103,53 +119,24 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentConfig, currentGithubTo
       setLlmConfigError(`Failed to validate API key for ${config.provider}.`);
       console.error('LLM key validation error:', error);
     }
-  }, [llmConfigStatus]); // Add dependency to prevent rapid revalidation
+  }, []); // validateLlmConfig no longer depends on llmConfigStatus
 
-  // Add this function to check for environment variables
-  const checkEnvironmentKeys = useCallback(async () => {
-    try {
-      const response = await fetch('/api/check-env-keys');
-      const data = await response.json();
-      
-      if (data.hasLlmKey) {
-        setLlmConfigStatus('valid');
+  // Debounced LLM config validation (stable)
+  const debouncedLlmValidator = useDebounce(
+    useCallback(() => {
+      if (apiKey.trim() && provider) {
+        validateLlmConfig({ provider, apiKey: apiKey.trim(), model: model || getDefaultModel(provider) });
+      } else {
+        setLlmConfigStatus('idle');
         setLlmConfigError(null);
-        // Optional: Show a message that server-side keys are configured
       }
-    } catch (error) {
-      console.warn('Could not check environment keys:', error);
-    }
-  }, []);
+    }, [apiKey, provider, model, validateLlmConfig]),
+    2000
+  );
 
-  // Debounced validation
-  const validateGithubTokenDebounced = useDebounce(() => {
-    if (githubToken) {
-      validateGithubToken(githubToken);
-    } else {
-      setGithubTokenStatus('idle');
-      setGithubTokenError(null);
-    }
-  }, 500);
-  const validateLlmConfigDebounced = useDebounce(() => {
-    if (apiKey && provider) {
-      validateLlmConfig({ provider, apiKey, model: model || getDefaultModel(provider) });
-    } else {
-      setLlmConfigStatus('idle');
-      setLlmConfigError(null);
-    }
-  }, 2000); // Increased from 500ms to 2000ms to reduce rapid calls
   useEffect(() => {
-    validateGithubTokenDebounced();
-  }, [githubToken, validateGithubTokenDebounced]);
-  useEffect(() => {
-    validateLlmConfigDebounced();
-  }, [apiKey, provider, model, validateLlmConfigDebounced]);
-
-  // Call this on component mount
-  useEffect(() => {
-    checkEnvironmentKeys();
-  }, [checkEnvironmentKeys]);
-
+    debouncedLlmValidator();
+  }, [debouncedLlmValidator]);
 
   useEffect(() => {
     if (currentConfig) {

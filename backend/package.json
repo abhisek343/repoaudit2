@@ -4,8 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev --prefix ../frontend\" \"npm run dev:server\"",
-    "dev:server": "tsx watch server.ts",
+    "dev": "tsx watch server.ts",
     "build": "tsc --project tsconfig.node.json"
   },
   "dependencies": {
@@ -29,7 +28,6 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/node": "^24.0.3",
-    "concurrently": "^9.1.2",
     "sonarqube-scanner": "^2.8.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
