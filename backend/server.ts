@@ -6,6 +6,7 @@ import { BackendAnalysisService } from './src/services/backendAnalysisService';
 import { ArchitectureController } from './src/controllers/architectureController';
 import { RedisCacheService } from './src/services/redisCacheService';
 import type { LLMConfig } from './src/types';
+import { safeAsync, errorHandler } from './src/middleware/errorHandler';
 
 const app: Express = express();
 const port = process.env.PORT || 3001;
@@ -57,19 +58,19 @@ function handleAnalysisError(res: Response, error: unknown): void {
 }
 
 // Architecture analysis endpoints
-app.post('/api/architecture/analyze', (req: Request, res: Response) => 
-  architectureController.analyzeArchitecture(req, res));
-app.get('/api/architecture/config', (req: Request, res: Response) => 
-  architectureController.getConfiguration(req, res));
-app.put('/api/architecture/config', (req: Request, res: Response) => 
-  architectureController.updateConfiguration(req, res));
-app.get('/api/architecture/config/export', (req: Request, res: Response) => 
-  architectureController.exportConfiguration(req, res));
-app.post('/api/architecture/config/import', (req: Request, res: Response) => 
-  architectureController.importConfiguration(req, res));
+app.post('/api/architecture/analyze', safeAsync((req: Request, res: Response) => 
+  architectureController.analyzeArchitecture(req, res)));
+app.get('/api/architecture/config', safeAsync((req: Request, res: Response) =>
+  architectureController.getConfiguration(req, res)));
+app.put('/api/architecture/config', safeAsync((req: Request, res: Response) =>
+  architectureController.updateConfiguration(req, res)));
+app.get('/api/architecture/config/export', safeAsync((req: Request, res: Response) =>
+  architectureController.exportConfiguration(req, res)));
+app.post('/api/architecture/config/import', safeAsync((req: Request, res: Response) =>
+  architectureController.importConfiguration(req, res)));
 
 // Endpoint to check LLM availability
-app.post('/api/llm/check', async (req: Request, res: Response) => {
+app.post('/api/llm/check', safeAsync(async (req: Request, res: Response) => {
   const { llmConfig }: { llmConfig?: LLMConfig } = req.body;
   if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
     res.status(200).json({ success: false, message: 'LLM configuration missing.' });
@@ -77,75 +78,58 @@ app.post('/api/llm/check', async (req: Request, res: Response) => {
   }
   // Skip real LLM availability check to avoid external API retries
   res.status(200).json({ success: true });
-});
+}));
 
 // Rate limiting for validation endpoint
 const validationRateLimit = new Map<string, number>();
 const VALIDATION_COOLDOWN_MS = 5000; // 5 seconds between validation attempts
 
 // Endpoint to validate LLM API key (endpoint expected by frontend)
-app.post('/api/validate-llm-key', (async (req: Request, res: Response) => {
-  try {
-    const { llmConfig } = req.body;
-    if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-      return res.status(400).json({ isValid: false, error: 'LLM configuration is required.' });
-    }
-    
-    const analysisService = new BackendAnalysisService(undefined, llmConfig);
-    const result = await analysisService.validateLlmKey(llmConfig);
-    res.status(200).json(result);
-  } catch (error) {
-    const err = error as Error;
-    console.error('LLM validation error:', err.message);
-    res.status(500).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
+app.post('/api/validate-llm-key', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig } = req.body;
+  if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
+    return res.status(400).json({ isValid: false, error: 'LLM configuration is required.' });
   }
-}) as express.RequestHandler);
+  
+  const analysisService = new BackendAnalysisService(undefined, llmConfig);
+  const result = await analysisService.validateLlmKey(llmConfig);
+  res.status(200).json(result);
+}));
 
 // Endpoint to handle diagram enhancement
-app.post('/api/llm/enhance-diagram', async (req: Request, res: Response) => {
-  try {
-    const { llmConfig, diagramCode, fileInfo } = req.body;
-    if (!llmConfig || !diagramCode) {
-      res.status(400).json({ error: 'Missing required parameters' });
-      return;
-    }
-    const llmService = new LLMService(llmConfig);
-    const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
-    res.json({ enhancedDiagram: result.enhancedCode });
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ error: `Error enhancing diagram: ${err.message}` });
+app.post('/api/llm/enhance-diagram', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, diagramCode, fileInfo } = req.body;
+  if (!llmConfig || !diagramCode) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
   }
-});
+  const llmService = new LLMService(llmConfig);
+  const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
+  res.json({ enhancedDiagram: result.enhancedCode });
+}));
 
 // Endpoint to generate AI summary
-app.post('/api/llm/generate-summary', async (req: Request, res: Response) => {
-  try {
-    const { llmConfig, codebaseContext } = req.body;
-    if (!llmConfig || !codebaseContext) {
-      res.status(400).json({ error: 'Missing required parameters' });
-      return;
-    }
-    const llmService = new LLMService(llmConfig);
-    const result = await llmService.generateSummary(codebaseContext);
-    res.json(result);
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ error: `Error generating summary: ${err.message}` });
+app.post('/api/llm/generate-summary', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, codebaseContext } = req.body;
+  if (!llmConfig || !codebaseContext) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
   }
-});
+  const llmService = new LLMService(llmConfig);
+  const result = await llmService.generateSummary(codebaseContext);
+  res.json(result);
+}));
 
 // Endpoint to analyze architecture
-app.post('/api/llm/analyze-architecture', async (req: Request, res: Response) => {
-  try {
-    const { llmConfig, codeStructure } = req.body;
-    if (!llmConfig || !codeStructure) {
-      res.status(400).json({ error: 'Missing required parameters' });
-      return;
-    }
-    const llmService = new LLMService(llmConfig);
-    const result = await llmService.generateText(
-      `Analyze the architecture of this codebase:
+app.post('/api/llm/analyze-architecture', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, codeStructure } = req.body;
+  if (!llmConfig || !codeStructure) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
+  }
+  const llmService = new LLMService(llmConfig);
+  const result = await llmService.generateText(
+    `Analyze the architecture of this codebase:
       File Structure: ${JSON.stringify(codeStructure.files)}
       Dependencies: ${JSON.stringify(codeStructure.dependencies)}
       
@@ -154,26 +138,21 @@ app.post('/api/llm/analyze-architecture', async (req: Request, res: Response) =>
       2. Structural analysis
       3. Improvement recommendations
       4. Potential issues or anti-patterns`,
-      1500
-    );
-    res.json({ analysis: result });
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ error: `Error analyzing architecture: ${err.message}` });
-  }
-});
+    1500
+  );
+  res.json({ analysis: result });
+}));
 
 // Endpoint to perform security analysis
-app.post('/api/llm/security-analysis', async (req: Request, res: Response) => {
-  try {
-    const { llmConfig, securityData } = req.body;
-    if (!llmConfig || !securityData) {
-      res.status(400).json({ error: 'Missing required parameters' });
-      return;
-    }
-    const llmService = new LLMService(llmConfig);
-    const result = await llmService.generateText(
-      `Perform security analysis on this repository:
+app.post('/api/llm/security-analysis', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, securityData } = req.body;
+  if (!llmConfig || !securityData) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
+  }
+  const llmService = new LLMService(llmConfig);
+  const result = await llmService.generateText(
+    `Perform security analysis on this repository:
       Security Issues: ${JSON.stringify(securityData.issues)}
       Dependencies: ${JSON.stringify(securityData.dependencies)}
       
@@ -182,25 +161,20 @@ app.post('/api/llm/security-analysis', async (req: Request, res: Response) => {
       2. Security best practices compliance
       3. Risk level evaluation
       4. Remediation recommendations`,
-      1200
-    );
-    res.json({ analysis: result });
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ error: `Error performing security analysis: ${err.message}` });
-  }
-});
+    1200
+  );
+  res.json({ analysis: result });
+}));
 
 // Endpoint to generate AI insights for overview page
-app.post('/api/llm/generate-insights', async (req: Request, res: Response) => {
-  try {
-    const { llmConfig, repoData } = req.body;
-    if (!llmConfig || !repoData) {
-      res.status(400).json({ error: 'Missing required parameters' });
-      return;
-    }
-    const llmService = new LLMService(llmConfig);
-    const result = await llmService.generateSummary(`
+app.post('/api/llm/generate-insights', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, repoData } = req.body;
+  if (!llmConfig || !repoData) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
+  }
+  const llmService = new LLMService(llmConfig);
+  const result = await llmService.generateSummary(`
 Repository Analysis Data:
 Name: ${repoData.name}
 Description: ${repoData.description}
@@ -215,16 +189,12 @@ Generate comprehensive insights about this repository including:
 5. Recommendations for maintainers
 
 Provide actionable insights in a clear, structured format.`);
-    
-    // Return the summary text from the response
-    const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
-    res.setHeader('Content-Type', 'text/plain');
-    res.send(insights);
-  } catch (error) {
-    const err = error as Error;
-    res.status(500).json({ error: `Error generating insights: ${err.message}` });
-  }
-});
+  
+  // Return the summary text from the response
+  const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(insights);
+}));
 
 // Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req: Request, res: Response) => {
@@ -425,21 +395,15 @@ app.post('/api/analyze', (req, res, next) => {
 });
 
 // Endpoint to validate GitHub token
-app.post('/api/validate-github-token', (async (req: Request, res: Response) => {
-  try {
-    const { token } = req.body;
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ isValid: false, error: 'Token is required and must be a string.' });
-    }
-    const analysisService = new BackendAnalysisService(token);
-    const result = await analysisService.validateGithubToken(token);
-    res.status(200).json(result);
-  } catch (error) {
-    const err = error as Error;
-    console.error('GitHub token validation error:', err.message);
-    res.status(500).json({ isValid: false, error: `Token validation failed: ${err.message}` });
+app.post('/api/validate-github-token', safeAsync(async (req: Request, res: Response) => {
+  const { token } = req.body;
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ isValid: false, error: 'Token is required and must be a string.' });
   }
-}) as express.RequestHandler);
+  const analysisService = new BackendAnalysisService(token);
+  const result = await analysisService.validateGithubToken(token);
+  res.status(200).json(result);
+}));
 
 // Endpoint to check for environment keys (for open source setup)
 app.get('/api/check-env-keys', (_req: Request, res: Response) => {
@@ -453,6 +417,9 @@ app.get('/api/check-env-keys', (_req: Request, res: Response) => {
 });
 
 // Single-process mode (cluster integration removed)
+
+// Centralized error handler
+app.use(errorHandler);
 
 app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);

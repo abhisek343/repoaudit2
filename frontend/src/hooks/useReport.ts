@@ -8,32 +8,48 @@ export const useReport = (repoId?: string) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchReport = async () => {
       if (!repoId) {
-        setError("No report ID provided.");
-        setLoading(false);
+        if (isMounted) {
+          setError("No report ID provided.");
+          setLoading(false);
+        }
         return;
       }
 
-      setLoading(true);
-      setError(null);
+      if (isMounted) {
+        setLoading(true);
+        setError(null);
+      }
 
       try {
         const report = await loadReport('lastAnalysisResult');
-        if (report) {
-          setReportData(report);
-        } else {
-          setError('Failed to load report data. It might not exist or is corrupted.');
+        if (isMounted) {
+          if (report) {
+            setReportData(report);
+          } else {
+            setError('Failed to load report data. It might not exist or is corrupted.');
+          }
         }
       } catch (e) {
         console.error('Failed to load report:', e);
-        setError(e instanceof Error ? e.message : 'An unknown error occurred.');
+        if (isMounted) {
+          setError(e instanceof Error ? e.message : 'An unknown error occurred.');
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchReport();
+
+    return () => {
+      isMounted = false;
+    };
   }, [repoId]);
 
   return { reportData, isLoading, error };

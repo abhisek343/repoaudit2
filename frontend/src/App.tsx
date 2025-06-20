@@ -128,7 +128,6 @@ function App() {
         
         // Debug analysis data
         setInitProgress(50);
-        await debugAnalysisData();
         
         if (!isMounted) return;
         
