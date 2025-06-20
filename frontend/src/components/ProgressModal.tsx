@@ -15,6 +15,13 @@ interface ProgressModalProps {
 const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel }: ProgressModalProps) => {
   const [elapsed, setElapsed] = useState(0);
 
+  // Debug logging for progress updates
+  useEffect(() => {
+    if (isOpen && !error) {
+      console.log(`📊 ProgressModal update: step="${currentStep}", progress=${progress}%`);
+    }
+  }, [currentStep, progress, isOpen, error]);
+
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     if (isOpen && !error) {

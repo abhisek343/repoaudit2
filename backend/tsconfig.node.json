@@ -5,13 +5,13 @@
     "module": "CommonJS",
     "skipLibCheck": true,
     "outDir": "./dist-server",
+    "types": ["node"],
 
     /* Bundler mode */
     "moduleResolution": "node",
     // "allowImportingTsExtensions": true, // Not needed for CommonJS server
     // "isolatedModules": true, // Not needed for CommonJS server
-    "moduleDetection": "force",
-    "noEmit": false,
+    "moduleDetection": "force",    "noEmit": false,
 
     /* Linting */
     "strict": true,
@@ -21,5 +21,6 @@
     "resolveJsonModule": true, // Often useful in Node.js projects
     "esModuleInterop": true // For better compatibility with CommonJS modules
   },
-  "include": ["server.ts"]
+  "include": ["server.ts", "src/**/*"],
+  "exclude": ["src/**/*.test.ts", "src/**/__tests__/**/*"]
 }

@@ -1,9 +1,10 @@
-import { LLMConfig, AnalysisResult, Contributor, ArchitectureData, BasicRepositoryInfo, RepositoryData, FileInfo, ProcessedCommit, Hotspot, SecurityIssue, TechnicalDebtItem, PerformanceMetric, KeyFunction, APIEndpoint, QualityMetrics, AnalysisWarning } from '../types';
+import { LLMConfig, AnalysisResult, Contributor } from '../types';
 import { StorageService } from './storageService';
 
 export class AnalysisService {
   private githubToken: string | undefined;
   private llmConfig: LLMConfig | undefined;
+  private isCancelled: boolean = false;
 
   constructor(githubToken?: string, llmConfig?: LLMConfig) {
     this.githubToken = githubToken;
@@ -13,118 +14,305 @@ export class AnalysisService {
   analyzeRepository(
     repoUrl: string,
     onProgress: (step: string, progress: number) => void,
-  ): { eventSource: EventSource; analysisPromise: Promise<AnalysisResult> } {
+  ): { eventSource: EventSource; analysisPromise: Promise<AnalysisResult>; cancel: () => void } {
+    this.isCancelled = false;
     const params = new URLSearchParams();
     params.append('repoUrl', repoUrl);
     
     if (this.llmConfig) {
-        console.log('Sending LLM config to backend:', this.llmConfig); // ADD THIS DEBUG
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Sending LLM config to backend:', this.llmConfig);
+        }
         params.append('llmConfig', JSON.stringify(this.llmConfig));
     }
     if (this.githubToken) {
       params.append('githubToken', this.githubToken);
     }
 
-    const eventSource = new EventSource(`/api/analyze?${params.toString()}`);
+    const eventSourceUrl = `/api/analyze?${params.toString()}`;
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔗 Creating EventSource with URL:', eventSourceUrl);
+    }
+
+    const eventSource = new EventSource(eventSourceUrl);
     
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔗 EventSource created with readyState:', eventSource.readyState);
+      console.log('🔗 EventSource CONNECTING =', EventSource.CONNECTING);
+      console.log('🔗 EventSource OPEN =', EventSource.OPEN);
+      console.log('🔗 EventSource CLOSED =', EventSource.CLOSED);
+    }
+
+    let retryTimeout: NodeJS.Timeout | null = null;    const cleanup = () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+        retryTimeout = null;
+      }
+      if (eventSource.readyState !== EventSource.CLOSED) {
+        console.log('Closing EventSource connection');
+        eventSource.close();
+      }
+    };
+
+    const cancel = () => {
+      console.log('Analysis cancelled by user');
+      this.isCancelled = true;
+      cleanup();
+    };
+
     const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {      
+      let retryCount = 0;
+      const maxRetries = 3;      // Handle connection open
       eventSource.onopen = () => {
-        console.log('EventSource connection opened');
-        console.log('EventSource readyState:', eventSource.readyState);
-      };
-      
-      // Add more debugging for connection state
-      const originalClose = eventSource.close.bind(eventSource);
-      eventSource.close = () => {
-        console.log('EventSource closing - readyState:', eventSource.readyState);
-        originalClose();
-      };
-        eventSource.onmessage = (event) => {
-        console.log('Received SSE message:', { 
-          type: event.type, 
-          data: event.data,
-          lastEventId: event.lastEventId,
-          origin: event.origin 
-        });
-        try {
-          const data = JSON.parse(event.data);
-          console.log('Parsed message data:', data);
-          
-          // Handle keep-alive messages
-          if (data.type === 'keep-alive') {
-            console.log('Received keep-alive message');
-            return;
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔗 SSE Connection established, readyState:', eventSource.readyState);
+        }
+        retryCount = 0;
+      };      // Handle explicit 'progress' events
+      eventSource.addEventListener('progress', (event) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📈 Raw progress event received:', event);
+          console.log('📈 Event data:', (event as MessageEvent).data);
+        }
+        
+        if (this.isCancelled) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Progress event received but analysis was cancelled, ignoring');
           }
-          
+          return;
+        }
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          if (process.env.NODE_ENV === 'development') {
+            console.log('📈 Parsed progress data:', data);
+          }
           if (data.step && typeof data.progress === 'number') {
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`🔄 Calling onProgress: ${data.step} - ${data.progress}%`);
+            }
             onProgress(data.step, data.progress);
+          } else {
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('📈 Progress event missing step or progress:', data);
+            }
           }
         } catch (error) {
-          console.error('Failed to parse message data', event.data, error);
+          console.error('Error parsing progress event:', error);
+        }
+      });      // Also handle generic 'message' events as fallback for progress
+      eventSource.onmessage = (event) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📨 Generic message event received:', event);
+          console.log('📨 Message data:', event.data);
+        }
+        
+        if (this.isCancelled) return;
+        
+        try {
+          const data = JSON.parse(event.data);
+          // Handle progress events that might come through onmessage
+          if (data.step && typeof data.progress === 'number') {
+            if (process.env.NODE_ENV === 'development') {
+              console.log('📈 Progress via onmessage fallback:', data);
+            }
+            onProgress(data.step, data.progress);
+          }
+        } catch {
+          // Ignore parse errors for non-JSON messages
+          if (process.env.NODE_ENV === 'development') {
+            console.log('📨 Non-JSON message ignored:', event.data);
+          }
         }
       };
 
-      eventSource.addEventListener('complete', async event => {
-        console.log('🎉 COMPLETE EVENT RECEIVED!', event);
+      // Handle completion events
+      eventSource.addEventListener('complete', (event) => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
         try {
-          // Clear timeout removed to avoid premature timeout
-          console.log('Received complete event data:', (event as MessageEvent).data);
           const result = JSON.parse((event as MessageEvent).data) as Partial<AnalysisResult>;
+          console.log('Received analysis result from backend:', {
+            id: result.id,
+            repositoryUrl: result.repositoryUrl,
+            hasMetrics: !!result.metrics,
+            hasFiles: !!result.files && result.files.length > 0,
+            hasContributors: !!result.contributors && result.contributors.length > 0,
+            dataKeys: Object.keys(result)
+          });
+          
           onProgress('Analysis complete!', 100);
-          eventSource.close();
+          cleanup();
           
           const finalResult = this.ensureDefaults(result, repoUrl);
           
-          // Persist to storage (IndexedDB)
-          await StorageService.storeAnalysisResult(finalResult);
+          // Add additional validation before persisting
+          if (!this.validateAnalysisResult(finalResult)) {
+            console.error('Analysis result validation failed:', finalResult);
+            reject(new Error('Invalid analysis result received from backend'));
+            return;
+          }
           
-          // Log any warnings from the backend
-          if (finalResult.analysisWarnings && finalResult.analysisWarnings.length > 0) {
-            console.warn('Analysis completed with warnings from the backend:');
-            finalResult.analysisWarnings.forEach(warning => {
-              console.warn(`[${warning.step}]: ${warning.message}`, warning.error || '');
-            });
-          }
+          // Persist to storage (IndexedDB) with error handling
+          StorageService.storeAnalysisResult(finalResult).then(() => {
+            console.log('Analysis result successfully stored to IndexedDB');
+            
+            // Log any warnings from the backend
+            if (finalResult.analysisWarnings && finalResult.analysisWarnings.length > 0) {
+              console.warn('Analysis completed with warnings from the backend:');
+              finalResult.analysisWarnings.forEach(warning => {
+                console.warn(`[${warning.step}]: ${warning.message}`, warning.error || '');
+              });
+            }
 
-          resolve(finalResult);
-        } catch (e) {
-          // Clear timeout removed to avoid premature timeout
-          console.error('Failed to parse complete message:', e);
-          console.error('Event data:', (event as MessageEvent).data);
-          eventSource.close();
-          reject(new Error('Failed to parse final analysis result.'));
+            resolve(finalResult);
+          }).catch(e => {
+            console.error('Failed to store analysis result:', e);
+            // Still resolve with the result even if storage fails
+            console.warn('Continuing with analysis result despite storage failure');
+            resolve(finalResult);
+          });
+        } catch (error) {
+          console.error('Error parsing completion event:', error);
+          reject(new Error('Failed to parse analysis result'));
         }
-      });      eventSource.addEventListener('error', (event) => {
-        // Clear timeout removed to avoid premature timeout
-        console.error('EventSource error:', event);
-        console.log('EventSource readyState:', eventSource.readyState);
-        console.log('Error event data:', (event as MessageEvent).data); // Log event.data
-        console.log('Error event type:', event.type);
-        console.log('Error event target:', event.target);
+      });      // Handle error events
+      eventSource.addEventListener('error', (event) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('❌ SSE Error event received:', event);
+          console.log('❌ EventSource readyState:', eventSource.readyState);
+          console.log('❌ EventSource url:', eventSource.url);
+        }
         
-        // Check if this is a network error or server error
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+
+        const error = event as MessageEvent;
+        console.error('SSE Error:', error);
+        
         if (eventSource.readyState === EventSource.CLOSED) {
-          console.log('EventSource was closed');
-        } else if (eventSource.readyState === EventSource.CONNECTING) {
-          console.log('EventSource is reconnecting');
-        }
-        
-        try {
-          if ((event as MessageEvent).data) {
-            const errorData = JSON.parse((event as MessageEvent).data);
-            reject(new Error(errorData.error || 'An unknown error occurred during analysis.'));
+          console.error('EventSource connection closed');
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Attempting to reconnect (${retryCount}/${maxRetries})`);
+            // Wait for exponential backoff before retrying
+            cleanup(); // Clean up any existing retry timeout
+            retryTimeout = setTimeout(() => {
+              const newEventSource = new EventSource(eventSourceUrl);
+              Object.assign(eventSource, newEventSource);
+            }, Math.pow(2, retryCount) * 1000);
           } else {
-            reject(new Error('Analysis failed due to a connection error or server issue.'));
+            cleanup();
+            reject(new Error('Connection failed after maximum retries'));
           }
-        } catch {
-          reject(new Error('Analysis failed due to a connection error or server issue.'));
-        } finally {
-          eventSource.close();
         }
       });
+
+      // Handle explicit error messages from server
+      eventSource.addEventListener('error-message', (event) => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          cleanup();
+          reject(new Error(data.error || 'Unknown error occurred'));        } catch {
+          reject(new Error('Failed to parse error message'));
+        }
+      });
+
+      // Handle generic EventSource errors (connection issues, etc.)
+      eventSource.onerror = (event) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('🚨 EventSource error occurred:', event);
+          console.log('🚨 EventSource readyState:', eventSource.readyState);
+          console.log('🚨 EventSource CONNECTING:', EventSource.CONNECTING);
+          console.log('🚨 EventSource OPEN:', EventSource.OPEN);
+          console.log('🚨 EventSource CLOSED:', EventSource.CLOSED);
+        }
+      };
     });
 
-    return { eventSource, analysisPromise };
+    return { eventSource, analysisPromise, cancel };
+  }
+
+  // Test method to verify EventSource connection
+  testEventSource(): void {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🧪 Testing EventSource connection...');
+      const testUrl = '/api/analyze?repoUrl=https://github.com/test/test';
+      const testEventSource = new EventSource(testUrl);
+      
+      testEventSource.onopen = () => {
+        console.log('🧪 Test EventSource connected successfully');
+        testEventSource.close();
+      };
+      
+      testEventSource.onerror = (error) => {
+        console.error('🧪 Test EventSource failed:', error);
+        console.error('🧪 Test EventSource readyState:', testEventSource.readyState);
+        testEventSource.close();
+      };
+      
+      testEventSource.onmessage = (event) => {
+        console.log('🧪 Test EventSource received message:', event.data);
+      };
+      
+      // Close after 5 seconds
+      setTimeout(() => {
+        if (testEventSource.readyState !== EventSource.CLOSED) {
+          console.log('🧪 Closing test EventSource');
+          testEventSource.close();
+        }
+      }, 5000);
+    }
+  }
+
+  // Add validation method to ensure data integrity
+  private validateAnalysisResult(result: AnalysisResult): boolean {
+    try {
+      // Check required fields
+      if (!result.id || !result.repositoryUrl || !result.createdAt) {
+        console.error('Missing required fields:', { id: result.id, repositoryUrl: result.repositoryUrl, createdAt: result.createdAt });
+        return false;
+      }
+
+      // Check that basic info exists
+      if (!result.basicInfo || !result.repository) {
+        console.error('Missing basicInfo or repository data');
+        return false;
+      }
+
+      // Check that metrics exist
+      if (!result.metrics) {
+        console.error('Missing metrics data');
+        return false;
+      }      // Check that arrays are actually arrays
+      const arrayFields: (keyof AnalysisResult)[] = ['files', 'commits', 'contributors', 'hotspots', 'securityIssues', 'technicalDebt', 'performanceMetrics', 'keyFunctions', 'apiEndpoints'];
+      for (const field of arrayFields) {
+        if (result[field] && !Array.isArray(result[field])) {
+          console.error(`Field ${field} should be an array but is:`, typeof result[field]);
+          return false;
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error validating analysis result:', error);
+      return false;
+    }
   }
 
   // Add methods for persistence using StorageService
@@ -245,73 +433,43 @@ export class AnalysisService {
       fileSystemTree: { name: 'root', path: '/', size: 0, type: 'directory', children: [] },
       churnSunburstData: { name: 'root', path: '/', type: 'directory', churnRate: 0, children: [] },
       contributorStreamData: [],
-    };
-
-    const finalResultObject: AnalysisResult = {
+    };    const finalResultObject: AnalysisResult = {
       ...defaults,
       ...(result || {}),
-
       id: result?.id || defaults.id,
       repositoryUrl: result?.repositoryUrl || repoUrl,
       createdAt: result?.createdAt || now,
       aiSummary: result?.aiSummary ?? defaults.aiSummary,
-
       basicInfo: {
         ...defaults.basicInfo,
         ...(result?.basicInfo || {}),
-      } as BasicRepositoryInfo, // Ensure type
-      repository: { 
+      },      repository: { 
         ...defaults.repository,
-        ...(result?.repository || {}),
-        owner: result?.repository?.owner || defaults.repository?.owner || defaultOwner,
-      } as RepositoryData, // Ensure type, especially for id and owner
+        ...(result?.repository || {})
+      } as typeof defaults.repository,
       metrics: {
         ...defaults.metrics,
         ...(result?.metrics || {}),
-        fileCount: result?.files?.length ?? result?.metrics?.fileCount ?? defaults.metrics.fileCount,
-      } as AnalysisResult['metrics'], // Ensure type
-      dependencies: { 
-        ...(defaults.dependencies as ArchitectureData),
-        ...(result?.dependencies || {}),
-        nodes: result?.dependencies?.nodes || (defaults.dependencies as ArchitectureData).nodes || [],
-        links: result?.dependencies?.links || (defaults.dependencies as ArchitectureData).links || [],
-      } as ArchitectureData,
-      dependencyGraph: {
-        ...(defaults.dependencyGraph as ArchitectureData),
-        ...(result?.dependencyGraph || {}),
-        nodes: result?.dependencyGraph?.nodes || (defaults.dependencyGraph as ArchitectureData).nodes || [],
-        links: result?.dependencyGraph?.links || (defaults.dependencyGraph as ArchitectureData).links || [],
-      } as ArchitectureData,
-      qualityMetrics: {
-        ...defaults.qualityMetrics,
-        ...(result?.qualityMetrics || {}),
-      } as QualityMetrics,
-      languages: {
-        ...defaults.languages,
-        ...(result?.languages || {}),
       },
-      advancedAnalysis: {
-        // ...defaults.advancedAnalysis, // This might be too generic if advancedAnalysis has required fields
-        ...(result?.advancedAnalysis || {}), // For now, keep it simple, ensure it's an object
-        churnSunburstData: result?.churnSunburstData || defaults.churnSunburstData,
-      },
-      files: result?.files || defaults.files as FileInfo[],
-      commits: result?.commits || defaults.commits as ProcessedCommit[],
-      contributors: result?.contributors || defaults.contributors as Contributor[],
-      hotspots: result?.hotspots || defaults.hotspots as Hotspot[],
-      securityIssues: result?.securityIssues || defaults.securityIssues as SecurityIssue[],
-      technicalDebt: result?.technicalDebt || defaults.technicalDebt as TechnicalDebtItem[],
-      performanceMetrics: result?.performanceMetrics || defaults.performanceMetrics as PerformanceMetric[],
-      keyFunctions: result?.keyFunctions || defaults.keyFunctions as KeyFunction[],
-      apiEndpoints: result?.apiEndpoints || defaults.apiEndpoints as APIEndpoint[],
-      analysisWarnings: result?.analysisWarnings || defaults.analysisWarnings as AnalysisWarning[],
-      
-      dependencyWheelData: result?.dependencyWheelData || defaults.dependencyWheelData as Array<{ source: string; target: string; value: number }>,
-      fileSystemTree: result?.fileSystemTree || defaults.fileSystemTree as FileNode,
-      contributorStreamData: result?.contributorStreamData || defaults.contributorStreamData as Array<{ date: string; contributors: Record<string, number> }>,
+      files: result?.files || [],
+      commits: result?.commits || [],
+      contributors: result?.contributors || [],
+      hotspots: result?.hotspots || [],
+      securityIssues: result?.securityIssues || [],
+      technicalDebt: result?.technicalDebt || [],
+      performanceMetrics: result?.performanceMetrics || [],
+      keyFunctions: result?.keyFunctions || [],
+      apiEndpoints: result?.apiEndpoints || [],
+      languages: result?.languages || {},
+      dependencyGraph: result?.dependencyGraph || { nodes: [], links: [] },
+      qualityMetrics: result?.qualityMetrics || {},
+      architectureAnalysis: result?.architectureAnalysis || '',
+      analysisWarnings: result?.analysisWarnings || [],
+      dependencyWheelData: result?.dependencyWheelData || [],
+      fileSystemTree: result?.fileSystemTree || { name: 'root', path: '/', size: 0, type: 'directory', children: [] },
+      churnSunburstData: result?.churnSunburstData || { name: 'root', path: '/', type: 'directory', churnRate: 0, children: [] },
+      contributorStreamData: result?.contributorStreamData || [],
     };
-    
-    // console.log('[ensureDefaults] Final merged result object (id):', finalResultObject.id);
 
     return finalResultObject;
   }

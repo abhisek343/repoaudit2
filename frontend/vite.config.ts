@@ -14,8 +14,24 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         // keep-alive for SSE; disable ws so it does not treat it as websocket
-        ws: false
-      },
-    },
-  },
+        ws: false,        // Configure proxy for streaming responses
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Ensure streaming responses aren't buffered
+            if (req.url?.includes('/analyze')) {
+              proxyReq.setHeader('Cache-Control', 'no-cache');
+            }
+          });
+          proxy.on('proxyRes', (proxyRes, req) => {
+            // Ensure SSE responses aren't buffered by proxy
+            if (req.url?.includes('/analyze')) {
+              proxyRes.headers['cache-control'] = 'no-cache';
+              proxyRes.headers['connection'] = 'keep-alive';
+              proxyRes.headers['x-accel-buffering'] = 'no';
+            }
+          });
+        }
+      }
+    }
+  }
 });

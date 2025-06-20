@@ -4,9 +4,128 @@ import {
   TechnicalDebt,
   APIEndpoint,
   FileInfo,
-  FunctionInfo
+  FunctionInfo,
+  FunctionParameter
 } from '../types';
 import { LLMService, LLMError as CustomLLMError } from './llmService';
+
+// Enhanced language detection and parsing utilities
+interface LanguageParser {
+  name: string;
+  extensions: string[];
+  functionRegex: RegExp;
+  classRegex?: RegExp;
+  importRegex?: RegExp;
+  commentRegex: RegExp;
+  complexityKeywords: string[];
+}
+
+const LANGUAGE_PARSERS: Record<string, LanguageParser> = {
+  javascript: {
+    name: 'JavaScript',
+    extensions: ['.js', '.jsx', '.mjs', '.cjs'],
+    functionRegex: /(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\(.*?\)\s*=>)|(\w+)\s*:\s*(?:async\s+)?function|(\w+)\s*\(.*?\)\s*\{)/g,
+    classRegex: /class\s+(\w+)/g,
+    importRegex: /(?:import.*from\s+['"`]([^'"`]+)['"`]|require\s*\(\s*['"`]([^'"`]+)['"`]\s*\))/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'switch', 'case', 'catch', 'try', '&&', '||', '?']
+  },
+  typescript: {
+    name: 'TypeScript',
+    extensions: ['.ts', '.tsx'],
+    functionRegex: /(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\(.*?\)\s*=>)|(\w+)\s*:\s*(?:async\s+)?function|(\w+)\s*\(.*?\)\s*\{)/g,
+    classRegex: /(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/g,
+    importRegex: /(?:import.*from\s+['"`]([^'"`]+)['"`]|require\s*\(\s*['"`]([^'"`]+)['"`]\s*\))/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'switch', 'case', 'catch', 'try', '&&', '||', '?']
+  },
+  python: {
+    name: 'Python',
+    extensions: ['.py', '.pyw', '.pyi'],
+    functionRegex: /(?:def\s+(\w+)|class\s+(\w+))/g,
+    classRegex: /class\s+(\w+)/g,
+    importRegex: /(?:from\s+(\S+)\s+import|import\s+(\S+))/g,
+    commentRegex: /#.*|'''[\s\S]*?'''|"""[\s\S]*?"""/g,
+    complexityKeywords: ['if', 'elif', 'else', 'for', 'while', 'try', 'except', 'with', 'and', 'or']
+  },
+  java: {
+    name: 'Java',
+    extensions: ['.java'],
+    functionRegex: /(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*\{/g,
+    classRegex: /(?:public\s+)?(?:abstract\s+)?class\s+(\w+)/g,
+    importRegex: /import\s+([^;]+);/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'switch', 'case', 'catch', 'try', '&&', '||', '?']
+  },
+  go: {
+    name: 'Go',
+    extensions: ['.go'],
+    functionRegex: /func\s+(?:\([^)]*\)\s+)?(\w+)\s*\([^)]*\)/g,
+    importRegex: /import\s+(?:"([^"]+)"|(\w+)\s+"([^"]+)")/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'switch', 'case', 'select', '&&', '||']
+  },
+  rust: {
+    name: 'Rust',
+    extensions: ['.rs'],
+    functionRegex: /fn\s+(\w+)\s*\([^)]*\)/g,
+    importRegex: /use\s+([^;]+);/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'loop', 'match', '&&', '||']
+  },
+  csharp: {
+    name: 'C#',
+    extensions: ['.cs'],
+    functionRegex: /(?:public|private|protected|internal)?\s*(?:static\s+)?(?:virtual\s+)?(?:override\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*\{/g,
+    classRegex: /(?:public\s+)?(?:abstract\s+)?class\s+(\w+)/g,
+    importRegex: /using\s+([^;]+);/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\//g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'switch', 'case', 'catch', 'try', '&&', '||', '?']
+  },
+  php: {
+    name: 'PHP',
+    extensions: ['.php'],
+    functionRegex: /function\s+(\w+)\s*\([^)]*\)/g,
+    classRegex: /class\s+(\w+)/g,
+    importRegex: /(?:require|include)(?:_once)?\s*['"`]([^'"`]+)['"`]/g,
+    commentRegex: /\/\/.*|\/\*[\s\S]*?\*\/|#.*/g,
+    complexityKeywords: ['if', 'else', 'for', 'while', 'switch', 'case', 'catch', 'try', '&&', '||', '?']
+  },
+  ruby: {
+    name: 'Ruby',
+    extensions: ['.rb'],
+    functionRegex: /def\s+(\w+)/g,
+    classRegex: /class\s+(\w+)/g,
+    importRegex: /require\s+['"`]([^'"`]+)['"`]/g,
+    commentRegex: /#.*/g,
+    complexityKeywords: ['if', 'else', 'elsif', 'for', 'while', 'case', 'when', 'rescue', '&&', '||']
+  }
+};
+
+// Enhanced function parsing with multi-language support
+function calculateEnhancedComplexity(content: string, language: string): number {
+  const parser = LANGUAGE_PARSERS[language];
+  if (!parser) return 1;
+  
+  let complexity = 1;
+  
+  // Remove comments to avoid false positives
+  const cleanContent = content.replace(parser.commentRegex, '');
+  
+  // Count complexity keywords
+  for (const keyword of parser.complexityKeywords) {
+    const regex = new RegExp(`\\b${keyword}\\b`, 'g');
+    const matches = cleanContent.match(regex);
+    complexity += matches ? matches.length : 0;
+  }
+  
+  // Additional complexity for nested structures
+  const nestedBraces = cleanContent.match(/\{/g)?.length || 0;
+  complexity += Math.floor(nestedBraces / 5); // Add 1 for every 5 braces
+  
+  return Math.min(100, complexity);
+}
+
 
 // Custom error types for better error handling
 export class AnalysisError extends Error {
@@ -449,7 +568,7 @@ ${debtText}
 Selected Code Hotspots (up to 5):
 ${hotspotsText}
 
-For each roadmap item, provide a JSON object: {"priority": number (1-5, 1 highest), "title": string, "description": string (what and why), "effort": "Small/Medium/Large or time estimate", "impact": "Low/Medium/High or benefits", "files": ["relevant/file/path.ext"]}.
+For each roadmap item, provide a JSON object: {"priority": number (1-5, 1 highest), "title": string, "description": string, "effort": "Small/Medium/Large or time estimate", "impact": "Low/Medium/High or benefits", "files": ["relevant/file/path.ext"]}.
 Prioritize tasks that address high-severity debt, critical hotspots, or offer significant architectural/maintainability improvements.
 Return ONLY a JSON array of roadmap items.
 `;
@@ -473,79 +592,252 @@ Return ONLY a JSON array of roadmap items.
       return [];
     }
   }
-
   async parseFunctions(fileContent: string, language?: string): Promise<FunctionInfo[]> {
     const functions: FunctionInfo[] = [];
     if (!fileContent) return functions;
 
-    let regex: RegExp;
-    switch (language?.toLowerCase()) {
-        case 'javascript':
-        case 'typescript':
-            regex = /(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)|const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>|([a-zA-Z0-9_$]+)\s*\(([^)]*)\)\s*(?:\{|=>)/g;
-            break;
-        case 'python':
-            regex = /def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\):/g;
-            break;
-        default:
-            return functions; 
-    }
-
+    // Determine language if not provided
+    const detectedLanguage = language?.toLowerCase() || 'javascript';
+    const parser = LANGUAGE_PARSERS[detectedLanguage];
+    
+    if (!parser) {
+      console.warn(`No parser available for language: ${detectedLanguage}`);
+      return functions;
+    }    // Remove comments to avoid false positives
+    const cleanContent = fileContent.replace(parser.commentRegex, '');
+    
     let match;
-    const lines = fileContent.split('\n');
-    while ((match = regex.exec(fileContent)) !== null) {        const functionName = match[1] || match[3] || match[5] || 'anonymous';
-        const paramsString = match[2] || match[4] || match[6] || '';
-        
-        const parameters: FunctionInfo['parameters'] = paramsString
-            .split(',')
-            .map(param => param.trim())
-            .filter(param => param.length > 0)
-            .map(param => {
-                const parts = param.split(/[:=?]/).map(p => p.trim());
-                const name = parts[0];
-                let type: string | undefined = undefined;
-                if (param.includes(':')) {
-                    const typeMatch = param.match(/:\s*([^{}\[\],]+)/);
-                    if (typeMatch && typeMatch[1]) {
-                        type = typeMatch[1].trim();
-                    }
-                }
-
-                return {
-                    name: name,
-                    type: type || 'any',
-                    optional: param.includes('?'),
-                };
-            });
-
-        const matchIndex = match.index!;
-        let currentChars = 0;
-        let startLine = 0;
-        for(let i = 0; i < lines.length; i++) {
-            currentChars += lines[i].length + 1; 
-            if(currentChars >= matchIndex) {
-                startLine = i + 1;
-                break;
-            }
+    const functionRegex = new RegExp(parser.functionRegex.source, 'g');
+    
+    while ((match = functionRegex.exec(cleanContent)) !== null) {
+      // Extract function name from any capture group
+      const functionName = match[1] || match[2] || match[3] || match[4] || 'anonymous';
+      
+      if (!functionName || functionName === 'anonymous') continue;
+      
+      // Find the line number of the function
+      const lineIndex = fileContent.substring(0, match.index).split('\n').length - 1;
+      const lineNumber = lineIndex + 1;
+      
+      // Extract function body for complexity analysis
+      const startPos = match.index;
+      let endPos = startPos;
+      let braceCount = 0;
+      let inFunction = false;
+      
+      for (let i = startPos; i < cleanContent.length; i++) {
+        const char = cleanContent[i];
+        if (char === '{') {
+          braceCount++;
+          inFunction = true;
+        } else if (char === '}') {
+          braceCount--;
+          if (inFunction && braceCount === 0) {
+            endPos = i + 1;
+            break;
+          }
         }
-        
-        const functionBodyMatch = match[0];
-        const sloc = functionBodyMatch.split('\n').length;
-
+      }
+      
+      const functionBody = cleanContent.substring(startPos, endPos);
+      const complexity = calculateEnhancedComplexity(functionBody, detectedLanguage);
+      
+      // Extract parameters based on language
+      let parameters: FunctionInfo['parameters'] = [];
+      
+      try {
+        parameters = this.extractParameters(match[0], detectedLanguage);
+      } catch (error) {
+        console.warn(`Failed to parse parameters for function ${functionName}:`, error);
+      }
         functions.push({
-            name: functionName,
-            startLine: startLine,
-            endLine: startLine + (sloc - 1),
-            parameters: parameters,
-            sloc: sloc,
-            calls: [],
-            description: `Function ${functionName}`,
-            isAsync: !!match[0].match(/^async\s+/),
-            content: functionBodyMatch
-        });
+        name: functionName,
+        parameters,
+        cyclomaticComplexity: complexity,
+        startLine: lineNumber,
+        endLine: lineNumber + functionBody.split('\n').length - 1,
+        isAsync: /\basync\b/.test(match[0]),
+        content: functionBody
+      });
     }
+
     return functions;
   }
+
+  private extractParameters(functionSignature: string, language: string): FunctionInfo['parameters'] {
+    const parameters: FunctionInfo['parameters'] = [];
+    
+    // Extract parameter list from function signature
+    let paramsMatch: RegExpMatchArray | null = null;
+    
+    switch (language) {
+      case 'javascript':
+      case 'typescript':
+        paramsMatch = functionSignature.match(/\(([^)]*)\)/);
+        break;
+      case 'python':
+        paramsMatch = functionSignature.match(/\(([^)]*)\):/);
+        break;
+      case 'java':
+      case 'csharp':
+        paramsMatch = functionSignature.match(/\(([^)]*)\)\s*\{/);
+        break;
+      case 'go':
+        paramsMatch = functionSignature.match(/\(([^)]*)\)/);
+        break;
+      case 'rust':
+        paramsMatch = functionSignature.match(/\(([^)]*)\)/);
+        break;
+      default:
+        paramsMatch = functionSignature.match(/\(([^)]*)\)/);
+    }
+    
+    if (!paramsMatch || !paramsMatch[1]) return parameters;
+    
+    const paramsString = paramsMatch[1].trim();
+    if (!paramsString) return parameters;
+    
+    const paramList = this.splitParameters(paramsString);
+    
+    for (const param of paramList) {
+      const trimmedParam = param.trim();
+      if (!trimmedParam) continue;
+      
+      const paramInfo = this.parseParameter(trimmedParam, language);
+      if (paramInfo) {
+        parameters.push(paramInfo);
+      }
+    }
+    
+    return parameters;
+  }
+
+  private splitParameters(paramsString: string): string[] {
+    const params: string[] = [];
+    let current = '';
+    let depth = 0;
+    let inString = false;
+    let stringChar = '';
+    
+    for (let i = 0; i < paramsString.length; i++) {
+      const char = paramsString[i];
+      
+      if (!inString && (char === '"' || char === "'" || char === '`')) {
+        inString = true;
+        stringChar = char;
+      } else if (inString && char === stringChar && paramsString[i - 1] !== '\\') {
+        inString = false;
+        stringChar = '';
+      } else if (!inString) {
+        if (char === '(' || char === '[' || char === '{' || char === '<') {
+          depth++;
+        } else if (char === ')' || char === ']' || char === '}' || char === '>') {
+          depth--;
+        } else if (char === ',' && depth === 0) {
+          params.push(current.trim());
+          current = '';
+          continue;
+        }
+      }
+      
+      current += char;
+    }
+    
+    if (current.trim()) {
+      params.push(current.trim());
+    }
+    
+    return params;
+  }
+
+  private parseParameter(param: string, language: string): FunctionParameter | null {
+    let name = '';
+    let type = 'any';
+    let optional = false;
+    
+    switch (language) {
+      case 'typescript':
+        // Handle TypeScript: name: type, name?: type, name: type = default
+        const tsMatch = param.match(/^(\w+)(\?)?:\s*([^=]+)(?:\s*=\s*.*)?$/);
+        if (tsMatch) {
+          name = tsMatch[1];
+          optional = !!tsMatch[2];
+          type = tsMatch[3].trim();
+        } else {
+          // Fallback for simple cases
+          const simpleTsMatch = param.match(/^(\w+)/);
+          name = simpleTsMatch ? simpleTsMatch[1] : param;
+        }
+        break;
+        
+      case 'javascript':
+        // Handle JavaScript: name, name = default
+        const jsMatch = param.match(/^(\w+)(?:\s*=\s*.*)?$/);
+        if (jsMatch) {
+          name = jsMatch[1];
+          optional = param.includes('=');
+        } else {
+          name = param;
+        }
+        break;
+        
+      case 'python':
+        // Handle Python: name, name: type, name = default, name: type = default
+        const pyMatch = param.match(/^(\w+)(?:\s*:\s*([^=]+))?(?:\s*=\s*.*)?$/);
+        if (pyMatch) {
+          name = pyMatch[1];
+          type = pyMatch[2] ? pyMatch[2].trim() : 'Any';
+          optional = param.includes('=');
+        } else {
+          name = param;
+        }
+        break;
+        
+      case 'java':
+      case 'csharp':
+        // Handle Java/C#: Type name, final Type name
+        const javaMatch = param.match(/(?:final\s+)?(\w+(?:<[^>]+>)?(?:\[\])?)\s+(\w+)/);
+        if (javaMatch) {
+          type = javaMatch[1];
+          name = javaMatch[2];
+        } else {
+          name = param;
+        }
+        break;
+        
+      case 'go':
+        // Handle Go: name type, name ...type
+        const goMatch = param.match(/(\w+)\s+(\.\.\.)?(.+)/);
+        if (goMatch) {
+          name = goMatch[1];
+          type = (goMatch[2] || '') + goMatch[3];
+        } else {
+          name = param;
+        }
+        break;
+        
+      case 'rust':
+        // Handle Rust: name: type, mut name: type
+        const rustMatch = param.match(/(?:mut\s+)?(\w+):\s*(.+)/);
+        if (rustMatch) {
+          name = rustMatch[1];
+          type = rustMatch[2];
+        } else {
+          name = param;
+        }
+        break;
+        
+      default:
+        name = param.match(/\w+/)?.[0] || param;
+    }
+    
+    if (!name) return null;
+    
+    return {
+      name,
+      type,
+      optional
+    };  }
 
   private extractEndpointsFromFile(file: FileInfo): APIEndpoint[] {
     const endpoints: APIEndpoint[] = [];

@@ -38,10 +38,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const compression_1 = __importDefault(require("compression"));
 const llmService_1 = require("./src/services/llmService");
 const backendAnalysisService_1 = require("./src/services/backendAnalysisService");
+const architectureController_1 = require("./src/controllers/architectureController");
+const redisCacheService_1 = require("./src/services/redisCacheService");
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3001;
+// Redis cache for analysis results
+const cacheService = new redisCacheService_1.RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
+// Initialize controllers
+const architectureController = new architectureController_1.ArchitectureController();
+// Enable gzip/brotli compression for all responses
+app.use((0, compression_1.default)());
 app.use((0, cors_1.default)()); // Enable CORS for all routes
 app.use(express_1.default.json({ limit: '50mb' }));
 // Safe serialization preserving all data and handling circular references
@@ -77,6 +86,12 @@ function handleAnalysisError(res, error) {
         catch { }
     }
 }
+// Architecture analysis endpoints
+app.post('/api/architecture/analyze', (req, res) => architectureController.analyzeArchitecture(req, res));
+app.get('/api/architecture/config', (req, res) => architectureController.getConfiguration(req, res));
+app.put('/api/architecture/config', (req, res) => architectureController.updateConfiguration(req, res));
+app.get('/api/architecture/config/export', (req, res) => architectureController.exportConfiguration(req, res));
+app.post('/api/architecture/config/import', (req, res) => architectureController.importConfiguration(req, res));
 // Endpoint to check LLM availability
 app.post('/api/llm/check', async (req, res) => {
     const { llmConfig } = req.body;
@@ -250,21 +265,59 @@ Provide actionable insights in a clear, structured format.`);
         res.status(500).json({ error: `Error generating insights: ${err.message}` });
     }
 });
-// Modified endpoint to support both GET and POST
+// Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
-    res.flushHeaders(); // Handle client disconnects gracefully
+    res.flushHeaders();
     let clientDisconnected = false;
     let keepAliveInterval = null;
+    let eventId = 0;
+    // Send keep-alive messages every 15 seconds
+    keepAliveInterval = setInterval(() => {
+        if (!clientDisconnected) {
+            try {
+                res.write(`id: ${eventId++}\nevent: keep-alive\ndata: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
+            }
+            catch (err) {
+                console.warn('Keep-alive failed, client likely disconnected');
+                clientDisconnected = true;
+                if (keepAliveInterval)
+                    clearInterval(keepAliveInterval);
+            }
+        }
+    }, 15000);
+    const sendProgress = (step, progress) => {
+        if (clientDisconnected) {
+            console.warn('Skipping progress update - client disconnected');
+            return;
+        }
+        console.log(`[${new Date().toISOString()}] Progress: ${progress}% - ${step}`);
+        try {
+            // Each event needs an ID and event type
+            res.write(`id: ${eventId++}\n` +
+                `event: progress\n` +
+                `data: ${JSON.stringify({
+                    step,
+                    progress,
+                    timestamp: Date.now()
+                })}\n\n`);
+        }
+        catch (err) {
+            console.warn('Progress write failed:', err);
+            clientDisconnected = true;
+            handleAnalysisError(res, err);
+        }
+    };
+    // Clean up on client disconnect
     req.on('close', () => {
         clientDisconnected = true;
         if (keepAliveInterval)
             clearInterval(keepAliveInterval);
-        console.warn('Client disconnected before analysis complete, aborting response stream.');
+        console.warn('Client disconnected before analysis complete');
         try {
             res.end();
         }
@@ -280,70 +333,42 @@ const handleAnalysisRequest = async (req, res) => {
         }
         catch (e) { }
     });
-    // Send keep-alive messages every 30 seconds to prevent timeout
-    keepAliveInterval = setInterval(() => {
-        if (!clientDisconnected) {
-            try {
-                res.write(`data: ${JSON.stringify({ type: 'keep-alive', timestamp: Date.now() })}\n\n`);
-            }
-            catch (err) {
-                console.warn('Keep-alive failed, client likely disconnected');
-                clientDisconnected = true;
-                if (keepAliveInterval)
-                    clearInterval(keepAliveInterval);
-            }
-        }
-    }, 30000);
-    const sendProgress = (step, progress) => {
-        if (clientDisconnected) {
-            console.warn('Skipping progress update - client disconnected');
-            return;
-        }
-        console.log(`[${new Date().toISOString()}] Progress: ${progress}% - ${step}`);
-        try {
-            // Include type and timestamp in SSE progress events
-            res.write(`data: ${JSON.stringify({ type: 'progress', step, progress, timestamp: Date.now() })}\n\n`);
-        }
-        catch (err) {
-            console.warn('Progress write failed, aborting response:', err);
-            clientDisconnected = true;
-            handleAnalysisError(res, err);
-        }
-    };
     try {
-        console.log('Received query:', req.query); // Add this line for debugging
-        // Get parameters from query (GET) or body (POST)
+        console.log('Received query:', req.query);
         const { repoUrl, llmConfig: llmConfigString, githubToken: rawGithubToken } = req.method === 'POST' ? req.body : req.query;
-        console.log('Received llmConfigString:', llmConfigString); // ADD THIS
-        const githubToken = typeof rawGithubToken === 'string' && rawGithubToken.trim() !== '' ? rawGithubToken : undefined;
+        // Parse llmConfig if provided
+        let llmConfig;
+        try {
+            llmConfig = llmConfigString ? JSON.parse(llmConfigString) : undefined;
+        }
+        catch (e) {
+            console.warn('Failed to parse llmConfig:', e);
+            llmConfig = undefined;
+        }
+        const githubToken = typeof rawGithubToken === 'string' && rawGithubToken.trim() !== ''
+            ? rawGithubToken
+            : undefined;
         if (!repoUrl) {
             const error = 'Repository URL is required';
             console.error(error);
-            res.write(`event: error\ndata: ${JSON.stringify({ error })}\n\n`);
+            res.write(`event: error-message\ndata: ${JSON.stringify({ error })}\n\n`);
             res.end();
             return;
         }
-        let llmConfig;
-        if (llmConfigString) {
-            try {
-                llmConfig = typeof llmConfigString === 'string' ?
-                    JSON.parse(llmConfigString) :
-                    llmConfigString;
-                console.log('Parsed LLM config:', llmConfig); // ADD THIS
-            }
-            catch (err) {
-                const errorMessage = `Invalid llmConfig parameter: ${err instanceof Error ? err.message : 'Invalid JSON format'}`;
-                console.error(errorMessage);
-                res.write(`event: error\ndata: ${JSON.stringify({ error: errorMessage })}\n\n`);
-                res.end();
-                return;
-            }
+        // Send initial progress to confirm connection
+        sendProgress('Connection established', 0);
+        // Check cache first
+        const cacheKey = `analysis_${repoUrl}`;
+        const cached = await cacheService.get(cacheKey);
+        if (cached) {
+            console.log(`Returning cached analysis for key ${cacheKey}`);
+            res.write(`event: complete\ndata: ${cached}\n\n`);
+            res.end();
+            return;
         }
         console.log(`[${new Date().toISOString()}] Starting analysis for: ${repoUrl}`);
         const analysisService = new backendAnalysisService_1.BackendAnalysisService(githubToken, llmConfig);
         const report = await analysisService.analyze(repoUrl, sendProgress);
-        console.log(`[${new Date().toISOString()}] Analysis completed successfully`);
-        // Clean up keep-alive interval
         if (keepAliveInterval)
             clearInterval(keepAliveInterval);
         if (clientDisconnected) {
@@ -351,26 +376,33 @@ const handleAnalysisRequest = async (req, res) => {
             return;
         }
         try {
-            // Use safeSerializeReport for robust serialization
             const jsonString = safeSerializeReport(report);
+            await cacheService.set(cacheKey, jsonString);
             const payloadSizeKB = (jsonString.length / 1024).toFixed(2);
             console.log(`[${new Date().toISOString()}] Analysis completed (${payloadSizeKB} KB)`);
-            console.log(`[${new Date().toISOString()}] Sending completion signal to client`);
-            // Send complete event with proper event type
-            res.write(`event: complete\ndata: ${jsonString}\n\n`);
+            // Validate the JSON string before sending
+            try {
+                const testParse = JSON.parse(jsonString);
+                console.log('JSON validation passed, sending result with keys:', Object.keys(testParse));
+            }
+            catch (parseTest) {
+                console.error('JSON validation failed:', parseTest);
+                throw new Error('Generated JSON is invalid');
+            }
+            res.write(`id: ${eventId++}\nevent: complete\ndata: ${jsonString}\n\n`);
             res.end();
         }
         catch (serializationError) {
             console.error('Failed to serialize analysis result:', serializationError);
             if (!clientDisconnected) {
-                res.write(`event: error\ndata: ${JSON.stringify({ error: 'Failed to serialize analysis result' })}\n\n`);
+                res.write(`event: error-message\n` +
+                    `data: ${JSON.stringify({ error: 'Failed to serialize analysis result: ' + (serializationError instanceof Error ? serializationError.message : 'Unknown error') })}\n\n`);
                 res.end();
             }
         }
     }
     catch (error) {
         console.error('Analysis failed:', error);
-        // Clean up keep-alive interval on error
         if (keepAliveInterval)
             clearInterval(keepAliveInterval);
         handleAnalysisError(res, error);
@@ -397,6 +429,17 @@ app.post('/api/validate-github-token', (async (req, res) => {
         res.status(200).json({ isValid: false, error: `Token validation failed: ${err.message}` });
     }
 }));
+// Endpoint to check for environment keys (for open source setup)
+app.get('/api/check-env-keys', (_req, res) => {
+    // Since this is an open source project that works with user-provided keys,
+    // we don't need server-side environment variables
+    res.status(200).json({
+        hasLlmKey: false,
+        hasGithubToken: false,
+        message: 'This is an open source project. Please provide your own API keys in settings.'
+    });
+});
+// Single-process mode (cluster integration removed)
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 });

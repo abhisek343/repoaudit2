@@ -23,11 +23,9 @@ export function calculateCodeQualityMetrics(files: FileInfo[]): CodeQualityMetri
       dependencyCount: 0,
     };
   }
-
   let totalCyclomaticComplexity = 0;
   let totalFileLength = 0;
   const allFunctionLengths: number[] = [];
-  let totalDependencies = 0;
   const uniqueDependencies = new Set<string>();
 
   files.forEach(file => {

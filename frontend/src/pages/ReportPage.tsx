@@ -30,6 +30,7 @@ import GitHistoryPage from './GitHistoryPage';
 import { AnalysisResult } from '../types';
 import { StorageService } from '../services/storageService';
 import VisualizationErrorBoundary from '../components/VisualizationErrorBoundary';
+import DataFlowDebugger from '../components/DataFlowDebugger';
 
 interface ReportPageProps {
   analysisResult?: AnalysisResult | null;
@@ -42,57 +43,75 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
   const [isLoading, setIsLoading] = useState<boolean>(!analysisResult);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [dataSource, setDataSource] = useState<'prop' | 'navigation' | 'storage' | 'none'>('none');
   const navigate = useNavigate();
   const location = useLocation(); // Get location object
   
   // Attempt to get analysisResult from navigation state first
   const analysisResultFromNavigation = location.state?.analysisResultFromNavigation as AnalysisResult | undefined;
-
   useEffect(() => {
-    console.log('[ReportPage] useEffect triggered. analysisResultFromNavigation:', analysisResultFromNavigation, 'analysisResult prop:', analysisResult, 'repoId:', repoId);
+    console.log('[ReportPage] useEffect triggered. analysisResultFromNavigation:', !!analysisResultFromNavigation, 'analysisResult prop:', !!analysisResult, 'repoId:', repoId);
     const loadReport = async () => {
       // Reset error and loading state at the beginning of any load attempt
       setError(null); 
       setIsLoading(true);
 
-      if (analysisResultFromNavigation) {
-        console.log('[ReportPage] Using analysisResult from navigation state:', analysisResultFromNavigation);
-        // Ensure the URL matches the ID of the navigated report
-        if (repoId && analysisResultFromNavigation.id !== repoId) {
-          console.warn(`[ReportPage] URL repoId (${repoId}) mismatches navigated report ID (${analysisResultFromNavigation.id}). Navigating to correct URL.`);
-          // Navigate to the correct URL for the freshly analyzed report
-          // This will also cause this useEffect to re-run with the new repoId
-          navigate(`/report/${analysisResultFromNavigation.id}`, { replace: true, state: { analysisResultFromNavigation } });
-          // setIsLoading(false); // Don't set loading to false yet, let the re-run handle it.
-          return; // Exit early, the navigation will trigger a new load sequence
-        }
-        setReportData(analysisResultFromNavigation);
-        setIsLoading(false);
-      } else if (analysisResult) { // Fallback to prop if navigation state is not available
-        console.log('[ReportPage] Using analysisResult prop:', analysisResult);
-        setReportData(analysisResult);
-        setIsLoading(false);
-      } else if (repoId && repoId.trim() !== "") { // Fallback to loading from storage by ID, ensure repoId is valid
-        console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
-        // setIsLoading(true); // Already set above
-        try {
+      try {        if (analysisResultFromNavigation) {
+          console.log('[ReportPage] Using analysisResult from navigation state');
+          setDataSource('navigation');
+          // Ensure the URL matches the ID of the navigated report
+          if (repoId && analysisResultFromNavigation.id !== repoId) {
+            console.warn(`[ReportPage] URL repoId (${repoId}) mismatches navigated report ID (${analysisResultFromNavigation.id}). Navigating to correct URL.`);
+            // Navigate to the correct URL for the freshly analyzed report
+            // This will also cause this useEffect to re-run with the new repoId
+            navigate(`/report/${analysisResultFromNavigation.id}`, { replace: true, state: { analysisResultFromNavigation } });
+            return; // Exit early, the navigation will trigger a new load sequence
+          }
+          setReportData(analysisResultFromNavigation);
+          setIsLoading(false);
+        } else if (analysisResult) { // Fallback to prop if navigation state is not available
+          console.log('[ReportPage] Using analysisResult prop');
+          setDataSource('prop');
+          setReportData(analysisResult);
+          setIsLoading(false);
+        } else if (repoId && repoId.trim() !== "") { // Fallback to loading from storage by ID, ensure repoId is valid
+          console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
+          setDataSource('storage');
+          
+          // First check if we have the latest result that matches
+          const latestResult = await StorageService.getLatestAnalysisResult();
+          if (latestResult && latestResult.id === repoId) {
+            console.log('[ReportPage] Found matching latest result');
+            setReportData(latestResult);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Otherwise try to get by specific ID
           const storedResult = await StorageService.getAnalysisResultById(repoId);
-          console.log('[ReportPage] Result from StorageService.getAnalysisResultById:', storedResult);
+          console.log('[ReportPage] Result from StorageService.getAnalysisResultById:', !!storedResult);
           if (storedResult) {
-            setReportData(storedResult);
+            // Validate the stored result before using it
+            if (storedResult.id && storedResult.repositoryUrl && storedResult.basicInfo) {
+              setReportData(storedResult);
+            } else {
+              console.error('[ReportPage] Stored result is corrupted or incomplete');
+              setError("Report data appears to be corrupted. Please try analyzing again.");
+            }
           } else {
             console.error(`[ReportPage] No data found in StorageService for ID: ${repoId}`);
             setError("Report data not found. Please try analyzing again.");
           }
-        } catch (err) {
-          console.error('[ReportPage] Error loading from StorageService:', err);
-          setError("Failed to load report data. Please try again.");
-        } finally {
+          setIsLoading(false);
+        } else { // Added else to handle missing repoId when other sources fail
+          console.error('[ReportPage] repoId is missing or invalid, and no data from props or navigation state.');
+          setDataSource('none');
+          setError("Invalid report identifier or data not available. Cannot load report.");
           setIsLoading(false);
         }
-      } else { // Added else to handle missing repoId when other sources fail
-        console.error('[ReportPage] repoId is missing or invalid, and no data from props or navigation state.');
-        setError("Invalid report identifier or data not available. Cannot load report.");
+      } catch (err) {
+        console.error('[ReportPage] Error during report loading:', err);
+        setError("Failed to load report data. Please try again.");
         setIsLoading(false);
       }
     };
@@ -351,9 +370,14 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
                 <ArrowLeft className="w-4 h-4 rotate-180" />
               </button>
             </div>
-          </div>
-        </footer>
+          </div>        </footer>
       </div> {/* Closing tag for the new wrapper div */}
+      
+      {/* Debug component - only shows in development */}
+      <DataFlowDebugger 
+        currentData={reportData} 
+        dataSource={dataSource}
+      />
     </div>
   );
 };

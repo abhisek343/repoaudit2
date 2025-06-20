@@ -58,24 +58,12 @@ export class AnalysisService {
         onProgress(errorMessage, 0);
         eventSource.close();
         reject(new Error(errorMessage));
-      };
-
-      eventSource.addEventListener('error', (event) => {
-        if ((event as MessageEvent).data) {
-          try {
-            const errorData = JSON.parse((event as MessageEvent).data);
-            if (errorData.error) {
-              console.error('Server-sent error event:', errorData);
-              const errorMessage = `Analysis failed: ${errorData.error}`;
-              onProgress(errorMessage, 0);
-              eventSource.close();
-              reject(new Error(errorMessage));
-              return;
-            }
-          } catch (e) {
-            console.error('Failed to parse server-sent error event data:', (event as MessageEvent).data, e);
-          }
-        }
+      };      eventSource.addEventListener('error', (event) => {
+        console.error('Server-sent error event:', event);
+        const errorMessage = 'Analysis failed: Connection error';
+        onProgress(errorMessage, 0);
+        eventSource.close();
+        reject(new Error(errorMessage));
       });
     });
 

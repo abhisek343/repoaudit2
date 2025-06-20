@@ -10,7 +10,6 @@ export const initializeStorage = async () => {
     storeName: 'analysis-results'
   });
   await analysisStore.ready();
-  console.log('StorageService initialized');
 };
 
 export class StorageService {
@@ -24,12 +23,9 @@ export class StorageService {
       // Get existing results (array)
       const existing: AnalysisResult[] = (await analysisStore.getItem<AnalysisResult[]>('results')) || [];
       // Prepend new result
-      const updated = [result, ...existing.filter(r => r.id !== result.id)];
-      // Trim to MAX_RESULTS
+      const updated = [result, ...existing.filter(r => r.id !== result.id)];      // Trim to MAX_RESULTS
       const trimmed = updated.slice(0, this.MAX_RESULTS);
       await analysisStore.setItem('results', trimmed);
-      console.log(`Stored analysis result with ID: ${result.id}`);
-      console.log(`Total stored results: ${trimmed.length}`);
     } catch (error) {
       console.error('Failed to store analysis result in IndexedDB:', error);
       throw error;
@@ -66,11 +62,9 @@ export class StorageService {
 
   /**
    * Clear all analysis results
-   */
-  static async clearAllResults(): Promise<void> {
+   */  static async clearAllResults(): Promise<void> {
     try {
       await analysisStore.removeItem('results');
-      console.log('Cleared all analysis results from IndexedDB');
     } catch (error) {
       console.error('Failed to clear analysis results from IndexedDB:', error);
       throw error; // Re-throw error

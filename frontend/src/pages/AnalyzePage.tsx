@@ -25,17 +25,23 @@ import { AnalysisService } from '../services/analysisService'; // Added Analysis
 const AnalyzePage = () => {
   const navigate = useNavigate();
   const [githubUrl, setGithubUrl] = useState('');
+    // Debug: Track githubUrl changes - only in development
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🎯 githubUrl changed:', githubUrl);
+    }
+  }, [githubUrl]);
   const [selectedCategory, setSelectedCategory] = useState('comprehensive');
   const [showSettings, setShowSettings] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig | undefined>();
   const [githubToken, setGithubToken] = useState<string | undefined>();
-
   // State for analysis lifecycle, moved from App.tsx
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [progress, setProgress] = useState(0);
-  const [currentStep, setCurrentStep] = useState('');
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [currentStep, setCurrentStep] = useState('');  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [cancelFunction, setCancelFunction] = useState<(() => void) | null>(null);
+  const [lastAnalysisTime, setLastAnalysisTime] = useState<number>(0);
 
   const reportCategories: ReportCategory[] = [
     {
@@ -126,9 +132,18 @@ const AnalyzePage = () => {
       ],
       requiredPlan: 'free'
     }
-  ];
-
-  useEffect(() => {
+  ];  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 AnalyzePage useEffect running', {
+        cancelFunction: !!cancelFunction,
+        eventSource: !!eventSource
+      });
+      
+      // Test EventSource connection
+      const analysisService = new AnalysisService();
+      analysisService.testEventSource();
+    }
+    
     const savedLlmConfigString = localStorage.getItem('llmConfig');
     if (savedLlmConfigString) {
       try {
@@ -147,7 +162,22 @@ const AnalyzePage = () => {
     if (savedGithubToken) {
       setGithubToken(savedGithubToken);
     }
-  }, []);
+
+    // Cleanup function to cancel any ongoing analysis when component unmounts
+    return () => {
+      if (cancelFunction) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Component unmounting, cancelling analysis');
+        }
+        cancelFunction();
+      } else if (eventSource) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Component unmounting, closing EventSource');
+        }
+        eventSource.close();
+      }
+    };
+  }, [cancelFunction, eventSource]);
 
   // Effect for body overflow, moved from App.tsx
   useLayoutEffect(() => {
@@ -182,33 +212,60 @@ const AnalyzePage = () => {
       setGithubToken(undefined);
       localStorage.removeItem('githubToken');
     }
-  };
-
-  const handleAnalysisSubmit = async (e: React.FormEvent) => {
+  };  const handleAnalysisSubmit = async (e: React.FormEvent) => {
+    console.log('🚨 handleAnalysisSubmit called!', {
+      githubUrl,
+      eventType: e.type,
+      target: e.target,
+      stack: new Error().stack
+    });
+    
     e.preventDefault();
-    if (!githubUrl.trim()) return;
+    e.stopPropagation();
+    
+    // Additional validation to prevent accidental analysis
+    if (!githubUrl.trim()) {
+      setError('Please enter a GitHub repository URL');
+      return;
+    }
+      // Prevent starting analysis if one is already running
+    if (isAnalyzing) {
+      console.log('Analysis already in progress, ignoring new request');
+      return;
+    }
 
+    // Rate limiting - prevent rapid repeated analysis (minimum 5 seconds between requests)
+    const now = Date.now();
+    if (lastAnalysisTime && (now - lastAnalysisTime) < 5000) {
+      setError('Please wait a few seconds before starting another analysis');
+      return;
+    }
+
+    console.log(`🚀 Starting analysis for: ${githubUrl.trim()}`);
+    setLastAnalysisTime(now);
     setIsAnalyzing(true);
     setError(undefined);
     setProgress(0);
     setCurrentStep('Initializing analysis...');
       const savedToken = localStorage.getItem('githubToken');
     console.log('Starting analysis with LLM config:', llmConfig); // Debug log
-    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);
-    
-    const { eventSource: newEventSource, analysisPromise } = analysisService.analyzeRepository(
+    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);    const { eventSource: newEventSource, analysisPromise, cancel } = analysisService.analyzeRepository(
       githubUrl,
       (step: string, progressValue: number) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🎯 Progress callback received: ${step} - ${progressValue}%`);
+        }
         setCurrentStep(step);
         setProgress(progressValue);
       }
     );
 
     setEventSource(newEventSource);
-
-    analysisPromise
+    // Store the cancel function for proper cleanup
+    setCancelFunction(() => cancel);    analysisPromise
       .then((result: AnalysisResult) => {
         setIsAnalyzing(false);
+        setCancelFunction(null);
         // persistReport(result); // If you have a local storage persistence helper
         const reportId = result.id;
         const navigationPath = `/report/${reportId}`;
@@ -218,14 +275,24 @@ const AnalyzePage = () => {
         console.error('Analysis failed:', err);
         setError(err.message || 'Analysis failed. Please try again.');
         setIsAnalyzing(false);
+        setCancelFunction(null);
       });
   };
-  
-  const handleCancelAnalysis = () => {
-    if (eventSource) {
+    const handleCancelAnalysis = () => {
+    // Use the proper cancel function from analysis service
+    if (cancelFunction) {
+      console.log('Cancelling analysis using proper cancel function');
+      cancelFunction();
+      setCancelFunction(null);
+    } else if (eventSource) {
+      console.log('Falling back to eventSource.close()');
       eventSource.close();
+      setEventSource(null);
     }
+    
     setIsAnalyzing(false);
+    setProgress(0);
+    setCurrentStep('');
     setError('Analysis cancelled by user.');
   };
 

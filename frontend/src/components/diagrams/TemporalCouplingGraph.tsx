@@ -7,6 +7,8 @@ import VisualizationErrorBoundary from '../VisualizationErrorBoundary';
 
 interface Props {
   data: TemporalCoupling[];
+  width?: number;  // optional fixed width for the graph
+  height?: number; // optional fixed height for the graph
 }
 
 interface Node extends d3.SimulationNodeDatum {
@@ -24,21 +26,40 @@ interface Link extends d3.SimulationLinkDatum<Node> {
   strength: number;
 }
 
-const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
-  const ref = useRef<SVGSVGElement>(null);  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  useEffect(() => {
-    console.log('[TemporalCouplingGraph] Received data:', data);
-    if (!data || data.length === 0 || !ref.current) return;
+const TemporalCouplingGraph: React.FC<Props> = ({ data, width: propWidth, height: propHeight }) => {
+   const ref = useRef<SVGSVGElement>(null);
+   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+   const [filterThreshold, setFilterThreshold] = useState<number>(1);
+   const [showLabels, setShowLabels] = useState<boolean>(true);
+   const [showStats, setShowStats] = useState<boolean>(false);
 
-    const svg = d3.select(ref.current);
-    svg.selectAll("*").remove(); // Clear previous render
+   useEffect(() => {
+     console.log('[TemporalCouplingGraph] Received data:', data);
+     if (!data || data.length === 0 || !ref.current) return;
 
-    const width = parseInt(svg.style('width')) || 800;
-    const height = parseInt(svg.style('height')) || 600;    // Process data to create enhanced nodes and links
-    const nodeMap = new Map<string, Node>();
+     // Filter data based on threshold
+     const filteredData = data.filter(d => d.weight >= filterThreshold);
+     console.log(`[TemporalCouplingGraph] Filtering ${data.length} links to ${filteredData.length} with threshold ${filterThreshold}`);
 
-    // Create nodes with connection counts
-    data.forEach(d => {
+     if (filteredData.length === 0) {
+       console.log('[TemporalCouplingGraph] No data after filtering');
+       return;
+     }
+
+     // Determine dimensions: use props if provided, else measure container
+     const container = ref.current.parentElement;
+     const width = propWidth ?? container?.clientWidth ?? 800;
+     const height = propHeight ?? container?.clientHeight ?? 600;
+     const svg = d3.select(ref.current)
+       .attr('width', width)
+       .attr('height', height);
+     svg.selectAll("*").remove(); // Clear previous render
+
+     // Process data to create enhanced nodes and links
+     const nodeMap = new Map<string, Node>();
+
+    // Create nodes with connection counts from filtered data
+    filteredData.forEach(d => {
       if (!nodeMap.has(d.source)) {
         const fileName = d.source.split('/').pop() || d.source;
         nodeMap.set(d.source, {
@@ -62,7 +83,7 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
       
       nodeMap.get(d.source)!.connections += d.weight;
       nodeMap.get(d.target)!.connections += d.weight;
-    });    const nodes = Array.from(nodeMap.values());
+    });const nodes = Array.from(nodeMap.values());
     const maxConnections = Math.max(...nodes.map(n => n.connections));
     
     console.log(`[TemporalCouplingGraph] Processing ${nodes.length} nodes and ${data.length} links`);
@@ -71,17 +92,15 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
     // Set node radius based on connection strength
     nodes.forEach(node => {
       node.radius = Math.max(8, Math.min(25, 8 + (node.connections / maxConnections) * 17));
-    });
-
-    // Create enhanced links
-    const links: Link[] = data.map(d => {
+    });    // Create enhanced links from filtered data
+    const links: Link[] = filteredData.map(d => {
       const source = nodeMap.get(d.source)!;
       const target = nodeMap.get(d.target)!;
       return {
         source,
         target,
         weight: d.weight,
-        strength: Math.min(1, d.weight / 10) // Normalize strength
+        strength: Math.min(1, d.weight / 20) // Normalize strength based on typical weights
       };
     });
 
@@ -94,10 +113,16 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
     // Color scale for groups
     const colorScale = d3.scaleOrdinal(d3.schemeSet3);
 
-    // Create legend
+    // Add background click handler to clear selection
+    svg.append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .style("fill", "transparent")
+      .style("pointer-events", "all")
+      .on("click", () => setSelectedNode(null));    // Create legend
     const legend = svg.append("g")
       .attr("class", "legend")
-      .attr("transform", `translate(20, 20)`);
+      .attr("transform", `translate(20, ${height - 120})`); // Position at bottom-left
 
     legend.append("text")
       .attr("x", 0)
@@ -114,9 +139,32 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
       .style("fill", "#6b7280")
       .text("Files frequently changed together");
 
-    // Weight scale for link thickness
+    // Add legend items for link colors
+    const legendItems = [
+      { color: "#ef4444", label: "High coupling (>5)", threshold: 5 },
+      { color: "#f59e0b", label: "Medium coupling (3-5)", threshold: 3 },
+      { color: "#6b7280", label: "Low coupling (<3)", threshold: 0 }
+    ];
+
+    legendItems.forEach((item, i) => {
+      const y = 40 + i * 20;
+      legend.append("line")
+        .attr("x1", 0)
+        .attr("y1", y)
+        .attr("x2", 20)
+        .attr("y2", y)
+        .attr("stroke", item.color)
+        .attr("stroke-width", 3);
+      
+      legend.append("text")
+        .attr("x", 25)
+        .attr("y", y + 4)
+        .style("font-size", "11px")
+        .style("fill", "#374151")
+        .text(item.label);
+    });// Weight scale for link thickness - adjusted for new weight ranges
     const weightScale = d3.scaleLinear()
-      .domain(d3.extent(data, d => d.weight) as [number, number])
+      .domain(d3.extent(filteredData, d => d.weight) as [number, number])
       .range([1, 8]);
 
     // Create force simulation with better forces
@@ -126,10 +174,12 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
         .distance(d => Math.max(60, 120 - (d as Link).weight * 5))
         .strength(d => (d as Link).strength * 0.7)
       )
-      .force("charge", d3.forceManyBody()
-        .strength(d => -200 - (d as Node).connections * 10)
-      )
+      // soften repulsion to prevent nodes flying off
+      .force("charge", d3.forceManyBody().strength(-50))
       .force("center", d3.forceCenter(width / 2, height / 2))
+      // gently pull nodes toward center
+      .force("x", d3.forceX(width / 2).strength(0.05))
+      .force("y", d3.forceY(height / 2).strength(0.05))
       .force("collision", d3.forceCollide()
         .radius(d => (d as Node).radius + 5)
       );    // Create link group
@@ -197,19 +247,19 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
       .style("font-weight", "bold")
       .style("fill", "#fff")
       .style("pointer-events", "none")
-      .text(d => getFileTypeAbbreviation(d.fileName));
-
-    // Add file name labels for important nodes
-    node.filter(d => d.connections > maxConnections * 0.3)
-      .append("text")
-      .attr("x", 0)
-      .attr("y", d => d.radius + 15)
-      .attr("text-anchor", "middle")
-      .style("font-size", "10px")
-      .style("fill", "#374151")
-      .style("font-weight", "500")
-      .style("pointer-events", "none")
-      .text(d => d.fileName.length > 15 ? d.fileName.substring(0, 12) + "..." : d.fileName);
+      .text(d => getFileTypeAbbreviation(d.fileName));    // Add file name labels for important nodes (controlled by showLabels)
+    if (showLabels) {
+      node.filter(d => d.connections > maxConnections * 0.3)
+        .append("text")
+        .attr("x", 0)
+        .attr("y", d => d.radius + 15)
+        .attr("text-anchor", "middle")
+        .style("font-size", "10px")
+        .style("fill", "#374151")
+        .style("font-weight", "500")
+        .style("pointer-events", "none")
+        .text(d => d.fileName.length > 15 ? d.fileName.substring(0, 12) + "..." : d.fileName);
+    }
 
     // Node interaction handlers
     node      .on("mouseover", function(event, d) {
@@ -392,21 +442,90 @@ const TemporalCouplingGraph: React.FC<Props> = ({ data }) => {
       }
       
       return component;
-    }
-  }, [data, selectedNode]);
+    }  }, [data, selectedNode, filterThreshold, showLabels, propWidth, propHeight]);
 
-  if (!data || data.length === 0) {
-    return <ErrorDisplay message="No Temporal Coupling Data" />;
-  }
+   if (!data || data.length === 0) {
+     return <ErrorDisplay message="No Temporal Coupling Data" />;
+   }
+
+  // Calculate stats for display
+  const maxWeight = Math.max(...data.map(d => d.weight));
+  const avgWeight = data.reduce((sum, d) => sum + d.weight, 0) / data.length;
+  const uniqueFiles = new Set([...data.map(d => d.source), ...data.map(d => d.target)]).size;
+  const filteredCount = data.filter(d => d.weight >= filterThreshold).length;
 
   return (
     <VisualizationErrorBoundary fallbackMessage="Could not render the Temporal Coupling Graph.">
-      <div className="relative w-full h-full">
+      <div
+        className="relative w-full h-full"
+        style={{
+          width: propWidth ? `${propWidth}px` : '100%',
+          height: propHeight ? `${propHeight}px` : '100%' // fill parent height if not specified
+        }}
+      >
+         {/* Controls Panel */}
+         <div className="absolute top-4 left-4 bg-white p-3 rounded-lg shadow-lg border z-10 max-w-xs">
+           <h4 className="font-semibold text-sm mb-3">Temporal Coupling Controls</h4>
+          
+          {/* Filter Threshold */}
+          <div className="mb-3">
+            <label className="block text-xs text-gray-600 mb-1">
+              Min Coupling Weight: {filterThreshold}
+            </label>
+            <input
+              type="range"
+              min="1"
+              max={Math.max(10, maxWeight)}
+              value={filterThreshold}
+              onChange={(e) => setFilterThreshold(Number(e.target.value))}
+              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            />
+            <div className="text-xs text-gray-500 mt-1">
+              Showing {filteredCount} of {data.length} links
+            </div>
+          </div>
+
+          {/* Toggle Controls */}
+          <div className="space-y-2">
+            <label className="flex items-center text-xs">
+              <input
+                type="checkbox"
+                checked={showLabels}
+                onChange={(e) => setShowLabels(e.target.checked)}
+                className="mr-2"
+              />
+              Show file labels
+            </label>
+            <label className="flex items-center text-xs">
+              <input
+                type="checkbox"
+                checked={showStats}
+                onChange={(e) => setShowStats(e.target.checked)}
+                className="mr-2"
+              />
+              Show statistics
+            </label>
+          </div>
+
+          {/* Statistics */}
+          {showStats && (
+            <div className="mt-3 pt-3 border-t text-xs text-gray-600">
+              <div>Files: {uniqueFiles}</div>
+              <div>Max Weight: {maxWeight.toFixed(1)}</div>
+              <div>Avg Weight: {avgWeight.toFixed(1)}</div>
+            </div>
+          )}
+         </div>
+
         <svg ref={ref} style={{ width: '100%', height: '100%' }}></svg>
+        
         {selectedNode && (
-          <div className="absolute top-4 right-4 bg-white p-4 rounded-lg shadow-lg border max-w-xs">
+          <div className="absolute top-4 right-4 bg-white p-4 rounded-lg shadow-lg border max-w-xs z-10">
             <h4 className="font-semibold text-sm mb-2">Selected File</h4>
-            <p className="text-xs text-gray-600">{selectedNode}</p>
+            <p className="text-xs text-gray-600 break-all">{selectedNode}</p>
+            <div className="text-xs text-gray-500 mt-2">
+              Click the graph background to clear selection
+            </div>
             <button
               onClick={() => setSelectedNode(null)}
               className="mt-2 px-2 py-1 bg-gray-100 text-xs rounded hover:bg-gray-200"
