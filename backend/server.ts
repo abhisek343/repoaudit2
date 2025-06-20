@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import { LLMService } from './src/services/llmService';
@@ -16,8 +16,13 @@ const cacheService = new RedisCacheService(process.env.REDIS_URL || 'redis://loc
 // Initialize controllers
 const architectureController = new ArchitectureController();
 
-// Enable gzip/brotli compression for all responses
-app.use(compression());
+// Enable gzip/brotli compression for all responses, but not for SSE
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path === '/api/analyze') {
+    return next();
+  }
+  compression()(req, res, next);
+});
 app.use(cors()); // Enable CORS for all routes
 app.use(express.json({ limit: '50mb' }));
 
@@ -79,51 +84,22 @@ const validationRateLimit = new Map<string, number>();
 const VALIDATION_COOLDOWN_MS = 5000; // 5 seconds between validation attempts
 
 // Endpoint to validate LLM API key (endpoint expected by frontend)
-app.post('/api/validate-llm-key', async (req: Request, res: Response) => {
+app.post('/api/validate-llm-key', (async (req: Request, res: Response) => {
   try {
     const { llmConfig } = req.body;
     if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-      res.status(200).json({ isValid: false, error: 'LLM configuration missing.' });
-      return;
+      return res.status(400).json({ isValid: false, error: 'LLM configuration is required.' });
     }
     
-    // Rate limiting based on API key
-    const rateLimitKey = `${llmConfig.provider}_${llmConfig.apiKey.substring(0, 8)}`;
-    const lastValidation = validationRateLimit.get(rateLimitKey);
-    const now = Date.now();
-    
-    if (lastValidation && (now - lastValidation) < VALIDATION_COOLDOWN_MS) {
-      console.log('Rate limiting validation request');
-      res.status(200).json({ 
-        isValid: false, 
-        error: 'Validation rate limited. Please wait a moment before retrying.' 
-      });
-      return;
-    }
-    
-    validationRateLimit.set(rateLimitKey, now);
-    
-    const llmService = new LLMService(llmConfig);
-    
-    // Check if we're in a quota exhaustion cooldown period
-    const isValid = await llmService.checkAvailability();
-    res.status(200).json({ isValid });
+    const analysisService = new BackendAnalysisService(undefined, llmConfig);
+    const result = await analysisService.validateLlmKey(llmConfig);
+    res.status(200).json(result);
   } catch (error) {
     const err = error as Error;
     console.error('LLM validation error:', err.message);
-    
-    // Check if it's a quota exhaustion error
-    if (err.message.toLowerCase().includes('quota') || 
-        err.message.toLowerCase().includes('unavailable due to quota')) {
-      res.status(200).json({ 
-        isValid: false, 
-        error: 'LLM service temporarily unavailable due to quota limits. Please try again later.' 
-      });
-    } else {
-      res.status(200).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
-    }
+    res.status(500).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
   }
-});
+}) as express.RequestHandler);
 
 // Endpoint to handle diagram enhancement
 app.post('/api/llm/enhance-diagram', async (req: Request, res: Response) => {
@@ -455,14 +431,13 @@ app.post('/api/validate-github-token', (async (req: Request, res: Response) => {
     if (!token || typeof token !== 'string') {
       return res.status(400).json({ isValid: false, error: 'Token is required and must be a string.' });
     }
-    const { GitHubService } = await import('./src/services/githubService');
-    const githubService = new GitHubService(token);
-    const isValid = await githubService.verifyToken();
-    res.status(200).json({ isValid });
+    const analysisService = new BackendAnalysisService(token);
+    const result = await analysisService.validateGithubToken(token);
+    res.status(200).json(result);
   } catch (error) {
     const err = error as Error;
     console.error('GitHub token validation error:', err.message);
-    res.status(200).json({ isValid: false, error: `Token validation failed: ${err.message}` });
+    res.status(500).json({ isValid: false, error: `Token validation failed: ${err.message}` });
   }
 }) as express.RequestHandler);
 

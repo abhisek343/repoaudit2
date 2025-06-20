@@ -88,6 +88,34 @@ export class BackendAnalysisService {
     console.warn(`Analysis Warning [${step}]: ${message}`, error ? error : '');
   }
 
+  public async validateGithubToken(token: string): Promise<{ isValid: boolean; error?: string }> {
+    const githubService = new GitHubService(token);
+    try {
+      const isValid = await githubService.verifyToken();
+      if (isValid) {
+        return { isValid: true };
+      } else {
+        return { isValid: false, error: 'Invalid GitHub token.' };
+      }
+    } catch (error: any) {
+      return { isValid: false, error: error.message || 'Failed to validate GitHub token.' };
+    }
+  }
+
+  public async validateLlmKey(llmConfig: LLMConfig): Promise<{ isValid: boolean; error?: string }> {
+    const llmService = new LLMService(llmConfig);
+    try {
+      const isValid = await llmService.verifyKey();
+      if (isValid) {
+        return { isValid: true };
+      } else {
+        return { isValid: false, error: `Invalid API key for ${llmConfig.provider}.` };
+      }
+    } catch (error: any) {
+      return { isValid: false, error: error.message || `Failed to validate API key for ${llmConfig.provider}.` };
+    }
+  }
+
   private isValidRepoUrl(url: string): boolean {
     return url.includes('github.com/');
   }

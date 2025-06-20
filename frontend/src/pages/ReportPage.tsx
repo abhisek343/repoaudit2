@@ -30,7 +30,6 @@ import GitHistoryPage from './GitHistoryPage';
 import { AnalysisResult } from '../types';
 import { StorageService } from '../services/storageService';
 import VisualizationErrorBoundary from '../components/VisualizationErrorBoundary';
-import DataFlowDebugger from '../components/DataFlowDebugger';
 
 interface ReportPageProps {
   analysisResult?: AnalysisResult | null;
@@ -43,7 +42,6 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
   const [isLoading, setIsLoading] = useState<boolean>(!analysisResult);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
-  const [dataSource, setDataSource] = useState<'prop' | 'navigation' | 'storage' | 'none'>('none');
   const navigate = useNavigate();
   const location = useLocation(); // Get location object
   
@@ -58,7 +56,6 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
 
       try {        if (analysisResultFromNavigation) {
           console.log('[ReportPage] Using analysisResult from navigation state');
-          setDataSource('navigation');
           // Ensure the URL matches the ID of the navigated report
           if (repoId && analysisResultFromNavigation.id !== repoId) {
             console.warn(`[ReportPage] URL repoId (${repoId}) mismatches navigated report ID (${analysisResultFromNavigation.id}). Navigating to correct URL.`);
@@ -71,12 +68,10 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
           setIsLoading(false);
         } else if (analysisResult) { // Fallback to prop if navigation state is not available
           console.log('[ReportPage] Using analysisResult prop');
-          setDataSource('prop');
           setReportData(analysisResult);
           setIsLoading(false);
         } else if (repoId && repoId.trim() !== "") { // Fallback to loading from storage by ID, ensure repoId is valid
           console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
-          setDataSource('storage');
           
           // First check if we have the latest result that matches
           const latestResult = await StorageService.getLatestAnalysisResult();
@@ -105,7 +100,6 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
           setIsLoading(false);
         } else { // Added else to handle missing repoId when other sources fail
           console.error('[ReportPage] repoId is missing or invalid, and no data from props or navigation state.');
-          setDataSource('none');
           setError("Invalid report identifier or data not available. Cannot load report.");
           setIsLoading(false);
         }
@@ -373,11 +367,6 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
           </div>        </footer>
       </div> {/* Closing tag for the new wrapper div */}
       
-      {/* Debug component - only shows in development */}
-      <DataFlowDebugger 
-        currentData={reportData} 
-        dataSource={dataSource}
-      />
     </div>
   );
 };

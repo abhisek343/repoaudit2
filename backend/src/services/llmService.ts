@@ -63,7 +63,23 @@ export class LLMService {
        if (this.config.provider === 'gemini') this.googleAI = undefined;
        if (this.config.provider === 'claude') this.claude = undefined;
      }
-   }   async checkAvailability(): Promise<boolean> {
+   }
+  
+  async verifyKey(): Promise<boolean> {
+    if (!this.isConfigured()) {
+      return false;
+    }
+    try {
+      // Use a simple, low-cost call to verify the key
+      await this.generateText("test", 1);
+      return true;
+    } catch (error) {
+      console.error(`LLM key verification failed for provider ${this.config.provider}:`, error);
+      return false;
+    }
+  }
+  
+  async checkAvailability(): Promise<boolean> {
     if (!this.isConfigured()) {
       return false;
     }
