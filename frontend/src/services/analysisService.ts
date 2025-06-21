@@ -1,14 +1,275 @@
-import { LLMConfig, AnalysisResult, Contributor } from '../types';
+import { LLMConfig, AnalysisResult, Contributor, FileInfo } from '../types';
 import { StorageService } from './storageService';
+import { RepositoryArchiveService } from './repositoryArchiveService';
 
 export class AnalysisService {
   private githubToken: string | undefined;
   private llmConfig: LLMConfig | undefined;
-  private isCancelled: boolean = false;
-
+  public isCancelled: boolean = false; // Make public for external cancellation
   constructor(githubToken?: string, llmConfig?: LLMConfig) {
     this.githubToken = githubToken;
     this.llmConfig = llmConfig;
+  }
+  /**
+   * Parse repository URL to extract owner, repo, and branch
+   */
+  public parseRepositoryUrl(repoUrl: string): { owner: string; repo: string; branch: string } {
+    // Handle different GitHub URL formats:
+    // - https://github.com/owner/repo
+    // - https://github.com/owner/repo/tree/branch
+    // - https://github.com/owner/repo.git
+    
+    const url = new URL(repoUrl);
+    const pathParts = url.pathname.split('/').filter(part => part.length > 0);
+    
+    if (pathParts.length < 2) {
+      throw new Error('Invalid repository URL format');
+    }
+    
+    const owner = pathParts[0];
+    let repo = pathParts[1];
+    let branch = 'main'; // Default branch
+    
+    // Remove .git suffix if present
+    if (repo.endsWith('.git')) {
+      repo = repo.slice(0, -4);
+    }
+    
+    // Extract branch if URL contains /tree/branch-name
+    if (pathParts.length >= 4 && pathParts[2] === 'tree') {
+      branch = pathParts[3];
+    }
+    
+    return { owner, repo, branch };
+  }
+
+  /**
+   * Enhanced repository analysis with archive caching
+   * First checks IndexedDB cache, then falls back to backend analysis
+   */
+  async analyzeRepositoryWithCaching(
+    repoUrl: string,
+    onProgress: (step: string, progress: number) => void,
+    forceRefresh: boolean = false
+  ): Promise<AnalysisResult> {
+    this.isCancelled = false;
+    
+    try {
+      // Parse repository URL
+      const { owner, repo, branch } = this.parseRepositoryUrl(repoUrl);
+        // Check for cached archive first (unless forcing refresh)
+      if (!forceRefresh) {
+        onProgress('Checking cached repository archive...', 5);
+        const cachedFiles = await RepositoryArchiveService.getCachedArchive(owner, repo, branch);
+        
+        if (cachedFiles && cachedFiles.length > 0) {
+          onProgress('Found cached repository archive, performing analysis...', 10);
+          
+          // Use cached files for analysis
+          return this.analyzeFromCachedFiles(repoUrl, cachedFiles, onProgress);
+        }
+      }
+        // No cache or force refresh - use backend analysis with archive caching
+      onProgress('Downloading repository archive...', 15);
+      return this.analyzeRepositoryWithBackend(repoUrl, onProgress);
+      
+    } catch (error) {
+      console.error('Repository analysis failed:', error);
+      throw new Error(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }  /**
+   * Analyze repository using cached files (client-side analysis)
+   */
+  private async analyzeFromCachedFiles(
+    repoUrl: string,
+    _cachedFiles: FileInfo[],
+    onProgress: (step: string, progress: number) => void
+  ): Promise<AnalysisResult> {
+    // For now, we'll still use the backend for analysis but we could implement
+    // client-side analysis here in the future. The key benefit is that we avoid
+    // re-downloading the repository archive.
+    
+    // We can pass a flag to indicate that we have cached files
+    const params = new URLSearchParams();
+    params.append('repoUrl', repoUrl);
+    params.append('useCachedFiles', 'true'); // Signal backend that files are cached
+    
+    if (this.llmConfig) {
+      params.append('llmConfig', JSON.stringify(this.llmConfig));
+    }
+    if (this.githubToken) {
+      params.append('githubToken', this.githubToken);
+    }
+
+    // For now, still use backend analysis
+    // TODO: Implement client-side analysis for cached files
+    return this.analyzeWithEventSource(params, onProgress);
+  }
+  /**
+   * Analyze repository using backend with archive caching
+   */
+  private async analyzeRepositoryWithBackend(
+    repoUrl: string,
+    onProgress: (step: string, progress: number) => void
+  ): Promise<AnalysisResult> {
+    const params = new URLSearchParams();
+    params.append('repoUrl', repoUrl);
+    
+    if (this.llmConfig) {
+      params.append('llmConfig', JSON.stringify(this.llmConfig));
+    }
+    if (this.githubToken) {
+      params.append('githubToken', this.githubToken);
+    }
+
+    return this.analyzeWithEventSource(params, onProgress);
+  }  /**
+   * Common EventSource-based analysis logic
+   */
+  private async analyzeWithEventSource(
+    params: URLSearchParams,
+    onProgress: (step: string, progress: number) => void
+  ): Promise<AnalysisResult> {
+    return new Promise((resolve, reject) => {
+      const eventSourceUrl = `/api/analyze?${params.toString()}`;
+      const eventSource = new EventSource(eventSourceUrl);
+      
+      // Extract repo info from the repoUrl parameter for caching
+      const repoUrl = params.get('repoUrl');
+      let repoInfo: { owner: string; repo: string; branch: string } | null = null;
+      if (repoUrl) {
+        try {
+          repoInfo = this.parseRepositoryUrl(repoUrl);
+        } catch (error) {
+          console.warn('Failed to parse repository URL for caching:', error);
+        }
+      }
+      
+      let retryTimeout: NodeJS.Timeout | null = null;
+      let retryCount = 0;
+      const maxRetries = 3;
+
+      const cleanup = () => {
+        if (retryTimeout) {
+          clearTimeout(retryTimeout);
+          retryTimeout = null;
+        }
+        if (eventSource.readyState !== EventSource.CLOSED) {
+          eventSource.close();
+        }
+      };
+
+      // Handle connection open
+      eventSource.onopen = () => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+        retryCount = 0;
+      };
+
+      // Handle progress events
+      eventSource.addEventListener('progress', (event) => {
+        if (this.isCancelled) return;
+        
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          if (data.step && typeof data.progress === 'number') {
+            onProgress(data.step, data.progress);
+          }
+        } catch (error) {
+          console.error('Error parsing progress event:', error);
+        }
+      });
+
+      // Handle completion events
+      eventSource.addEventListener('complete', async (event) => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+        
+        try {
+          const result = JSON.parse((event as MessageEvent).data) as Partial<AnalysisResult>;
+          onProgress('Analysis complete!', 100);
+          cleanup();
+          
+          const finalResult = this.ensureDefaults(result, params.get('repoUrl') || '');
+          
+          if (!this.validateAnalysisResult(finalResult)) {
+            reject(new Error('Invalid analysis result received from backend'));
+            return;
+          }
+
+          // Cache the repository archive if we have the files and repo info
+          if (repoInfo && finalResult.files && finalResult.files.length > 0) {
+            try {
+              await RepositoryArchiveService.storeArchive(
+                repoInfo.owner,
+                repoInfo.repo,
+                repoInfo.branch,
+                finalResult.files
+              );
+              console.log(`Cached repository archive for ${repoInfo.owner}/${repoInfo.repo}@${repoInfo.branch}`);
+            } catch (error) {
+              console.warn('Failed to cache repository archive:', error);
+              // Continue with analysis even if caching fails
+            }
+          }
+          
+          // Store analysis result
+          try {
+            await StorageService.storeAnalysisResult(finalResult);
+            resolve(finalResult);
+          } catch (error) {
+            console.error('Failed to store analysis result:', error);
+            resolve(finalResult); // Still resolve with result
+          }
+        } catch (error) {
+          console.error('Error parsing completion event:', error);
+          reject(new Error('Failed to parse analysis result'));
+        }
+      });      // Handle error events
+      eventSource.addEventListener('error', () => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+
+        if (eventSource.readyState === EventSource.CLOSED) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            retryTimeout = setTimeout(() => {
+              const newEventSource = new EventSource(eventSourceUrl);
+              Object.assign(eventSource, newEventSource);
+            }, Math.pow(2, retryCount) * 1000);
+          } else {
+            cleanup();
+            reject(new Error('Connection failed after maximum retries'));
+          }
+        }
+      });
+
+      // Handle explicit error messages
+      eventSource.addEventListener('error-message', (event) => {
+        if (this.isCancelled) {
+          cleanup();
+          reject(new Error('Analysis cancelled'));
+          return;
+        }
+        
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          cleanup();
+          reject(new Error(data.error || 'Unknown error occurred'));
+        } catch {
+          reject(new Error('Failed to parse error message'));
+        }
+      });
+    });
   }
   
   analyzeRepository(

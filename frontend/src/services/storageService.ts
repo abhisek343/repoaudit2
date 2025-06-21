@@ -1,5 +1,6 @@
 import localforage from 'localforage';
 import { AnalysisResult } from '../types';
+import { initializeArchiveStorage } from './repositoryArchiveService';
 
 let analysisStore: LocalForage;
 
@@ -10,6 +11,9 @@ export const initializeStorage = async () => {
     storeName: 'analysis-results'
   });
   await analysisStore.ready();
+  
+  // Also initialize archive storage
+  await initializeArchiveStorage();
 };
 
 export class StorageService {

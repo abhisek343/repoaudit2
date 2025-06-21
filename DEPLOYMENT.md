@@ -47,21 +47,17 @@ Create environment files:
 ```bash
 # Backend configuration
 cd backend
-cp .env.example .env
 ```
 
-Edit `backend/.env`:
-```bash
-# LLM Configuration (optional)
-OPENAI_API_KEY=sk-your-key-here
-GOOGLE_AI_API_KEY=your-key-here
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+**Note**: Environment variables are no longer needed for API keys. All LLM configuration is done through the frontend settings interface.
 
-# Server settings
+You can still create `backend/.env` for basic server settings if needed:
+```bash
+# Server settings (optional)
 PORT=3001
 NODE_ENV=development
 
-# Security
+# Security (optional)
 CORS_ORIGIN=http://localhost:5173
 ```
 
@@ -235,19 +231,16 @@ git subtree push --prefix backend heroku main
 |----------|-------------|---------|----------|
 | `PORT` | Server port | `3001` | No |
 | `NODE_ENV` | Environment | `production` | No |
-| `OPENAI_API_KEY` | OpenAI API key | `sk-...` | No |
-| `GOOGLE_AI_API_KEY` | Google AI key | `AI...` | No |
-| `ANTHROPIC_API_KEY` | Claude API key | `sk-ant-...` | No |
 | `CORS_ORIGIN` | Allowed origins | `https://yourdomain.com` | No |
-| `LLM_MAX_TOKENS` | Max tokens per request | `1500` | No |
-| `LLM_TEMPERATURE` | LLM creativity | `0.7` | No |
+
+**Note**: LLM API keys are now configured through the frontend interface, not environment variables.
 
 ### Security Considerations
 
 **Production checklist:**
 - [ ] Use HTTPS in production
 - [ ] Set proper CORS origins
-- [ ] Use environment variables for sensitive data
+- [ ] Configure LLM API keys securely through the frontend
 - [ ] Enable rate limiting
 - [ ] Regular security updates
 - [ ] Monitor logs and errors

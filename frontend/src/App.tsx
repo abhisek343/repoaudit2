@@ -1,8 +1,11 @@
-import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useEffect, useState, useMemo, useCallback, lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AnalysisService } from './services/analysisService';
 import { initializeStorage } from './services/storageService';
+import { migrateReportsToIndexedDB } from './services/reportService';
+import { Toaster } from 'react-hot-toast';
+import React, { Suspense } from 'react';
 
 // Lazy-loaded page components
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -112,23 +115,28 @@ function App() {
   }, []);
   // Enhanced initialization with progress tracking
   useEffect(() => {
-    let isMounted = true;    const initializeApp = async () => {
+    let isMounted = true;
+    const initializeApp = async () => {
       try {
         setInitProgress(10);
         
         // Initialize storage with timeout
         setInitProgress(25);
         await Promise.race([
-          initializeStorage(),
+          Promise.all([
+            initializeStorage(),
+            // Migrate reports from localStorage to IndexedDB
+            migrateReportsToIndexedDB()
+          ]),
           new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Storage initialization timeout')), 10000)
+            setTimeout(() => reject(new Error('Storage initialization timeout')), 15000)
           )
         ]);
         
         if (!isMounted) return;
         
         // Debug analysis data
-        setInitProgress(50);
+        setInitProgress(75);
         
         if (!isMounted) return;
         
@@ -226,11 +234,34 @@ function App() {
   }
   // Main application with enhanced router
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <ErrorBoundary>
       <Suspense fallback={<LoadingSpinner message="Loading page..." />}>
         <RouterProvider router={router} />
       </Suspense>
-    </div>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 5000,
+          style: {
+            background: '#fff',
+            color: '#333',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+          },
+          success: {
+            iconTheme: {
+              primary: '#10B981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#EF4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
+    </ErrorBoundary>
   );
 }
 

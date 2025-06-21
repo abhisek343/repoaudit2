@@ -3,6 +3,7 @@ import ExecutiveSummary from '../ExecutiveSummary';
 import MetricsGrid from '../MetricsGrid';
 import FileAnalysisOverview from '../FileAnalysisOverview';
 import AnalysisMethodInfo from '../AnalysisMethodInfo';
+import PerformanceMetrics from '../PerformanceMetrics';
 
 interface OverviewPageProps {
   analysisResult: AnalysisResult;
@@ -19,14 +20,16 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
     { name: 'File Count', value: metrics.fileCount, icon: '📄' },
     { name: 'Critical Vulnerabilities', value: metrics.criticalVulnerabilities, icon: '🔥' },
     { name: 'High Vulnerabilities', value: metrics.highVulnerabilities, icon: '🔶' },
-  ];
-  return (
+  ];  return (
     <div className="space-y-6">
       {/* Enhanced Metrics Grid with comprehensive archive data */}
       <MetricsGrid 
         metrics={analysisResult.metrics} 
         analysisResult={analysisResult} 
       />
+
+      {/* Performance Metrics for Large Repositories */}
+      <PerformanceMetrics analysisResult={analysisResult} />
 
       {/* Repository Overview */}
       <div className="bg-white rounded-lg shadow p-6">

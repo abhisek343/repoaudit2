@@ -1,58 +1,119 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   BarChart3, 
-  Star, 
   Plus,
   Search,
   Filter,
   Calendar,
   Eye,
   Share2,
-  Download,
   Tag,
   Github,
-  Home
+  Home,
+  Trash2,
+  AlertTriangle,
+  HardDrive,
+  Zap,
+  Database,
+  RefreshCw
 } from 'lucide-react';
 import { SavedReport } from '../types';
+import { getReports, deleteReport } from '../services/reportService';
+import { RepositoryArchiveService } from '../services/repositoryArchiveService';
+import { Toaster, toast } from 'react-hot-toast';
 
 const DashboardPage = () => {
   const [reports, setReports] = useState<SavedReport[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
+  const [isLoading, setIsLoading] = useState(true);
+  const [reportToDelete, setReportToDelete] = useState<string | null>(null);
+  
+  // Cache management state
+  const [cacheStats, setCacheStats] = useState({
+    totalArchives: 0,
+    totalOriginalSize: 0,
+    totalCompressedSize: 0,
+    averageCompressionRatio: 0,
+    totalSpaceSaved: 0
+  });
+  const [isLoadingCache, setIsLoadingCache] = useState(false);
+
+  // Load reports from IndexedDB
+  const loadReports = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const reportsFromDB = await getReports();
+      setReports(reportsFromDB);
+    } catch (error) {
+      console.error('Failed to load reports:', error);
+      toast.error('Failed to load reports. Please refresh the page.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Load cache statistics
+  const loadCacheStats = useCallback(async () => {
+    try {
+      setIsLoadingCache(true);
+      const stats = await RepositoryArchiveService.getCacheStats();
+      setCacheStats(stats);
+    } catch (error) {
+      console.error('Failed to load cache statistics:', error);
+    } finally {
+      setIsLoadingCache(false);
+    }
+  }, []);
+
+  // Clear all cache
+  const handleClearCache = async () => {
+    try {
+      await RepositoryArchiveService.clearAllArchives();
+      await loadCacheStats(); // Refresh stats
+      toast.success('Repository cache cleared successfully');
+    } catch (error) {
+      console.error('Failed to clear cache:', error);
+      toast.error('Failed to clear cache');
+    }
+  };
 
   useEffect(() => {
-    // Load saved reports from localStorage
-    const reportsFromStorage: SavedReport[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('report_')) {
-        try {
-          const reportItem = localStorage.getItem(key);
-          if (reportItem) {
-            const parsedReport = JSON.parse(reportItem);
-            // Construct a SavedReport object from the parsed data
-            reportsFromStorage.push({
-              id: key.replace('report_', ''),
-              repositoryName: parsedReport.repository?.fullName || parsedReport.repositoryName || 'Unknown Repo',
-              category: parsedReport.category || 'comprehensive',
-              createdAt: parsedReport.createdAt || new Date().toISOString(),
-              summary: parsedReport.executiveSummary || parsedReport.summary || 'No summary available.',
-              tags: parsedReport.tags || [parsedReport.repository?.language || 'general'],
-              isPublic: parsedReport.isPublic || false, // Assuming a default
-              // Add other fields if necessary, or ensure they are in parsedReport
-              userId: parsedReport.userId || 'local',
-              repositoryUrl: parsedReport.repositoryUrl || `https://github.com/${parsedReport.repository?.fullName}`,
-              lastAccessed: parsedReport.lastAccessed || new Date().toISOString(),
-            });
-          }
-        } catch (error) {
-          console.error(`Failed to parse report ${key}:`, error);
-        }
-      }
+    loadReports();
+    loadCacheStats();
+  }, [loadReports, loadCacheStats]);
+  
+  // Handle report deletion
+  const handleDeleteReport = async (id: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    
+    try {
+      await deleteReport(id);
+      setReports(prev => prev.filter(report => report.id !== id));
+      toast.success('Report deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete report:', error);
+      toast.error('Failed to delete report');
+    } finally {
+      setReportToDelete(null);
     }
-    setReports(reportsFromStorage.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-  }, []);
+  };
+  
+  // Confirm before deleting
+  const confirmDelete = (id: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    setReportToDelete(id);
+  };
+  
+  // Cancel delete
+  const cancelDelete = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    setReportToDelete(null);
+  };
 
   const filteredReports = reports.filter(report => {
     const matchesSearch = report.repositoryName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -87,18 +148,29 @@ const DashboardPage = () => {
       change: '+8%'
     },
     {
-      label: 'Public Reports',
-      value: reports.filter(r => r.isPublic).length,
-      icon: <Eye className="w-6 h-6 text-purple-500" />,
-      change: '+3%'
+      label: 'Cached Repos',
+      value: cacheStats.totalArchives,
+      icon: <Database className="w-6 h-6 text-purple-500" />,
+      change: `${cacheStats.averageCompressionRatio.toFixed(1)}:1 ratio`
     },
     {
-      label: 'Categories',
-      value: new Set(reports.map(r => r.category)).size,
-      icon: <Star className="w-6 h-6 text-yellow-500" />,
-      change: 'Stable'
+      label: 'Space Saved',
+      value: `${(cacheStats.totalSpaceSaved / 1024 / 1024).toFixed(1)} MB`,
+      icon: <Zap className="w-6 h-6 text-yellow-500" />,
+      change: `${((1 - cacheStats.totalCompressedSize / (cacheStats.totalOriginalSize || 1)) * 100).toFixed(0)}% compressed`
     }
   ];
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your reports...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -155,6 +227,99 @@ const DashboardPage = () => {
               <p className="text-gray-600 text-sm">{stat.label}</p>
             </div>
           ))}
+        </div>
+
+        {/* Cache Management Section */}
+        <div className="bg-white rounded-xl shadow-lg p-6 mb-8 border border-gray-100">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                Repository Cache Management
+              </h2>
+              <p className="text-gray-600">
+                Manage your cached repository archives for faster analysis
+              </p>
+            </div>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={loadCacheStats}
+                disabled={isLoadingCache}
+                className="flex items-center space-x-2 px-4 py-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingCache ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+              <button
+                onClick={handleClearCache}
+                className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Clear Cache</span>
+              </button>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4">
+              <div className="flex items-center space-x-3 mb-3">
+                <HardDrive className="w-8 h-8 text-blue-600" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Storage Usage</h3>
+                  <p className="text-sm text-gray-600">Compressed size</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Compressed:</span>
+                  <span className="font-medium">{(cacheStats.totalCompressedSize / 1024 / 1024).toFixed(2)} MB</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Original:</span>
+                  <span className="font-medium">{(cacheStats.totalOriginalSize / 1024 / 1024).toFixed(2)} MB</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4">
+              <div className="flex items-center space-x-3 mb-3">
+                <Zap className="w-8 h-8 text-green-600" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Compression</h3>
+                  <p className="text-sm text-gray-600">Efficiency stats</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Ratio:</span>
+                  <span className="font-medium">{cacheStats.averageCompressionRatio.toFixed(1)}:1</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Saved:</span>
+                  <span className="font-medium">{(cacheStats.totalSpaceSaved / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-50 to-violet-50 rounded-lg p-4">
+              <div className="flex items-center space-x-3 mb-3">
+                <Database className="w-8 h-8 text-purple-600" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Cache Info</h3>
+                  <p className="text-sm text-gray-600">Repository count</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Repositories:</span>
+                  <span className="font-medium">{cacheStats.totalArchives}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Max allowed:</span>
+                  <span className="font-medium">5</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Actions Bar */}
@@ -249,12 +414,46 @@ const DashboardPage = () => {
                       View Report →
                     </Link>
                     <div className="flex items-center space-x-2">
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Share2 className="w-4 h-4" />
-                      </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Download className="w-4 h-4" />
-                      </button>
+                      {reportToDelete === report.id ? (
+                        <div className="flex items-center space-x-2 bg-red-50 rounded-md p-1">
+                          <AlertTriangle className="w-4 h-4 text-red-500" />
+                          <span className="text-xs text-red-600 mr-1">Delete?</span>
+                          <button 
+                            onClick={(e) => handleDeleteReport(report.id, e)}
+                            className="text-red-600 hover:text-red-800 text-xs font-medium"
+                          >
+                            Yes
+                          </button>
+                          <button 
+                            onClick={cancelDelete}
+                            className="text-gray-600 hover:text-gray-800 text-xs font-medium"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              navigator.clipboard.writeText(`${window.location.origin}/report/${report.id}`);
+                              toast.success('Report link copied to clipboard');
+                            }} 
+                            className="p-1 text-gray-400 hover:text-gray-600"
+                            title="Copy report link"
+                          >
+                            <Share2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={(e) => confirmDelete(report.id, e)}
+                            className="p-1 text-red-400 hover:text-red-600 transition-colors"
+                            title="Delete report"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -283,6 +482,17 @@ const DashboardPage = () => {
           )}
         </div>
       </div>
+      
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+        }}
+      />
     </div>
   );
 };

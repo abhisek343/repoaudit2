@@ -15,6 +15,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { AnalysisResult } from '../../types';
+import { optimizeDependencyGraph, shouldOptimize, formatLargeNumber } from '../../utils/performanceOptimization';
 import { 
   ChurnNode as GlobalChurnNode, 
   FileNode,
@@ -252,14 +253,28 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
         type: 'imports',
         strength: 1,
       };
-    }).filter(l => l !== null) as VisDependencyLink[];
-
-    console.log('Prepared dependency graph data:', { 
+    }).filter(l => l !== null) as VisDependencyLink[];    console.log('Prepared dependency graph data:', { 
       nodes: visNodes.length, 
       links: visLinks.length 
     });
 
-    return { nodes: visNodes, links: visLinks };
+    // Apply performance optimizations for large graphs
+    const { nodes: optimizedNodes, links: optimizedLinks, isOptimized } = optimizeDependencyGraph(visNodes, visLinks);
+    
+    if (isOptimized) {
+      console.log('Dependency graph optimized:', { 
+        originalNodes: visNodes.length,
+        originalLinks: visLinks.length,
+        optimizedNodes: optimizedNodes.length,
+        optimizedLinks: optimizedLinks.length
+      });
+    }
+
+    return { 
+      nodes: optimizedNodes, 
+      links: optimizedLinks,
+      isOptimized
+    };
   }, [reportData.dependencyGraph, files]);
   const fallbackFileSystemTree = useMemo(() => {
     const fileSystemTree = reportData.fileSystemTree;
@@ -413,9 +428,20 @@ const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
           strength: link.strength || 1,
           critical: link.strength ? link.strength > 3 : false
         }));
-        
-        return (
+          return (
           <VisualizationErrorBoundary>
+            {preparedDependencyGraphData.isOptimized && (
+              <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <div className="flex items-center text-orange-800">
+                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-sm font-medium">
+                    Large dependency graph optimized - showing top {formatLargeNumber(preparedDependencyGraphData.nodes.length)} nodes
+                  </span>
+                </div>
+              </div>
+            )}
             {enhancedDeps.length > 0 ? 
               <EnhancedDependencyGraph 
                 dependencies={enhancedDeps} 

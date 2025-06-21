@@ -4,6 +4,10 @@ import { createRoot } from 'react-dom/client';
 import mermaid from 'mermaid';
 import App from './App.tsx';
 import './index.css';
+import { initializeStorage } from './services/storageService';
+
+// Initialize storage services
+initializeStorage().catch(console.error);
 
 // Initialize React Query client
 const queryClient = new QueryClient({

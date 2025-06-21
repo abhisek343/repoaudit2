@@ -15,12 +15,15 @@ import {
   BarChart3,
   AlertTriangle,
   Key,
-  Loader2 // For spinner
+  Loader2, // For spinner
+  RefreshCw, // For force refresh
+  Database // For cache management
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
 import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index'; // Added AnalysisResult
 import { AnalysisService } from '../services/analysisService'; // Added AnalysisService
+import { RepositoryArchiveService } from '../services/repositoryArchiveService'; // Added for cache management
 
 const AnalyzePage = () => {
   const navigate = useNavigate();
@@ -42,6 +45,13 @@ const AnalyzePage = () => {
   const [currentStep, setCurrentStep] = useState('');  const [eventSource, setEventSource] = useState<EventSource | null>(null);
   const [cancelFunction, setCancelFunction] = useState<(() => void) | null>(null);
   const [lastAnalysisTime, setLastAnalysisTime] = useState<number>(0);
+  // Cache management state
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [showCacheInfo, setShowCacheInfo] = useState(false);
+  const [cacheStats, setCacheStats] = useState<{
+    totalArchives: number;
+    totalSize: number;
+  }>({ totalArchives: 0, totalSize: 0 });
 
   const reportCategories: ReportCategory[] = [
     {
@@ -176,8 +186,21 @@ const AnalyzePage = () => {
         }
         eventSource.close();
       }
+    };  }, [cancelFunction, eventSource]);
+
+  // Load cache statistics on component mount
+  useEffect(() => {
+    const loadCacheStats = async () => {
+      try {
+        const stats = await RepositoryArchiveService.getCacheStats();
+        setCacheStats(stats);
+      } catch (error) {
+        console.warn('Failed to load cache statistics:', error);
+      }
     };
-  }, [cancelFunction, eventSource]);
+    
+    loadCacheStats();
+  }, []);
 
   // Effect for body overflow, moved from App.tsx
   useLayoutEffect(() => {
@@ -246,37 +269,54 @@ const AnalyzePage = () => {
     setIsAnalyzing(true);
     setError(undefined);
     setProgress(0);
-    setCurrentStep('Initializing analysis...');
-      const savedToken = localStorage.getItem('githubToken');
+    setCurrentStep('Initializing analysis...');    const savedToken = localStorage.getItem('githubToken');
     console.log('Starting analysis with LLM config:', llmConfig); // Debug log
-    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);    const { eventSource: newEventSource, analysisPromise, cancel } = analysisService.analyzeRepository(
-      githubUrl,
-      (step: string, progressValue: number) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`🎯 Progress callback received: ${step} - ${progressValue}%`);
-        }
-        setCurrentStep(step);
-        setProgress(progressValue);
-      }
-    );
+    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);
 
-    setEventSource(newEventSource);
-    // Store the cancel function for proper cleanup
-    setCancelFunction(() => cancel);    analysisPromise
-      .then((result: AnalysisResult) => {
-        setIsAnalyzing(false);
-        setCancelFunction(null);
-        // persistReport(result); // If you have a local storage persistence helper
-        const reportId = result.id;
-        const navigationPath = `/report/${reportId}`;
-        navigate(navigationPath, { state: { analysisResultFromNavigation: result } });
-      })
-      .catch((err) => {
-        console.error('Analysis failed:', err);
-        setError(err.message || 'Analysis failed. Please try again.');
-        setIsAnalyzing(false);
-        setCancelFunction(null);
+    // Use the new caching-enabled analysis method
+    try {
+      const analysisPromise = analysisService.analyzeRepositoryWithCaching(
+        githubUrl,
+        (step: string, progressValue: number) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`🎯 Progress callback received: ${step} - ${progressValue}%`);
+          }
+          setCurrentStep(step);
+          setProgress(progressValue);
+        },
+        forceRefresh // Pass force refresh flag
+      );      // Store a cancel function (we don't have EventSource in this approach)
+      setCancelFunction(() => {
+        // Signal cancellation to the analysis service
+        analysisService.isCancelled = true;
       });
+
+      analysisPromise
+        .then((result: AnalysisResult) => {
+          setIsAnalyzing(false);
+          setCancelFunction(null);
+          
+          // Refresh cache stats after successful analysis
+          RepositoryArchiveService.getCacheStats().then(setCacheStats).catch(console.warn);
+          
+          const reportId = result.id;
+          const navigationPath = `/report/${reportId}`;
+          navigate(navigationPath, { state: { analysisResultFromNavigation: result } });
+        })
+        .catch((err) => {
+          console.error('Analysis failed:', err);
+          setError(err.message || 'Analysis failed. Please try again.');
+          setIsAnalyzing(false);
+          setCancelFunction(null);
+        });
+
+      // Reset force refresh flag
+      setForceRefresh(false);
+    } catch (err) {
+      console.error('Failed to start analysis:', err);
+      setError('Failed to start analysis. Please check the repository URL and try again.');
+      setIsAnalyzing(false);
+    }
   };
     const handleCancelAnalysis = () => {
     // Use the proper cancel function from analysis service
@@ -295,9 +335,20 @@ const AnalyzePage = () => {
     setCurrentStep('');
     setError('Analysis cancelled by user.');
   };
-
   const handleErrorClear = () => {
     setError(undefined);
+  };
+
+  // Cache management functions
+  const clearRepositoryCache = async (repoUrl: string) => {
+    try {
+      const { owner, repo, branch } = new AnalysisService().parseRepositoryUrl(repoUrl);
+      await RepositoryArchiveService.removeArchive(owner, repo, branch);
+      const stats = await RepositoryArchiveService.getCacheStats();
+      setCacheStats(stats);
+    } catch (error) {
+      console.error('Failed to clear repository cache:', error);
+    }
   };
 
   const getIconComponent = (iconName: string) => {
@@ -455,8 +506,88 @@ const AnalyzePage = () => {
                 className="w-full pl-16 pr-6 py-4 text-lg border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-600 transition-all duration-200 bg-white shadow-sm"
                 required
                 disabled={isAnalyzing}
-              />
+              />            </div>
+            
+            {/* Cache Management Options */}
+            <div className="mb-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={forceRefresh}
+                    onChange={(e) => setForceRefresh(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2"
+                    disabled={isAnalyzing}
+                  />
+                  <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    Force fresh download (skip cache)
+                  </span>
+                </label>
+                
+                <button
+                  type="button"
+                  onClick={() => setShowCacheInfo(!showCacheInfo)}
+                  className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                  disabled={isAnalyzing}
+                >
+                  <Database className="w-4 h-4" />
+                  Cache Info
+                </button>
+              </div>
+              
+              {/* Cache Information Display */}
+              {showCacheInfo && (
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-700">Cached Repositories:</span>
+                      <p className="text-gray-600">{cacheStats.totalArchives}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Total Cache Size:</span>
+                      <p className="text-gray-600">
+                        {(cacheStats.totalSize / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await RepositoryArchiveService.clearAllArchives();
+                          const stats = await RepositoryArchiveService.getCacheStats();
+                          setCacheStats(stats);
+                        } catch (error) {
+                          console.error('Failed to clear cache:', error);
+                        }
+                      }}
+                      className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-md hover:bg-red-200 transition-colors"
+                      disabled={isAnalyzing}
+                    >
+                      Clear All Cache
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const stats = await RepositoryArchiveService.getCacheStats();
+                          setCacheStats(stats);
+                        } catch (error) {
+                          console.error('Failed to refresh cache stats:', error);
+                        }
+                      }}
+                      className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-md hover:bg-blue-200 transition-colors"
+                      disabled={isAnalyzing}
+                    >
+                      Refresh Stats
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+            
             <button
               type="submit"
               disabled={isAnalyzing || !githubUrl.trim()}

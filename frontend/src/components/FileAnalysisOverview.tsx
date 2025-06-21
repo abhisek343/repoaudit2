@@ -1,13 +1,19 @@
-import React from 'react';
-import { FileText, Code, Layers, TrendingUp, AlertCircle, GitBranch } from 'lucide-react';
+import React, { useState } from 'react';
+import { FileText, Code, Layers, TrendingUp, AlertCircle, GitBranch, ChevronDown, ChevronUp } from 'lucide-react';
 import { AnalysisResult } from '../types';
+import { optimizeLanguageStats, formatLargeNumber, shouldOptimize } from '../utils/performanceOptimization';
+import EnhancedFileList from './EnhancedFileList';
 
 interface FileAnalysisOverviewProps {
   analysisResult: AnalysisResult;
 }
 
 export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ analysisResult }) => {
+  const [showDetailedFileList, setShowDetailedFileList] = useState(false);
   const files = analysisResult.files || [];
+  
+  // Check if optimizations should be applied
+  const optimizations = shouldOptimize(analysisResult);
   
   // Calculate comprehensive file statistics
   const sourceFiles = files.filter(f => f.content && f.language && f.language !== 'text');
@@ -23,7 +29,7 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
   const highComplexityFiles = filesWithComplexity.filter(f => (f.complexity || 0) > 10);
   
   // Group by language
-  const languageStats = sourceFiles.reduce((acc, file) => {
+  const rawLanguageStats = sourceFiles.reduce((acc, file) => {
     const lang = file.language || 'Unknown';
     if (!acc[lang]) {
       acc[lang] = { count: 0, loc: 0, avgComplexity: 0 };
@@ -36,16 +42,18 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
     return acc;
   }, {} as Record<string, { count: number; loc: number; avgComplexity: number }>);
   
+  // Apply optimization to language stats if needed
+  const { stats: languageStats, isOptimized: languageOptimized } = optimizeLanguageStats(rawLanguageStats);
+  
   // Top complex files
   const topComplexFiles = filesWithComplexity
     .sort((a, b) => (b.complexity || 0) - (a.complexity || 0))
     .slice(0, 5);
 
-  const fileStats = [
-    {
+  const fileStats = [    {
       icon: <FileText className="w-6 h-6 text-blue-500" />,
       label: 'Total Files Analyzed',
-      value: files.length.toLocaleString(),
+      value: formatLargeNumber(files.length),
       subtitle: `${sourceFiles.length} source files`,
     },
     {
@@ -71,13 +79,17 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
   ];
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center mb-6">
+    <div className="bg-white rounded-lg shadow-lg p-6">      <div className="flex items-center mb-6">
         <GitBranch className="w-6 h-6 text-indigo-600 mr-3" />
         <h3 className="text-xl font-bold text-gray-900">File Analysis Overview</h3>
         <span className="ml-3 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
           Archive Method ✓
         </span>
+        {optimizations.files && (
+          <span className="ml-2 px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full">
+            Optimized View
+          </span>
+        )}
       </div>
 
       {/* Statistics Grid */}
@@ -92,16 +104,19 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
             <div className="text-xs text-gray-500">{stat.subtitle}</div>
           </div>
         ))}
-      </div>
-
-      {/* Language Breakdown */}
+      </div>      {/* Language Breakdown */}
       {Object.keys(languageStats).length > 0 && (
         <div className="mb-6">
-          <h4 className="text-lg font-semibold text-gray-900 mb-3">Language Breakdown</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+            Language Breakdown
+            {languageOptimized && (
+              <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                Top {Object.keys(languageStats).length - (languageStats.Others ? 1 : 0)} + Others
+              </span>
+            )}
+          </h4>          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {Object.entries(languageStats)
               .sort(([,a], [,b]) => b.loc - a.loc)
-              .slice(0, 6)
               .map(([language, stats]) => (
                 <div key={language} className="bg-gray-50 rounded-lg p-3">
                   <div className="font-medium text-gray-900">{language}</div>
@@ -140,9 +155,7 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
             ))}
           </div>
         </div>
-      )}
-
-      {/* Analysis Method Info */}
+      )}      {/* Analysis Method Info */}
       <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <div className="flex items-start">
           <div className="flex-shrink-0">
@@ -150,15 +163,43 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
             </svg>
           </div>
-          <div className="ml-3">
+          <div className="ml-3 flex-1">
             <h5 className="text-sm font-medium text-blue-900">Enhanced Archive Analysis</h5>
             <p className="text-sm text-blue-700">
-              This analysis used the repository archive download method to comprehensively analyze all {files.length} files 
+              This analysis used the repository archive download method to comprehensively analyze all {formatLargeNumber(files.length)} files 
               in a single API call, providing complete code coverage and detailed metrics.
             </p>
+            <div className="mt-3">
+              <button
+                onClick={() => setShowDetailedFileList(!showDetailedFileList)}
+                className="text-sm text-blue-600 hover:text-blue-800 flex items-center"
+              >
+                {showDetailedFileList ? (
+                  <>
+                    Hide detailed file list
+                    <ChevronUp className="w-4 h-4 ml-1" />
+                  </>
+                ) : (
+                  <>
+                    Show detailed file list
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Enhanced File List */}
+      {showDetailedFileList && (
+        <div className="mt-6">
+          <EnhancedFileList 
+            files={files} 
+            title="Detailed File Analysis"
+          />
+        </div>
+      )}
     </div>
   );
 };

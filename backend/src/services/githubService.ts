@@ -1,7 +1,7 @@
 import axios, { AxiosResponse } from 'axios';
 import { Base64 } from 'js-base64';
 import { Repository, Contributor, Commit, FileInfo, PullRequestData } from '../types';
-import JSZip from 'jszip'; // Default import yields JSZip constructor
+import JSZip from 'jszip';
 import * as path from 'path';
 
 // Define interfaces for raw GitHub API responses to type axios calls
@@ -522,48 +522,134 @@ export class GitHubService {
     } catch (error) {
       this.handleGitHubError(error, 'fetching pull requests');
     }
-  }
-  /**
-   * Download entire repository as ZIP archive (single API call)
-   * This method provides comprehensive file coverage with minimal API usage
+  }  /**
+   * Download entire repository as ZIP archive and extract files with content
+   * This replaces individual file fetching for better performance
    */
-  async downloadRepositoryArchive(owner: string, repo: string, ref: string = 'main'): Promise<Buffer> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/zipball/${ref}`;
+  async downloadRepositoryArchive(owner: string, repo: string, branch: string): Promise<FileInfo[]> {
+    this.owner = owner; 
+    this.repo = repo;
     
-    console.log(`[GitHubService] 🚀 Starting archive download: ${owner}/${repo}@${ref}`);
-    console.log(`[GitHubService] 📊 Archive method benefits: Single API call for entire repository`);
-    
-    const startTime = Date.now();
+    console.log(`[Archive Download] Starting download of ${owner}/${repo}@${branch}`);
     
     try {
-      const response = await fetch(url, {
+      // Download the ZIP archive
+      const archiveUrl = `${this.baseURL}/repos/${owner}/${repo}/zipball/${branch}`;
+      const response = await axios.get(archiveUrl, {
         headers: this.getHeaders(),
-        // @ts-ignore - timeout is supported by node-fetch
-        timeout: 60000, // 60 second timeout for large repos
+        responseType: 'arraybuffer',
+        timeout: 120000, // 2 minutes timeout for large repos
+        maxContentLength: 100 * 1024 * 1024, // 100MB max file size
       });
+
+      console.log(`[Archive Download] Downloaded ${(response.data.byteLength / 1024 / 1024).toFixed(2)}MB archive`);      // Extract ZIP file
+      const zip = new JSZip();
+      const zipContents = await zip.loadAsync(response.data);
       
-      if (!response.ok) {
-        throw new Error(`Failed to download repository archive: ${response.status} ${response.statusText}`);
+      const files: FileInfo[] = [];
+      const filePromises: Promise<void>[] = [];
+
+      // Process each file in the ZIP
+      for (const [relativePath, zipObject] of Object.entries(zipContents.files)) {
+        if ((zipObject as any).dir) {
+          // Skip directories
+          continue;
+        }
+
+        // Remove the root directory from the path (GitHub adds a prefix like "repo-branch/")
+        const pathParts = relativePath.split('/');
+        const cleanPath = pathParts.slice(1).join('/'); // Remove first part which is the repo-branch prefix
+        
+        if (!cleanPath) {
+          // Skip if path becomes empty
+          continue;
+        }
+
+        // Create the file info object
+        const fileInfo: FileInfo = {
+          name: path.basename(cleanPath),
+          path: cleanPath,
+          size: 0, // We'll estimate this from content length
+          type: 'file',
+          content: undefined // Will be populated below for text files
+        };        // Only extract content for text files under a reasonable size limit
+        if (this.isTextFile(cleanPath)) {
+          const contentPromise = (zipObject as any).async('text').then((content: string) => {
+            // Set size based on content length and only include if reasonable size
+            if (content.length < 1024 * 1024) { // 1MB limit per file
+              fileInfo.content = content;
+              fileInfo.size = content.length;
+            } else {
+              console.warn(`[Archive Download] Skipping large file ${cleanPath} (${content.length} bytes)`);
+              fileInfo.content = '';
+              fileInfo.size = content.length;
+            }
+          }).catch((error: any) => {
+            console.warn(`[Archive Download] Failed to extract content for ${cleanPath}:`, error.message);
+            fileInfo.content = ''; // Set empty content on error
+          });
+          filePromises.push(contentPromise);
+        } else {
+          // For binary files, try to get size estimate
+          (zipObject as any).async('uint8array').then((data: Uint8Array) => {
+            fileInfo.size = data.length;
+          }).catch(() => {
+            fileInfo.size = 0;
+          });
+        }
+
+        files.push(fileInfo);
       }
+
+      // Wait for all file content extraction to complete
+      await Promise.all(filePromises);
+
+      console.log(`[Archive Download] Extracted ${files.length} files, ${files.filter(f => f.content !== undefined).length} with content`);
       
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      
-      const downloadTime = Date.now() - startTime;
-      const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-      
-      console.log(`[GitHubService] ✅ Archive download successful:`);
-      console.log(`[GitHubService]    📦 Size: ${sizeMB}MB`);
-      console.log(`[GitHubService]    ⏱️  Time: ${downloadTime}ms`);
-      console.log(`[GitHubService]    🔄 API calls used: 1 (vs potentially 100s with individual files)`);
-      
-      return buffer;
-    } catch (error) {
-      const downloadTime = Date.now() - startTime;
-      console.error(`[GitHubService] ❌ Archive download failed after ${downloadTime}ms:`, error);
-      throw error;
+      return files;    } catch (error) {
+      console.error('[Archive Download] Failed to download repository archive:', error);
+      this.handleGitHubError(error, `download repository archive for ${owner}/${repo}`);
+      return [];
     }
   }
+
+  /**
+   * Determine if a file is likely a text file based on extension
+   */
+  private isTextFile(filePath: string): boolean {
+    const textExtensions = new Set([
+      '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+      '.py', '.pyw', '.pyi',
+      '.java', '.kt', '.scala', '.groovy',
+      '.c', '.cpp', '.cxx', '.cc', '.h', '.hpp', '.hxx',
+      '.cs', '.vb', '.fs',
+      '.php', '.rb', '.go', '.rs', '.swift', '.dart', '.lua',
+      '.hs', '.elm', '.clj', '.cljs', '.ml', '.ex', '.exs',
+      '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd',
+      '.sql', '.plsql', '.psql',
+      '.json', '.yaml', '.yml', '.toml', '.xml', '.ini', '.cfg', '.conf',
+      '.html', '.htm', '.css', '.scss', '.sass', '.less',
+      '.md', '.mdx', '.tex', '.txt', '.log',
+      '.tf', '.hcl', '.dockerfile',
+      '.gitignore', '.gitattributes', '.editorconfig'
+    ]);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const fileName = path.basename(filePath).toLowerCase();
+    
+    // Check by extension
+    if (textExtensions.has(ext)) {
+      return true;
+    }
+    
+    // Check specific filenames without extensions
+    const textFilenames = new Set([
+      'readme', 'license', 'changelog', 'dockerfile', 'makefile', 'rakefile', 'gemfile'
+    ]);
+    
+    return textFilenames.has(fileName) || textFilenames.has(fileName.split('.')[0]);
+  }
+
   /**
    * Extract files from ZIP archive with intelligent filtering
    * Provides comprehensive analysis of all repository files
@@ -585,10 +671,9 @@ export class GitHubService {
     
     // Count total entries for progress tracking
     Object.keys(zip.files).forEach(() => totalEntries++);
-    
-    // Sort files by relevance before processing
+      // Sort files by relevance before processing
     const sortedEntries = Object.entries(zip.files)
-      .filter(([_, file]) => !file.dir)
+      .filter(([_, file]) => !(file as any).dir)
       .sort(([pathA], [pathB]) => this.prioritizeFile(pathA) - this.prioritizeFile(pathB));
     
     console.log(`[GitHubService] 📁 Found ${sortedEntries.length} files in archive`);
@@ -607,9 +692,8 @@ export class GitHubService {
         skippedCount++;
         continue;
       }
-      
-      try {
-        const content = await file.async('string');
+        try {
+        const content = await (file as any).async('string');
         
         if (content.length > maxFileSize) {
           console.log(`[GitHubService] ⚠️  Skipping large file: ${cleanPath} (${(content.length / 1024).toFixed(1)}KB)`);

@@ -245,7 +245,7 @@ const handleAnalysisRequest = async (req, res) => {
         console.log('Request method:', req.method);
         console.log('Request body:', req.body);
         const { repoUrl, llmConfig: llmConfigString, githubToken: rawGithubToken } = req.method === 'POST' ? req.body : req.query;
-        console.log('Extracted parameters:', { repoUrl, llmConfigString, rawGithubToken });
+        console.log('Extracted parameters:', { repoUrl, llmConfigString: llmConfigString, rawGithubToken });
         // Parse llmConfig if provided
         let llmConfig;
         try {
