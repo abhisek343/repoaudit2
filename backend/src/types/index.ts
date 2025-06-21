@@ -388,8 +388,7 @@ export interface AnalysisResult {
     // AI-generated content
   aiSummary?: string;
   architectureAnalysis?: string;
-  
-  // Summary metrics
+    // Summary metrics
   metrics: {
     totalCommits: number;
     totalContributors: number;
@@ -405,6 +404,12 @@ export interface AnalysisResult {
     highVulnerabilities: number;
     mediumVulnerabilities: number;
     lowVulnerabilities: number;
+    totalPRs: number;
+    mergedPRs: number;
+    prMergeRate: number;
+    avgPRMergeTime: number;
+    recentActivity: number; // Commits in last 30 days
+    avgCommitsPerWeek: number; // Average commits per week
   };
   analysisWarnings?: AnalysisWarning[];
   

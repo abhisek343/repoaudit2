@@ -76,13 +76,8 @@ app.post('/api/llm/check', safeAsync(async (req: Request, res: Response) => {
     res.status(200).json({ success: false, message: 'LLM configuration missing.' });
     return;
   }
-  // Skip real LLM availability check to avoid external API retries
-  res.status(200).json({ success: true });
+  // Skip real LLM availability check to avoid external API retries  res.status(200).json({ success: true });
 }));
-
-// Rate limiting for validation endpoint
-const validationRateLimit = new Map<string, number>();
-const VALIDATION_COOLDOWN_MS = 5000; // 5 seconds between validation attempts
 
 // Endpoint to validate LLM API key (endpoint expected by frontend)
 app.post('/api/validate-llm-key', safeAsync(async (req: Request, res: Response) => {
@@ -380,14 +375,14 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
 };
 
 // Support both GET and POST for analysis endpoint
-app.get('/api/analyze', (req, res, next) => {
+app.get('/api/analyze', (req, res) => {
   console.log(`🚨 GET /api/analyze called with query:`, req.query);
   console.log(`🚨 Request headers:`, req.headers);
   console.log(`🚨 User-Agent:`, req.get('User-Agent'));
   handleAnalysisRequest(req, res);
 });
 
-app.post('/api/analyze', (req, res, next) => {
+app.post('/api/analyze', (req, res) => {
   console.log(`🚨 POST /api/analyze called with body:`, req.body);
   console.log(`🚨 Request headers:`, req.headers);
   console.log(`🚨 User-Agent:`, req.get('User-Agent'));

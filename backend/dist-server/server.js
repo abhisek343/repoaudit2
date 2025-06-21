@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -43,14 +10,20 @@ const llmService_1 = require("./src/services/llmService");
 const backendAnalysisService_1 = require("./src/services/backendAnalysisService");
 const architectureController_1 = require("./src/controllers/architectureController");
 const redisCacheService_1 = require("./src/services/redisCacheService");
+const errorHandler_1 = require("./src/middleware/errorHandler");
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3001;
 // Redis cache for analysis results
 const cacheService = new redisCacheService_1.RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
 // Initialize controllers
 const architectureController = new architectureController_1.ArchitectureController();
-// Enable gzip/brotli compression for all responses
-app.use((0, compression_1.default)());
+// Enable gzip/brotli compression for all responses, but not for SSE
+app.use((req, res, next) => {
+    if (req.path === '/api/analyze') {
+        return next();
+    }
+    (0, compression_1.default)()(req, res, next);
+});
 app.use((0, cors_1.default)()); // Enable CORS for all routes
 app.use(express_1.default.json({ limit: '50mb' }));
 // Safe serialization preserving all data and handling circular references
@@ -87,110 +60,61 @@ function handleAnalysisError(res, error) {
     }
 }
 // Architecture analysis endpoints
-app.post('/api/architecture/analyze', (req, res) => architectureController.analyzeArchitecture(req, res));
-app.get('/api/architecture/config', (req, res) => architectureController.getConfiguration(req, res));
-app.put('/api/architecture/config', (req, res) => architectureController.updateConfiguration(req, res));
-app.get('/api/architecture/config/export', (req, res) => architectureController.exportConfiguration(req, res));
-app.post('/api/architecture/config/import', (req, res) => architectureController.importConfiguration(req, res));
+app.post('/api/architecture/analyze', (0, errorHandler_1.safeAsync)((req, res) => architectureController.analyzeArchitecture(req, res)));
+app.get('/api/architecture/config', (0, errorHandler_1.safeAsync)((req, res) => architectureController.getConfiguration(req, res)));
+app.put('/api/architecture/config', (0, errorHandler_1.safeAsync)((req, res) => architectureController.updateConfiguration(req, res)));
+app.get('/api/architecture/config/export', (0, errorHandler_1.safeAsync)((req, res) => architectureController.exportConfiguration(req, res)));
+app.post('/api/architecture/config/import', (0, errorHandler_1.safeAsync)((req, res) => architectureController.importConfiguration(req, res)));
 // Endpoint to check LLM availability
-app.post('/api/llm/check', async (req, res) => {
+app.post('/api/llm/check', (0, errorHandler_1.safeAsync)(async (req, res) => {
     const { llmConfig } = req.body;
     if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
         res.status(200).json({ success: false, message: 'LLM configuration missing.' });
         return;
     }
-    // Skip real LLM availability check to avoid external API retries
-    res.status(200).json({ success: true });
-});
-// Rate limiting for validation endpoint
-const validationRateLimit = new Map();
-const VALIDATION_COOLDOWN_MS = 5000; // 5 seconds between validation attempts
+    // Skip real LLM availability check to avoid external API retries  res.status(200).json({ success: true });
+}));
 // Endpoint to validate LLM API key (endpoint expected by frontend)
-app.post('/api/validate-llm-key', async (req, res) => {
-    try {
-        const { llmConfig } = req.body;
-        if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
-            res.status(200).json({ isValid: false, error: 'LLM configuration missing.' });
-            return;
-        }
-        // Rate limiting based on API key
-        const rateLimitKey = `${llmConfig.provider}_${llmConfig.apiKey.substring(0, 8)}`;
-        const lastValidation = validationRateLimit.get(rateLimitKey);
-        const now = Date.now();
-        if (lastValidation && (now - lastValidation) < VALIDATION_COOLDOWN_MS) {
-            console.log('Rate limiting validation request');
-            res.status(200).json({
-                isValid: false,
-                error: 'Validation rate limited. Please wait a moment before retrying.'
-            });
-            return;
-        }
-        validationRateLimit.set(rateLimitKey, now);
-        const llmService = new llmService_1.LLMService(llmConfig);
-        // Check if we're in a quota exhaustion cooldown period
-        const isValid = await llmService.checkAvailability();
-        res.status(200).json({ isValid });
+app.post('/api/validate-llm-key', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig } = req.body;
+    if (!llmConfig || !llmConfig.provider || !llmConfig.apiKey) {
+        return res.status(400).json({ isValid: false, error: 'LLM configuration is required.' });
     }
-    catch (error) {
-        const err = error;
-        console.error('LLM validation error:', err.message);
-        // Check if it's a quota exhaustion error
-        if (err.message.toLowerCase().includes('quota') ||
-            err.message.toLowerCase().includes('unavailable due to quota')) {
-            res.status(200).json({
-                isValid: false,
-                error: 'LLM service temporarily unavailable due to quota limits. Please try again later.'
-            });
-        }
-        else {
-            res.status(200).json({ isValid: false, error: `Failed to validate LLM key: ${err.message}` });
-        }
-    }
-});
+    const analysisService = new backendAnalysisService_1.BackendAnalysisService(undefined, llmConfig);
+    const result = await analysisService.validateLlmKey(llmConfig);
+    res.status(200).json(result);
+}));
 // Endpoint to handle diagram enhancement
-app.post('/api/llm/enhance-diagram', async (req, res) => {
-    try {
-        const { llmConfig, diagramCode, fileInfo } = req.body;
-        if (!llmConfig || !diagramCode) {
-            res.status(400).json({ error: 'Missing required parameters' });
-            return;
-        }
-        const llmService = new llmService_1.LLMService(llmConfig);
-        const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
-        res.json({ enhancedDiagram: result.enhancedCode });
+app.post('/api/llm/enhance-diagram', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, diagramCode, fileInfo } = req.body;
+    if (!llmConfig || !diagramCode) {
+        res.status(400).json({ error: 'Missing required parameters' });
+        return;
     }
-    catch (error) {
-        const err = error;
-        res.status(500).json({ error: `Error enhancing diagram: ${err.message}` });
-    }
-});
+    const llmService = new llmService_1.LLMService(llmConfig);
+    const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
+    res.json({ enhancedDiagram: result.enhancedCode });
+}));
 // Endpoint to generate AI summary
-app.post('/api/llm/generate-summary', async (req, res) => {
-    try {
-        const { llmConfig, codebaseContext } = req.body;
-        if (!llmConfig || !codebaseContext) {
-            res.status(400).json({ error: 'Missing required parameters' });
-            return;
-        }
-        const llmService = new llmService_1.LLMService(llmConfig);
-        const result = await llmService.generateSummary(codebaseContext);
-        res.json(result);
+app.post('/api/llm/generate-summary', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, codebaseContext } = req.body;
+    if (!llmConfig || !codebaseContext) {
+        res.status(400).json({ error: 'Missing required parameters' });
+        return;
     }
-    catch (error) {
-        const err = error;
-        res.status(500).json({ error: `Error generating summary: ${err.message}` });
-    }
-});
+    const llmService = new llmService_1.LLMService(llmConfig);
+    const result = await llmService.generateSummary(codebaseContext);
+    res.json(result);
+}));
 // Endpoint to analyze architecture
-app.post('/api/llm/analyze-architecture', async (req, res) => {
-    try {
-        const { llmConfig, codeStructure } = req.body;
-        if (!llmConfig || !codeStructure) {
-            res.status(400).json({ error: 'Missing required parameters' });
-            return;
-        }
-        const llmService = new llmService_1.LLMService(llmConfig);
-        const result = await llmService.generateText(`Analyze the architecture of this codebase:
+app.post('/api/llm/analyze-architecture', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, codeStructure } = req.body;
+    if (!llmConfig || !codeStructure) {
+        res.status(400).json({ error: 'Missing required parameters' });
+        return;
+    }
+    const llmService = new llmService_1.LLMService(llmConfig);
+    const result = await llmService.generateText(`Analyze the architecture of this codebase:
       File Structure: ${JSON.stringify(codeStructure.files)}
       Dependencies: ${JSON.stringify(codeStructure.dependencies)}
       
@@ -199,23 +123,17 @@ app.post('/api/llm/analyze-architecture', async (req, res) => {
       2. Structural analysis
       3. Improvement recommendations
       4. Potential issues or anti-patterns`, 1500);
-        res.json({ analysis: result });
-    }
-    catch (error) {
-        const err = error;
-        res.status(500).json({ error: `Error analyzing architecture: ${err.message}` });
-    }
-});
+    res.json({ analysis: result });
+}));
 // Endpoint to perform security analysis
-app.post('/api/llm/security-analysis', async (req, res) => {
-    try {
-        const { llmConfig, securityData } = req.body;
-        if (!llmConfig || !securityData) {
-            res.status(400).json({ error: 'Missing required parameters' });
-            return;
-        }
-        const llmService = new llmService_1.LLMService(llmConfig);
-        const result = await llmService.generateText(`Perform security analysis on this repository:
+app.post('/api/llm/security-analysis', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, securityData } = req.body;
+    if (!llmConfig || !securityData) {
+        res.status(400).json({ error: 'Missing required parameters' });
+        return;
+    }
+    const llmService = new llmService_1.LLMService(llmConfig);
+    const result = await llmService.generateText(`Perform security analysis on this repository:
       Security Issues: ${JSON.stringify(securityData.issues)}
       Dependencies: ${JSON.stringify(securityData.dependencies)}
       
@@ -224,23 +142,17 @@ app.post('/api/llm/security-analysis', async (req, res) => {
       2. Security best practices compliance
       3. Risk level evaluation
       4. Remediation recommendations`, 1200);
-        res.json({ analysis: result });
-    }
-    catch (error) {
-        const err = error;
-        res.status(500).json({ error: `Error performing security analysis: ${err.message}` });
-    }
-});
+    res.json({ analysis: result });
+}));
 // Endpoint to generate AI insights for overview page
-app.post('/api/llm/generate-insights', async (req, res) => {
-    try {
-        const { llmConfig, repoData } = req.body;
-        if (!llmConfig || !repoData) {
-            res.status(400).json({ error: 'Missing required parameters' });
-            return;
-        }
-        const llmService = new llmService_1.LLMService(llmConfig);
-        const result = await llmService.generateSummary(`
+app.post('/api/llm/generate-insights', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, repoData } = req.body;
+    if (!llmConfig || !repoData) {
+        res.status(400).json({ error: 'Missing required parameters' });
+        return;
+    }
+    const llmService = new llmService_1.LLMService(llmConfig);
+    const result = await llmService.generateSummary(`
 Repository Analysis Data:
 Name: ${repoData.name}
 Description: ${repoData.description}
@@ -255,16 +167,11 @@ Generate comprehensive insights about this repository including:
 5. Recommendations for maintainers
 
 Provide actionable insights in a clear, structured format.`);
-        // Return the summary text from the response
-        const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
-        res.setHeader('Content-Type', 'text/plain');
-        res.send(insights);
-    }
-    catch (error) {
-        const err = error;
-        res.status(500).json({ error: `Error generating insights: ${err.message}` });
-    }
-});
+    // Return the summary text from the response
+    const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(insights);
+}));
 // Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -335,7 +242,10 @@ const handleAnalysisRequest = async (req, res) => {
     });
     try {
         console.log('Received query:', req.query);
+        console.log('Request method:', req.method);
+        console.log('Request body:', req.body);
         const { repoUrl, llmConfig: llmConfigString, githubToken: rawGithubToken } = req.method === 'POST' ? req.body : req.query;
+        console.log('Extracted parameters:', { repoUrl, llmConfigString, rawGithubToken });
         // Parse llmConfig if provided
         let llmConfig;
         try {
@@ -348,17 +258,43 @@ const handleAnalysisRequest = async (req, res) => {
         const githubToken = typeof rawGithubToken === 'string' && rawGithubToken.trim() !== ''
             ? rawGithubToken
             : undefined;
-        if (!repoUrl) {
-            const error = 'Repository URL is required';
-            console.error(error);
+        // Enhanced validation for repoUrl
+        if (!repoUrl || typeof repoUrl !== 'string' || repoUrl.trim() === '') {
+            const error = 'Repository URL is required and must be a valid non-empty string';
+            console.error(error, { repoUrl, type: typeof repoUrl });
             res.write(`event: error-message\ndata: ${JSON.stringify({ error })}\n\n`);
             res.end();
             return;
         }
+        // Additional validation for GitHub URL format
+        const githubUrlPattern = /^https?:\/\/github\.com\/[^\/]+\/[^\/]+\/?$/;
+        if (!githubUrlPattern.test(repoUrl.trim())) {
+            const error = 'Invalid GitHub repository URL format. Expected: https://github.com/owner/repo';
+            console.error(error, { repoUrl: repoUrl.trim() });
+            res.write(`event: error-message\ndata: ${JSON.stringify({ error })}\n\n`);
+            res.end();
+            return;
+        }
+        // Prevent analysis of test/placeholder URLs
+        const testUrls = [
+            'https://github.com/test/test',
+            'https://github.com/example/example',
+            'https://github.com/demo/demo',
+            'https://github.com/sample/sample'
+        ];
+        if (testUrls.includes(repoUrl.trim().toLowerCase())) {
+            const error = 'Test/placeholder URLs are not allowed for analysis';
+            console.error(error, { repoUrl: repoUrl.trim() });
+            res.write(`event: error-message\ndata: ${JSON.stringify({ error })}\n\n`);
+            res.end();
+            return;
+        }
+        const cleanRepoUrl = repoUrl.trim();
+        console.log(`🔍 Analysis request validated for: ${cleanRepoUrl}`);
         // Send initial progress to confirm connection
         sendProgress('Connection established', 0);
         // Check cache first
-        const cacheKey = `analysis_${repoUrl}`;
+        const cacheKey = `analysis_${cleanRepoUrl}`;
         const cached = await cacheService.get(cacheKey);
         if (cached) {
             console.log(`Returning cached analysis for key ${cacheKey}`);
@@ -366,9 +302,9 @@ const handleAnalysisRequest = async (req, res) => {
             res.end();
             return;
         }
-        console.log(`[${new Date().toISOString()}] Starting analysis for: ${repoUrl}`);
+        console.log(`[${new Date().toISOString()}] Starting analysis for: ${cleanRepoUrl}`);
         const analysisService = new backendAnalysisService_1.BackendAnalysisService(githubToken, llmConfig);
-        const report = await analysisService.analyze(repoUrl, sendProgress);
+        const report = await analysisService.analyze(cleanRepoUrl, sendProgress);
         if (keepAliveInterval)
             clearInterval(keepAliveInterval);
         if (clientDisconnected) {
@@ -409,25 +345,27 @@ const handleAnalysisRequest = async (req, res) => {
     }
 };
 // Support both GET and POST for analysis endpoint
-app.get('/api/analyze', handleAnalysisRequest);
-app.post('/api/analyze', handleAnalysisRequest);
+app.get('/api/analyze', (req, res) => {
+    console.log(`🚨 GET /api/analyze called with query:`, req.query);
+    console.log(`🚨 Request headers:`, req.headers);
+    console.log(`🚨 User-Agent:`, req.get('User-Agent'));
+    handleAnalysisRequest(req, res);
+});
+app.post('/api/analyze', (req, res) => {
+    console.log(`🚨 POST /api/analyze called with body:`, req.body);
+    console.log(`🚨 Request headers:`, req.headers);
+    console.log(`🚨 User-Agent:`, req.get('User-Agent'));
+    handleAnalysisRequest(req, res);
+});
 // Endpoint to validate GitHub token
-app.post('/api/validate-github-token', (async (req, res) => {
-    try {
-        const { token } = req.body;
-        if (!token || typeof token !== 'string') {
-            return res.status(400).json({ isValid: false, error: 'Token is required and must be a string.' });
-        }
-        const { GitHubService } = await Promise.resolve().then(() => __importStar(require('./src/services/githubService')));
-        const githubService = new GitHubService(token);
-        const isValid = await githubService.verifyToken();
-        res.status(200).json({ isValid });
+app.post('/api/validate-github-token', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+        return res.status(400).json({ isValid: false, error: 'Token is required and must be a string.' });
     }
-    catch (error) {
-        const err = error;
-        console.error('GitHub token validation error:', err.message);
-        res.status(200).json({ isValid: false, error: `Token validation failed: ${err.message}` });
-    }
+    const analysisService = new backendAnalysisService_1.BackendAnalysisService(token);
+    const result = await analysisService.validateGithubToken(token);
+    res.status(200).json(result);
 }));
 // Endpoint to check for environment keys (for open source setup)
 app.get('/api/check-env-keys', (_req, res) => {
@@ -440,6 +378,8 @@ app.get('/api/check-env-keys', (_req, res) => {
     });
 });
 // Single-process mode (cluster integration removed)
+// Centralized error handler
+app.use(errorHandler_1.errorHandler);
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 });

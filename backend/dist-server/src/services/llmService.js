@@ -74,6 +74,20 @@ class LLMService {
                 this.claude = undefined;
         }
     }
+    async verifyKey() {
+        if (!this.isConfigured()) {
+            return false;
+        }
+        try {
+            // Use a simple, low-cost call to verify the key
+            await this.generateText("test", 1);
+            return true;
+        }
+        catch (error) {
+            console.error(`LLM key verification failed for provider ${this.config.provider}:`, error);
+            return false;
+        }
+    }
     async checkAvailability() {
         if (!this.isConfigured()) {
             return false;

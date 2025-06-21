@@ -360,21 +360,43 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
             AI Architecture Analysis
           </h3>
           <div className="prose prose-indigo max-w-none">
-            <div className="relative bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-500 rounded-2xl p-8 mb-8 shadow-2xl overflow-hidden transform transition-all duration-500 hover:scale-[1.01] hover:shadow-3xl">
+            <div className="relative bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-500 rounded-2xl p-8 mb-8 shadow-2xl overflow-auto transform transition-all duration-500 hover:scale-[1.01] hover:shadow-3xl max-h-[500px]">
               <div className="absolute inset-0 bg-pattern opacity-10"></div> {/* Subtle pattern overlay */}
-              <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
-                {architectureAnalysis
-                  .replace(/\*\*/g, '') // Remove bold markdown
-                  .split('\n')
-                  .map(line => line.replace(/^\s*(\d+\.|\*|-)\s*/, '').trim()) // Remove list markers
-                  .filter(line => line.length > 0)
-                  .map((line, index) => (
-                    <li key={index} className="flex items-start">
+              {architectureAnalysis.includes('LLM service unavailable') || architectureAnalysis.includes('quota exhaustion') || architectureAnalysis.length < 100 ? (
+                <div className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
+                  <p>Full AI analysis is currently unavailable or limited due to service constraints. Please try again later for detailed insights.</p>
+                  <p>Below is a summary of basic architecture metrics extracted from the analysis data:</p>
+                  <ul className="space-y-2">
+                    <li className="flex items-start">
                       <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
-                      <span>{line}</span>
+                      <span>Total Modules: {files.length || 'N/A'}</span>
                     </li>
-                ))}
-              </ul>
+                    <li className="flex items-start">
+                      <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
+                      <span>Total Dependencies: {files.reduce((sum, file) => sum + (file.dependencies?.length || 0), 0) || 'N/A'}</span>
+                    </li>
+                    <li className="flex items-start">
+                      <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
+                      <span>Average Complexity: {files.length > 0 ? (files.reduce((sum, file) => sum + (file.complexity || 0), 0) / files.length).toFixed(2) : 'N/A'}%</span>
+                    </li>
+                  </ul>
+                  <p>You can also view additional architecture details and diagrams below.</p>
+                </div>
+              ) : (
+                <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
+                  {architectureAnalysis
+                    .replace(/\*\*/g, '') // Remove bold markdown
+                    .split('\n')
+                    .map(line => line.replace(/^\s*(\d+\.|\*|-)\s*/, '').trim()) // Remove list markers
+                    .filter(line => line.length > 0)
+                    .map((line, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
+                        <span>{line}</span>
+                      </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

@@ -9,7 +9,6 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
   // Use optional chaining and default values directly for cleaner access
   const basicInfo = analysisResult?.basicInfo || {};
   const metrics = analysisResult?.metrics || {};
-  const aiSummary = analysisResult?.aiSummary || '';
 
   const vitals = [
     { name: 'Stars', value: basicInfo.stars, icon: '⭐' },
@@ -62,13 +61,25 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
       </div>
 
       {/* AI Summary using ExecutiveSummary component */}
-      {aiSummary && (
-        <ExecutiveSummary reportData={{ 
-          basicInfo: analysisResult.basicInfo, 
-          aiSummary: analysisResult.aiSummary, 
-          metrics: analysisResult.metrics 
-        }} />
-      )}
+      <ExecutiveSummary reportData={{ 
+        basicInfo: analysisResult.basicInfo, 
+        metrics: analysisResult.metrics,
+        dependencyMetrics: analysisResult.dependencyMetrics || {
+          totalDependencies: 0,
+          devDependencies: 0,
+          outdatedPackages: 0,
+          vulnerablePackages: 0,
+          criticalVulnerabilities: 0,
+          highVulnerabilities: 0,
+          mediumVulnerabilities: 0,
+          lowVulnerabilities: 0,
+          lastScan: '',
+          dependencyScore: 0,
+          packageDependencyGraph: { nodes: [], links: [] },
+          vulnerabilityDistribution: []
+        },
+        hotspots: analysisResult.hotspots || []
+      }} />
 
       {/* Repository Details */}
       <div className="bg-white rounded-lg shadow p-6">

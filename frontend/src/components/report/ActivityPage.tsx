@@ -15,12 +15,21 @@ interface ActivityPageProps {
   reportData: AnalysisResult;
 }
 
+interface ExtendedMetrics {
+  recentActivity?: number;
+  avgCommitsPerWeek?: number;
+  totalPRs?: number;
+  mergedPRs?: number;
+  avgPRMergeTime?: number;
+  prMergeRate?: number;
+}
+
 const ActivityPage = ({ reportData }: ActivityPageProps) => {
   const { 
     commits = [], 
     repository = {} as Repository, // ← Use repository field
     contributors = [], 
-    metrics = {} 
+    metrics
   } = reportData;
 
   const processCommitData = () => {
@@ -32,15 +41,9 @@ const ActivityPage = ({ reportData }: ActivityPageProps) => {
       return { 
         commitsByMonth: {}, 
         commitsByDayOfWeek: {}, 
-        commitsByHour: {}, 
-        recentCommitsCount: 0, 
-        avgCommitsPerWeek: 0 
+        commitsByHour: {}
       };
     }
-
-    let recentCommitsCount = 0;
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     commits.forEach(commit => {
       const date = new Date(commit.date);
@@ -51,21 +54,28 @@ const ActivityPage = ({ reportData }: ActivityPageProps) => {
       commitsByMonth[monthKey] = (commitsByMonth[monthKey] || 0) + 1;
       commitsByDayOfWeek[dayOfWeek] = (commitsByDayOfWeek[dayOfWeek] || 0) + 1;
       commitsByHour[hour] = (commitsByHour[hour] || 0) + 1;
-
-      if (date > thirtyDaysAgo) {
-        recentCommitsCount++;
-      }
     });
-    
+
+    return { commitsByMonth, commitsByDayOfWeek, commitsByHour };
+  };
+
+  const { commitsByMonth, commitsByDayOfWeek, commitsByHour } = processCommitData();
+
+  // Use backend-provided metrics, with fallback calculations for older reports
+  const extendedMetrics = metrics as AnalysisResult['metrics'] & ExtendedMetrics;
+  const recentCommitsCount = extendedMetrics.recentActivity ?? (() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    return commits.filter(commit => new Date(commit.date) > thirtyDaysAgo).length;
+  })();
+
+  const avgCommitsPerWeek = extendedMetrics.avgCommitsPerWeek ?? (() => {
+    if (commits.length === 0) return 0;
     const firstCommitDate = new Date(commits[commits.length - 1].date);
     const lastCommitDate = new Date(commits[0].date);
     const weeks = (lastCommitDate.getTime() - firstCommitDate.getTime()) / (1000 * 60 * 60 * 24 * 7);
-    const avgCommitsPerWeek = weeks > 0 ? Math.round((commits.length / weeks) * 10) / 10 : commits.length;
-
-    return { commitsByMonth, commitsByDayOfWeek, commitsByHour, recentCommitsCount, avgCommitsPerWeek };
-  };
-
-  const { commitsByMonth, commitsByDayOfWeek, commitsByHour, recentCommitsCount, avgCommitsPerWeek } = processCommitData();
+    return weeks > 0 ? Math.round((commits.length / weeks) * 10) / 10 : commits.length;
+  })();
 
   const recentMonthsData = Object.entries(commitsByMonth)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -86,18 +96,18 @@ const ActivityPage = ({ reportData }: ActivityPageProps) => {
   }));
 
   const issueMetrics = {
-    totalIssues: (metrics as any).totalIssues ?? repository?.openIssues ?? 0,
-    openIssues: (metrics as any).openIssues ?? repository?.openIssues ?? 0,
-    closedIssues: (metrics as any).closedIssues ?? 0,
-    avgCloseTime: (metrics as any).avgIssueCloseTime ?? 0,
-    closureRate: (metrics as any).issueClosureRate ?? 0
+    totalIssues: repository?.openIssues ?? 0,
+    openIssues: repository?.openIssues ?? 0,
+    closedIssues: 0,
+    avgCloseTime: 0,
+    closureRate: 0
   };
 
   const prMetrics = {
-    totalPRs: (metrics as any).totalPRs ?? 0,
-    mergedPRs: (metrics as any).mergedPRs ?? 0,
-    avgMergeTime: (metrics as any).avgPRMergeTime ?? 0,
-    mergeRate: (metrics as any).prMergeRate ?? 0
+    totalPRs: extendedMetrics.totalPRs ?? 0,
+    mergedPRs: extendedMetrics.mergedPRs ?? 0,
+    avgMergeTime: extendedMetrics.avgPRMergeTime ?? 0,
+    mergeRate: extendedMetrics.prMergeRate ?? 0
   };
 
   const releases = [

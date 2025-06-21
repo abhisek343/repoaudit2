@@ -87,17 +87,20 @@ class GitHubService {
     }
     // New method to verify token validity
     async verifyToken() {
-        if (!this.token)
+        if (!this.token) {
             return false;
+        }
         try {
             const response = await axios_1.default.get(`${this.baseURL}/user`, {
-                headers: this.getHeaders()
+                headers: this.getHeaders(),
             });
+            // If status is 200, token is valid
             return response.status === 200;
         }
         catch (error) {
-            console.error('Token verification failed:', error);
-            return false;
+            // Re-throw the error to be handled by the calling function's catch block
+            // This allows for more specific error handling (e.g. rate limit vs. invalid token)
+            throw error;
         }
     }
     async getRepository(owner, repo) {

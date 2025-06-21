@@ -21,7 +21,9 @@ const FeatureMatrixPage: React.FC = () => {
       if (reportId) {
         try {
           const analysisService = new AnalysisService();
-          const report = await analysisService.getAnalysisResult(reportId);
+
+
+          const report = await analysisService.getLastAnalysisResult();
           if (report) {
             setReportData(report);
           } else {
