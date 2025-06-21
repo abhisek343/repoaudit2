@@ -149,9 +149,8 @@ const AnalyzePage = () => {
         eventSource: !!eventSource
       });
       
-      // Test EventSource connection
-      const analysisService = new AnalysisService();
-      analysisService.testEventSource();
+      // Note: Removed testEventSource call as it was interfering with real analysis
+      // by making test requests to the /api/analyze endpoint
     }
     
     const savedLlmConfigString = localStorage.getItem('llmConfig');

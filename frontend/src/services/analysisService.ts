@@ -506,40 +506,10 @@ export class AnalysisService {
       };
     });
 
-    return { eventSource, analysisPromise, cancel };
-  }
+    return { eventSource, analysisPromise, cancel };  }
 
-  // Test method to verify EventSource connection
-  testEventSource(): void {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🧪 Testing EventSource connection...');
-      const testUrl = '/api/analyze?repoUrl=https://github.com/test/test';
-      const testEventSource = new EventSource(testUrl);
-      
-      testEventSource.onopen = () => {
-        console.log('🧪 Test EventSource connected successfully');
-        testEventSource.close();
-      };
-      
-      testEventSource.onerror = (error) => {
-        console.error('🧪 Test EventSource failed:', error);
-        console.error('🧪 Test EventSource readyState:', testEventSource.readyState);
-        testEventSource.close();
-      };
-      
-      testEventSource.onmessage = (event) => {
-        console.log('🧪 Test EventSource received message:', event.data);
-      };
-      
-      // Close after 5 seconds
-      setTimeout(() => {
-        if (testEventSource.readyState !== EventSource.CLOSED) {
-          console.log('🧪 Closing test EventSource');
-          testEventSource.close();
-        }
-      }, 5000);
-    }
-  }
+  // Note: Removed testEventSource method as it was interfering with real analysis
+  // by making test requests to the /api/analyze endpoint
 
   // Add validation method to ensure data integrity
   private validateAnalysisResult(result: AnalysisResult): boolean {
