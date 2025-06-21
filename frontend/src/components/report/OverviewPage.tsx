@@ -1,5 +1,8 @@
 import { AnalysisResult } from '../../types';
-import ExecutiveSummary from '../ExecutiveSummary'; // Import ExecutiveSummary
+import ExecutiveSummary from '../ExecutiveSummary';
+import MetricsGrid from '../MetricsGrid';
+import FileAnalysisOverview from '../FileAnalysisOverview';
+import AnalysisMethodInfo from '../AnalysisMethodInfo';
 
 interface OverviewPageProps {
   analysisResult: AnalysisResult;
@@ -17,34 +20,45 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
     { name: 'Critical Vulnerabilities', value: metrics.criticalVulnerabilities, icon: '🔥' },
     { name: 'High Vulnerabilities', value: metrics.highVulnerabilities, icon: '🔶' },
   ];
-
   return (
     <div className="space-y-6">
+      {/* Enhanced Metrics Grid with comprehensive archive data */}
+      <MetricsGrid 
+        metrics={analysisResult.metrics} 
+        analysisResult={analysisResult} 
+      />
+
       {/* Repository Overview */}
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-2xl font-bold mb-4">{basicInfo.fullName || 'N/A'}</h2>
         <p className="text-gray-600 mb-4">{basicInfo.description || 'No description available.'}</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">
-              {typeof metrics.linesOfCode === 'number' ? metrics.linesOfCode.toLocaleString() : 'N/A'}
+        
+        {/* Language Distribution if available */}
+        {analysisResult.languages && Object.keys(analysisResult.languages).length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-lg font-semibold mb-3">Language Distribution</h4>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(analysisResult.languages)
+                .sort(([,a], [,b]) => b - a)
+                .slice(0, 8)
+                .map(([language, bytes]) => {
+                  const percentage = (bytes / Object.values(analysisResult.languages!).reduce((a, b) => a + b, 0)) * 100;
+                  return (
+                    <span 
+                      key={language} 
+                      className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                    >
+                      {language} ({percentage.toFixed(1)}%)
+                    </span>
+                  );
+                })}
             </div>
-            <div className="text-gray-600">Lines of Code</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">
-              {typeof metrics.totalContributors === 'number' ? metrics.totalContributors.toLocaleString() : 'N/A'}
-            </div>
-            <div className="text-gray-600">Contributors</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">
-              {typeof metrics.totalCommits === 'number' ? metrics.totalCommits.toLocaleString() : 'N/A'}
-            </div>
-            <div className="text-gray-600">Commits</div>
-          </div>
-        </div>
-      </div>
+          </div>        )}
+      </div>      {/* File Analysis Overview - showcasing archive method benefits */}
+      <FileAnalysisOverview analysisResult={analysisResult} />
+
+      {/* Analysis Method Performance Info */}
+      <AnalysisMethodInfo analysisResult={analysisResult} />
 
       {/* Vitals */}
       <div className="bg-white rounded-lg shadow p-6">

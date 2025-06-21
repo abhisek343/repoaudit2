@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import DependencyGraph, { DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLink } from '../diagrams/DependencyGraph';
 import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
+import SystemArchitectureView from '../SystemArchitectureView';
 import { AnalysisResult, FileInfo } from '../../types'; // Changed ExtendedFileInfo to FileInfo
 import { defaultDependencyConfig } from '../../config/dependencies.config';
 import { defaultSecurityConfig } from '../../config/security.config';
@@ -271,23 +272,33 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
           </div>
         );
       }
-      
-      case 'architecture':
+        case 'architecture':
         return (
-          <div className="w-full h-full min-h-[600px]">            <ArchitectureDiagram
-              title="System Architecture"
-              description="High-level overview of the system components and their interactions"
-              diagram={dynamicMermaidDiagram} 
-              width={800}
-              height={600}
-              interactive={true}
-              fileInfo={architectureDiagramFileInfo} 
-              showDetails={true}
-              useLLM={useLLM}
-              llmConfig={llmConfig as unknown as Record<string, unknown> || undefined}
-            />
+          <div className="w-full space-y-6">
+            {/* Show system architecture analysis if available */}
+            {reportData.systemArchitecture && (
+              <div className="bg-white rounded-lg border border-gray-200">
+                <SystemArchitectureView systemArchitecture={reportData.systemArchitecture} />
+              </div>
+            )}
+            
+            {/* Show existing architecture diagram */}
+            <div className="w-full h-full min-h-[600px] bg-white rounded-lg border border-gray-200 p-4">
+              <ArchitectureDiagram
+                title="Code Structure Diagram"
+                description="File-based architecture overview generated from code structure"
+                diagram={dynamicMermaidDiagram} 
+                width={800}
+                height={600}
+                interactive={true}
+                fileInfo={architectureDiagramFileInfo} 
+                showDetails={true}
+                useLLM={useLLM}
+                llmConfig={llmConfig as unknown as Record<string, unknown> || undefined}
+              />
+            </div>
           </div>
-        );      case 'vulnerability': {
+        );case 'vulnerability': {
         // Use dependency metrics if available, otherwise fall back to basic metrics
         const vulnerabilityData = dependencyMetrics?.vulnerabilityDistribution || [ 
           { severity: 'Critical', count: metrics.criticalVulnerabilities || 0, color: '#DC2626' },

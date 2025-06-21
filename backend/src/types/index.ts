@@ -344,6 +344,13 @@ export interface GitGraphData {
   links: GitGraphLink[];
 }
 
+// Analysis warning structure for error reporting
+export interface AnalysisWarning {
+  step: string;
+  message: string;
+  error?: any;
+}
+
 // --- Main Analysis Result Structure ---
 
 // Update AnalysisResult to include ALL expected fields
@@ -384,15 +391,17 @@ export interface AnalysisResult {
   performanceMetrics: PerformanceMetric[];
   hotspots: Hotspot[];
   keyFunctions: KeyFunction[];
-  apiEndpoints: APIEndpoint[];
-    // AI-generated content
+  apiEndpoints: APIEndpoint[];  // AI-generated content
   aiSummary?: string;
   architectureAnalysis?: string;
-    // Summary metrics
+  systemArchitecture?: SystemArchitecture; // System architecture analysis with Mermaid diagram
+  analysisMethod?: 'archive' | 'individual'; // Method used for file analysis
+  // Summary metrics
   metrics: {
     totalCommits: number;
     totalContributors: number;
     fileCount: number;
+    analyzableFileCount?: number; // New: Count of source files that were analyzed
     linesOfCode: number;
     codeQuality: number;
     testCoverage: number;
@@ -410,6 +419,8 @@ export interface AnalysisResult {
     avgPRMergeTime: number;
     recentActivity: number; // Commits in last 30 days
     avgCommitsPerWeek: number; // Average commits per week
+    avgComplexity?: number; // New: Average file complexity
+    filesWithComplexity?: number; // New: Count of files with complexity analysis
   };
   analysisWarnings?: AnalysisWarning[];
   
@@ -427,8 +438,38 @@ export interface AnalysisResult {
   gitGraph?: GitGraphData;
 }
 
-export interface AnalysisWarning {
-  step: string;
-  message: string;
-  error?: string;
+// ADD these interfaces for archive download configuration
+export interface ArchiveDownloadConfig {
+  enabled: boolean;
+  timeoutMs: number;
+  maxSizeMB: number;
+  fallbackToApi: boolean;
+}
+
+// --- System Architecture Analysis Types ---
+
+export interface ArchitectureComponent {
+  id: string;
+  name: string;
+  type: 'frontend' | 'backend' | 'database' | 'service' | 'api' | 'middleware' | 'config' | 'test' | 'util';
+  path: string;
+  dependencies: string[];
+  files: string[];
+  complexity: number;
+  description?: string;
+}
+
+export interface ArchitectureLayer {
+  name: string;
+  type: 'presentation' | 'business' | 'data' | 'infrastructure';
+  components: ArchitectureComponent[];
+}
+
+export interface SystemArchitecture {
+  layers: ArchitectureLayer[];
+  components: ArchitectureComponent[];
+  dependencies: Array<{ from: string; to: string; type: string }>;
+  mermaidDiagram: string;
+  patterns: string[];
+  summary: string;
 }

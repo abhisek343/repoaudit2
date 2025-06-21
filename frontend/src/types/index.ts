@@ -281,12 +281,12 @@ export interface AnalysisResult {
   id: string;
   repositoryUrl: string;
   createdAt: string;
-  basicInfo: BasicRepositoryInfo;
-  metrics: {
+  basicInfo: BasicRepositoryInfo;  metrics: {
     linesOfCode: number;
     totalCommits: number;
     totalContributors: number;
     fileCount: number;
+    analyzableFileCount?: number; // New: Count of source files that were analyzed
     codeQuality?: number;
     testCoverage?: number;
     busFactor?: number;
@@ -297,6 +297,8 @@ export interface AnalysisResult {
     highVulnerabilities: number;
     mediumVulnerabilities: number;
     lowVulnerabilities: number;
+    avgComplexity?: number; // New: Average file complexity
+    filesWithComplexity?: number; // New: Count of files with complexity analysis
   };
   aiSummary?: string;
   advancedAnalysis?: AdvancedAnalysisResult; // Use the imported type
@@ -325,20 +327,48 @@ export interface AnalysisResult {
     packageDependencyGraph: { nodes: unknown[]; links: unknown[] }; // External package dependencies
     vulnerabilityDistribution: Array<{ severity: string; count: number; color: string }>;
   };
-  qualityMetrics?: QualityMetrics;
-  repository?: RepositoryData; // Using the defined RepositoryData type
+  qualityMetrics?: QualityMetrics;  repository?: RepositoryData; // Using the defined RepositoryData type
   architectureAnalysis?: string;
+  systemArchitecture?: SystemArchitecture; // System architecture analysis with Mermaid diagram
   analysisWarnings?: AnalysisWarning[];
   // Diagram-specific data structures
   dependencyWheelData?: Array<{ source: string; target: string; value: number }>; // Define specific type
   fileSystemTree?: import('./advanced').FileNode; // Define specific type (e.g., FileNode from advanced)
   churnSunburstData?: import('./advanced').ChurnNode; // Define specific type (e.g., ChurnNode from advanced)
   contributorStreamData?: Array<{ date: string; contributors: Record<string, number> }>; // Define specific type
-
   // ADDED: Data for new advanced diagrams
   temporalCouplings?: TemporalCoupling[];
   transformationFlows?: SankeyData;
   featureFileMatrix?: FeatureFileMatrixItem[];
   pullRequests?: PullRequestData[];
   gitGraph?: GitGraphData;
+  analysisMethod?: 'archive' | 'individual'; // Method used for file analysis
+}
+
+// --- System Architecture Analysis Types ---
+
+export interface ArchitectureComponent {
+  id: string;
+  name: string;
+  type: 'frontend' | 'backend' | 'database' | 'service' | 'api' | 'middleware' | 'config' | 'test' | 'util';
+  path: string;
+  dependencies: string[];
+  files: string[];
+  complexity: number;
+  description?: string;
+}
+
+export interface ArchitectureLayer {
+  name: string;
+  type: 'presentation' | 'business' | 'data' | 'infrastructure';
+  components: ArchitectureComponent[];
+}
+
+export interface SystemArchitecture {
+  layers: ArchitectureLayer[];
+  components: ArchitectureComponent[];
+  dependencies: Array<{ from: string; to: string; type: string }>;
+  mermaidDiagram: string;
+  patterns: string[];
+  summary: string;
 }

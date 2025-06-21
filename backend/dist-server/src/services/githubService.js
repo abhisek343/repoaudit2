@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -6,6 +39,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.GitHubService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const js_base64_1 = require("js-base64");
+const jszip_1 = __importDefault(require("jszip")); // Default import yields JSZip constructor
+const path = __importStar(require("path"));
 class GitHubService {
     baseURL = 'https://api.github.com';
     token;
@@ -387,6 +422,188 @@ class GitHubService {
         catch (error) {
             this.handleGitHubError(error, 'fetching pull requests');
         }
+    }
+    /**
+     * Download entire repository as ZIP archive (single API call)
+     * This method provides comprehensive file coverage with minimal API usage
+     */
+    async downloadRepositoryArchive(owner, repo, ref = 'main') {
+        const url = `https://api.github.com/repos/${owner}/${repo}/zipball/${ref}`;
+        console.log(`[GitHubService] 🚀 Starting archive download: ${owner}/${repo}@${ref}`);
+        console.log(`[GitHubService] 📊 Archive method benefits: Single API call for entire repository`);
+        const startTime = Date.now();
+        try {
+            const response = await fetch(url, {
+                headers: this.getHeaders(),
+                // @ts-ignore - timeout is supported by node-fetch
+                timeout: 60000, // 60 second timeout for large repos
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to download repository archive: ${response.status} ${response.statusText}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const downloadTime = Date.now() - startTime;
+            const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+            console.log(`[GitHubService] ✅ Archive download successful:`);
+            console.log(`[GitHubService]    📦 Size: ${sizeMB}MB`);
+            console.log(`[GitHubService]    ⏱️  Time: ${downloadTime}ms`);
+            console.log(`[GitHubService]    🔄 API calls used: 1 (vs potentially 100s with individual files)`);
+            return buffer;
+        }
+        catch (error) {
+            const downloadTime = Date.now() - startTime;
+            console.error(`[GitHubService] ❌ Archive download failed after ${downloadTime}ms:`, error);
+            throw error;
+        }
+    }
+    /**
+     * Extract files from ZIP archive with intelligent filtering
+     * Provides comprehensive analysis of all repository files
+     */
+    async extractFilesFromArchive(archiveBuffer, maxFiles = 800, maxFileSize = 200 * 1024) {
+        const startTime = Date.now();
+        console.log(`[GitHubService] 🔍 Starting file extraction from ${(archiveBuffer.length / 1024 / 1024).toFixed(2)}MB archive`);
+        // Load ZIP archive buffer
+        const zip = await new jszip_1.default().loadAsync(archiveBuffer);
+        const files = [];
+        let extractedCount = 0;
+        let skippedCount = 0;
+        let totalEntries = 0;
+        // Count total entries for progress tracking
+        Object.keys(zip.files).forEach(() => totalEntries++);
+        // Sort files by relevance before processing
+        const sortedEntries = Object.entries(zip.files)
+            .filter(([_, file]) => !file.dir)
+            .sort(([pathA], [pathB]) => this.prioritizeFile(pathA) - this.prioritizeFile(pathB));
+        console.log(`[GitHubService] 📁 Found ${sortedEntries.length} files in archive`);
+        console.log(`[GitHubService] 🎯 Will extract up to ${maxFiles} most relevant files`);
+        for (const [relativePath, file] of sortedEntries) {
+            if (extractedCount >= maxFiles) {
+                console.log(`[GitHubService] 🛑 Reached max files limit (${maxFiles}), stopping extraction`);
+                break;
+            }
+            // Remove the root folder from path (GitHub archives have a root folder)
+            const cleanPath = relativePath.split('/').slice(1).join('/');
+            if (!cleanPath || !this.isAnalyzableFile(cleanPath)) {
+                skippedCount++;
+                continue;
+            }
+            try {
+                const content = await file.async('string');
+                if (content.length > maxFileSize) {
+                    console.log(`[GitHubService] ⚠️  Skipping large file: ${cleanPath} (${(content.length / 1024).toFixed(1)}KB)`);
+                    skippedCount++;
+                    continue;
+                }
+                files.push({
+                    path: cleanPath,
+                    name: path.basename(cleanPath),
+                    type: 'file',
+                    size: content.length,
+                    content,
+                    language: this.detectLanguage(cleanPath),
+                    lastModified: new Date().toISOString(), // Archive doesn't preserve timestamps
+                });
+                extractedCount++;
+                if (extractedCount % 50 === 0) {
+                    console.log(`[GitHubService] 📊 Progress: ${extractedCount}/${maxFiles} files extracted...`);
+                }
+            }
+            catch (error) {
+                console.warn(`[GitHubService] ⚠️  Failed to extract ${cleanPath}:`, error);
+                skippedCount++;
+            }
+        }
+        const extractionTime = Date.now() - startTime;
+        console.log(`[GitHubService] ✅ Extraction complete:`);
+        console.log(`[GitHubService]    📄 Files extracted: ${extractedCount}`);
+        console.log(`[GitHubService]    ⏭️  Files skipped: ${skippedCount}`);
+        console.log(`[GitHubService]    ⏱️  Extraction time: ${extractionTime}ms`);
+        console.log(`[GitHubService]    🎯 Coverage: ${((extractedCount / Math.max(1, sortedEntries.length)) * 100).toFixed(1)}% of analyzable files`);
+        return files;
+    }
+    /**
+     * Determine if a file should be analyzed
+     */
+    isAnalyzableFile(filePath) {
+        const fileName = path.basename(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        // Skip common non-essential directories
+        const skipDirectories = [
+            'node_modules', '.git', 'dist', 'build', 'coverage',
+            '.next', 'out', 'public', 'static', 'assets',
+            '__pycache__', '.pytest_cache', 'venv', 'env',
+            'target', 'bin', 'obj', 'packages'
+        ];
+        const pathParts = filePath.split('/');
+        if (pathParts.some(part => skipDirectories.includes(part))) {
+            return false;
+        }
+        // Only include source files
+        const analyzableExtensions = [
+            '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+            '.py', '.java', '.go', '.cs', '.php', '.rb',
+            '.cpp', '.c', '.h', '.hpp', '.rs', '.swift',
+            '.kt', '.scala', '.dart', '.lua', '.r', '.m'
+        ];
+        // Skip common non-source files
+        const skipPatterns = [
+            /\.min\./,
+            /\.map$/,
+            /\.lock$/,
+            /\.log$/,
+            /\.tmp$/,
+            /\.test\./,
+            /\.spec\./,
+            /\.d\.ts$/,
+            /\.config\./,
+            /package-lock\.json$/,
+            /yarn\.lock$/,
+            /composer\.lock$/,
+        ];
+        return analyzableExtensions.includes(ext) &&
+            !skipPatterns.some(pattern => pattern.test(fileName)) &&
+            pathParts.length < 8; // Skip deeply nested files
+    }
+    /**
+     * Prioritize files for extraction (lower number = higher priority)
+     */
+    prioritizeFile(filePath) {
+        let priority = 1000; // Default priority
+        // Higher priority for main application files
+        if (filePath.includes('src/') || filePath.includes('lib/'))
+            priority -= 100;
+        if (filePath.includes('components/'))
+            priority -= 50;
+        if (filePath.includes('services/'))
+            priority -= 50;
+        if (filePath.includes('pages/') || filePath.includes('views/'))
+            priority -= 50;
+        // Lower priority for test files
+        if (filePath.includes('test') || filePath.includes('spec'))
+            priority += 200;
+        // Lower priority for config files
+        if (filePath.includes('config') || filePath.includes('.config.'))
+            priority += 100;
+        // Higher priority for entry points
+        if (path.basename(filePath).match(/^(index|main|app)\./))
+            priority -= 200;
+        return priority;
+    }
+    /**
+     * Detect language from file extension
+     */
+    detectLanguage(filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const languageMap = {
+            '.ts': 'typescript', '.tsx': 'typescript',
+            '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript',
+            '.py': 'python', '.java': 'java', '.go': 'go',
+            '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
+            '.cpp': 'cpp', '.c': 'c', '.rs': 'rust', '.swift': 'swift'
+        };
+        return languageMap[ext] || 'text';
     }
 }
 exports.GitHubService = GitHubService;

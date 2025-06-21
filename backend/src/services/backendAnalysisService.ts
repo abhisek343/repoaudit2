@@ -1,11 +1,12 @@
 import { GitHubService } from './githubService';
 import { LLMService } from './llmService';
 import { AdvancedAnalysisService } from './advancedAnalysisService';
+import { ArchitectureAnalysisService, ArchitectureConfig } from './architectureAnalysisService';
 import {
   AnalysisResult, FileInfo, LLMConfig, Repository, Commit, Contributor, BasicRepositoryInfo,
   ProcessedCommit, ProcessedContributor, DependencyInfo, ArchitectureData, QualityMetrics,
   Hotspot, KeyFunction, SecurityIssue, TechnicalDebt, APIEndpoint, FileNode,
-  ChurnNode, FunctionInfo, FileMetrics, AnalysisWarning, FunctionParameter,  // ADDED: Import new types for advanced diagrams
+  ChurnNode, FunctionInfo, FileMetrics, AnalysisWarning, FunctionParameter, SystemArchitecture,  // ADDED: Import new types for advanced diagrams
   TemporalCoupling, SankeyData, SankeyNode, SankeyLink, PullRequestData, GitGraphData, GitGraphLink, GitGraphNode
 } from '../types';
 // @ts-ignore - escomplex doesn't have TypeScript definitions
@@ -27,6 +28,7 @@ export class BackendAnalysisService {
   private githubService: GitHubService;
   private llmService: LLMService;
   private advancedAnalysisService: AdvancedAnalysisService;
+  private architectureAnalysisService: ArchitectureAnalysisService;
   private analysisWarnings: AnalysisWarning[]; // Added to store warnings
   constructor(githubToken?: string, llmConfig?: LLMConfig) {
     const token = githubToken || process.env.GITHUB_TOKEN;
@@ -69,10 +71,18 @@ export class BackendAnalysisService {
         this.addWarning('LLM Configuration', 
           `No LLM API key provided. Set ${provider.toUpperCase()}_API_KEY environment variable or provide apiKey in request. LLM-dependent features will show placeholder data.`);
       }
-    }
-
-    this.llmService = new LLMService(finalLlmConfig);
+    }    this.llmService = new LLMService(finalLlmConfig);
     this.advancedAnalysisService = new AdvancedAnalysisService(this.llmService);
+    
+    // Initialize architecture analysis service
+    const architectureConfig: ArchitectureConfig = {
+      llmConfig: finalLlmConfig,
+      enableMermaidGeneration: true,
+      enableAdvancedAnalysis: true,
+      maxAnalysisDepth: 3,
+      customPatterns: []
+    };
+    this.architectureAnalysisService = new ArchitectureAnalysisService(architectureConfig);
     
     // Final debug logging
     console.log('Final LLM Config used for LLMService:', finalLlmConfig);
@@ -688,19 +698,198 @@ export class BackendAnalysisService {
     if (packageJsonContent) dependencies = this.parseDependencies(packageJsonContent);
   } catch (e) {
     this.addWarning('Dependency Parsing', 'Could not parse package.json.', e);
-  }
-  onProgress('Processing files with content', 50);
-  const MAX_CONTENT = Number(process.env.MAX_CONTENT) || 800; // Increased from 200 to 800
+  }  onProgress('Processing files with content', 50);
+  const MAX_CONTENT = Number(process.env.MAX_CONTENT) || 800;
   const MAX_FILE_SIZE = 200 * 1024;
+  let files: FileInfo[] = [];
+  let qualityMetrics: QualityMetrics = {};
+  let analysisMethod: 'archive' | 'individual' = 'individual'; // Default to individual
+  // 🎯 NEW: Try archive download first, fallback to individual files
+  onProgress('Downloading repository archive', 52);
+  try {
+    console.log(`[Analysis] 🚀 Attempting archive download for ${owner}/${repo}`);
+    const startTime = Date.now();
+    const archiveBuffer = await this.githubService.downloadRepositoryArchive(owner, repo, repoData.defaultBranch);
+    
+    // Validate archive size
+    if (archiveBuffer.length === 0) {
+      throw new Error('Downloaded archive is empty');
+    }
+    
+    if (archiveBuffer.length > 100 * 1024 * 1024) { // 100MB limit
+      throw new Error(`Archive too large: ${Math.round(archiveBuffer.length / 1024 / 1024)}MB`);
+    }
+    
+    onProgress('Extracting files from archive', 55);
+    const extractedFiles = await this.githubService.extractFilesFromArchive(archiveBuffer, MAX_CONTENT, MAX_FILE_SIZE);
+    
+    if (extractedFiles.length === 0) {
+      throw new Error('No analyzable files found in archive');
+    }
+    
+    const downloadTime = Date.now() - startTime;    console.log(`[Analysis] ✅ Archive method: Successfully extracted ${extractedFiles.length} files in ${downloadTime}ms`);
+    console.log(`[Performance] 🎯 Archive method efficiency:`);
+    console.log(`[Performance]    📊 Files analyzed: ${extractedFiles.length}`);
+    console.log(`[Performance]    🔄 API calls used: 1 (archive download)`);
+    console.log(`[Performance]    ⚡ vs Individual method: Would need ${Math.min(extractedFiles.length, 800)} API calls`);
+    console.log(`[Performance]    💾 Total LOC: ${extractedFiles.reduce((sum, f) => sum + (f.content?.split('\n').length || 0), 0).toLocaleString()}`);
+    
+    analysisMethod = 'archive';
+    onProgress(`Archive method: Processing ${extractedFiles.length} files`, 58);
+    
+    // Convert extracted files to the expected format and process them
+    const repoTreeWithPaths = repoTree.map(f => ({ path: f.path }));
+    
+    for (const extractedFile of extractedFiles) {
+      const f = {
+        path: extractedFile.path,
+        name: extractedFile.name,
+        type: extractedFile.type as 'file',
+        size: extractedFile.size,
+        lastModified: extractedFile.lastModified
+      } as FileInfo;
+      const content = extractedFile.content || '';
+      
+      const language = this.detectLanguage(f.path);
+      let dependencies: string[] = [];
+      
+      if (this.isSourceFile(f.path) && content) {
+        dependencies = this.parseImports(content)
+          .map(p => this.resolveImportPath(p, f.path, repoTreeWithPaths))
+          .filter((p): p is string => !!p);
+      }
 
-  const repoTreeWithPaths = repoTree.map(f => ({ path: f.path }));
-  const rawFiles = repoTree.filter(f => f.type === 'file' && f.size < MAX_FILE_SIZE).slice(0, MAX_CONTENT);
-  const fetchedFiles = await this.fetchFilesWithRateLimit(owner, repo, rawFiles);
+      let fileComplexity: number = this.calculateBasicComplexity(content);
+      let functionInfos: FunctionInfo[] = [];
+      let currentFileMetrics: FileMetrics = {
+        complexity: content ? this.calculateFallbackComplexity(content) : 1,
+        maintainability: 50,
+        linesOfCode: content ? content.split('\n').length : 0,
+      };
 
-  const files: FileInfo[] = [];
-  let qualityMetrics: QualityMetrics = {}; 
+      // ESComplex analysis (existing logic)
+      if (this.isSourceFile(f.path) && content) {
+        try {
+          let jsForAnalysis = content;
+          if (/\.(tsx?|jsx?)$/.test(f.path)) {
+            try {
+              jsForAnalysis = ts.transpileModule(content, {
+                compilerOptions: {
+                  target: ts.ScriptTarget.ES5,
+                  module: ts.ModuleKind.CommonJS,
+                  allowJs: true
+                },
+                fileName: f.path
+              }).outputText;
+            } catch (transpileErr) {
+              this.addWarning('File Processing', `Failed to transpile ${f.path} for escomplex`, transpileErr);
+            }
+          }
 
-  for (const { file: f, content } of fetchedFiles) {
+          const report = analyse(jsForAnalysis);
+          fileComplexity = report.aggregate?.cyclomatic ?? this.calculateFallbackComplexity(content);
+          currentFileMetrics = {
+            complexity: fileComplexity,
+            maintainability: report.maintainability ?? 50,
+            linesOfCode: report.aggregate?.sloc?.logical ?? content.split('\n').length,
+          };
+
+          if (report.functions && Array.isArray(report.functions)) {
+            functionInfos = report.functions.map((fnRep: any) => ({
+              name: fnRep.name,
+              complexity: fnRep.cyclomatic,
+              dependencies: [], 
+              calls: [],       
+              description: undefined, 
+              startLine: fnRep.lineStart,
+              endLine: fnRep.lineEnd,
+            }));
+          }
+        } catch (analysisErr) {
+          this.addWarning('File Processing', `ESComplex analysis failed for ${f.path}`, analysisErr);
+          fileComplexity = this.calculateFallbackComplexity(content);
+          currentFileMetrics.complexity = fileComplexity;
+          currentFileMetrics.linesOfCode = content.split('\n').length;
+          currentFileMetrics.maintainability = 50; 
+          functionInfos = []; 
+        }
+      }
+      
+      // TypeScript AST analysis (existing logic - condensed)
+      if ((f.path.endsWith('.ts') || f.path.endsWith('.tsx') || f.path.endsWith('.js') || f.path.endsWith('.jsx')) && content) {
+        try {
+          const sourceFile = ts.createSourceFile(f.path, content, ts.ScriptTarget.ESNext, true);
+          const newFunctionInfos: FunctionInfo[] = [];
+          ts.forEachChild(sourceFile, (node) => {
+            if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+              const funcName = node.name ? getNodeText(node.name, sourceFile) : 'anonymous';
+              const startLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+              const endLine = sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+              
+              newFunctionInfos.push({
+                name: funcName,
+                startLine: startLine,
+                endLine: endLine,
+                calls: [], // Simplified for now
+              });
+            }
+          });
+          if (newFunctionInfos.length > 0) functionInfos = newFunctionInfos;
+        } catch (tsErr) {
+          this.addWarning('File Processing', `TypeScript AST parsing failed for ${f.path}`, tsErr);
+        }
+      }
+
+      qualityMetrics[f.path] = currentFileMetrics;
+
+      files.push({
+        ...f, 
+        content,
+        language,
+        dependencies,
+        complexity: fileComplexity,   
+        functions: functionInfos,     
+        lastModified: f.lastModified || new Date().toISOString(), 
+      });
+    }
+    } catch (archiveError) {
+    // Enhanced error handling with specific error types
+    let fallbackReason = 'Unknown error';
+    
+    if (archiveError instanceof Error) {
+      if (archiveError.message.includes('timeout')) {
+        fallbackReason = 'Download timeout - repository too large';
+      } else if (archiveError.message.includes('Network')) {
+        fallbackReason = 'Network connectivity issue';
+      } else if (archiveError.message.includes('403') || archiveError.message.includes('401')) {
+        fallbackReason = 'Authentication or permission issue';
+      } else {
+        fallbackReason = archiveError.message;
+      }
+    }
+      console.warn(`[Analysis] ⚠️  Archive download failed: ${fallbackReason}`);
+    console.log(`[Analysis] 🔄 Falling back to individual file fetching method`);
+    this.addWarning('Archive Download', `Archive download failed: ${fallbackReason}. Using individual file fetching.`, archiveError);
+    
+    analysisMethod = 'individual';
+    
+    // 🛡️ FALLBACK: Use original individual file fetching
+    onProgress('Falling back to individual file fetching', 50);
+    const fallbackStartTime = Date.now();
+    const repoTreeWithPaths = repoTree.map(f => ({ path: f.path }));
+    const rawFiles = repoTree.filter(f => f.type === 'file' && f.size < MAX_FILE_SIZE).slice(0, MAX_CONTENT);
+    const fetchedFiles = await this.fetchFilesWithRateLimit(owner, repo, rawFiles);
+    
+    const fallbackTime = Date.now() - fallbackStartTime;
+    console.log(`[Performance] 📊 Individual method fallback:`);
+    console.log(`[Performance]    📄 Files fetched: ${fetchedFiles.length}`);
+    console.log(`[Performance]    🔄 API calls used: ${fetchedFiles.length}`);
+    console.log(`[Performance]    ⏱️  Time taken: ${fallbackTime}ms`);
+    console.log(`[Performance]    📈 Rate: ${(fetchedFiles.length / (fallbackTime / 1000)).toFixed(1)} files/second`);
+    
+    onProgress(`Individual method: Processing ${fetchedFiles.length} files`, 55);
+
+    for (const { file: f, content } of fetchedFiles) {
     const language = this.detectLanguage(f.path);
     let dependencies: string[] = [];
     if (this.isSourceFile(f.path) && content) {
@@ -871,14 +1060,15 @@ export class BackendAnalysisService {
 
     files.push({
       ...f, 
-      content,
-      language,
+      content,      language,
       dependencies,
       complexity: fileComplexity,   
       functions: functionInfos,     
       lastModified: f.lastModified || new Date().toISOString(), 
     });
+    }
   }
+  
   onProgress('Analyzing architecture', 60);
   let dependencyGraph: ArchitectureData;
 
@@ -1031,7 +1221,19 @@ export class BackendAnalysisService {
   } catch (err) {
     console.error('AI architecture description generation failed:', err);
     this.addWarning('AI Architecture Description', 'AI architecture description failed. Using basic description.', err);
-    aiArchitectureDescription = `Basic architecture: ${dependencyGraph.nodes.length} modules detected. Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    aiArchitectureDescription = `Basic architecture: ${dependencyGraph.nodes.length} modules detected. Error: ${err instanceof Error ? err.message : 'Unknown error'}`;  }
+
+  // System Architecture Analysis
+  onProgress('Analyzing system architecture', 91);
+  let systemArchitecture: SystemArchitecture | undefined;
+  try {
+    console.log(`[Analysis] Starting system architecture analysis with ${files.length} files`);
+    systemArchitecture = await this.architectureAnalysisService.analyzeArchitecture(files);
+    console.log(`[Analysis] System architecture analysis completed: ${systemArchitecture.components.length} components, ${systemArchitecture.patterns.length} patterns detected`);
+  } catch (err) {
+    console.error('System architecture analysis failed:', err);
+    this.addWarning('System Architecture Analysis', 'System architecture analysis failed. Will not be included in results.', err);
+    systemArchitecture = undefined;
   }
 
   // Analyze dependency vulnerabilities
@@ -1045,8 +1247,7 @@ export class BackendAnalysisService {
 
   onProgress('Finalizing report', 95);
   onProgress('Complete', 100);
-  console.log('Analysis warnings:', this.analysisWarnings);
-  const result: AnalysisResult = {
+  console.log('Analysis warnings:', this.analysisWarnings);  const result: AnalysisResult = {
     id: `${repoData.fullName.replace('/', '_')}-${Date.now()}`, 
     repositoryUrl: repoUrl,
     createdAt: new Date().toISOString(),
@@ -1065,9 +1266,10 @@ export class BackendAnalysisService {
     performanceMetrics,
     hotspots: generatedHotspots,
     keyFunctions: generatedKeyFunctions,
-    apiEndpoints,
+    apiEndpoints,    analysisMethod, // Add analysis method used ('archive' or 'individual')
     aiSummary,
-    architectureAnalysis: aiArchitectureDescription,    
+    architectureAnalysis: aiArchitectureDescription,
+    systemArchitecture, // Add system architecture analysis with Mermaid diagram
     metrics: summaryMetrics,
     analysisWarnings: this.analysisWarnings, 
     dependencyWheelData,
@@ -1302,7 +1504,6 @@ private generateKeyFunctions(files: FileInfo[]): KeyFunction[] {
     });
     return keyFunctions.slice(0, 15); 
   }
-
   private calculateMetrics(
     commits: ProcessedCommit[], 
     contributors: ProcessedContributor[], 
@@ -1311,12 +1512,59 @@ private generateKeyFunctions(files: FileInfo[]): KeyFunction[] {
     technicalDebt: TechnicalDebt[],
     pullRequests: PullRequestData[] = []
   ): AnalysisResult['metrics'] {
-    const linesOfCode = files.reduce((sum, f) => sum + (f.content?.split('\n').length || 0), 0);
-    const totalFileComplexity = files.reduce((sum, f) => sum + (f.complexity || 0), 0);
+    // Enhanced LOC calculation with detailed breakdown
+    const sourceFiles = files.filter(f => f.content && f.language && f.language !== 'text');
+    const linesOfCode = sourceFiles.reduce((sum, f) => {
+      if (!f.content) return sum;
+      const lines = f.content.split('\n');
+      // Count non-empty, non-comment-only lines for better accuracy
+      const codeLines = lines.filter(line => {
+        const trimmed = line.trim();
+        return trimmed.length > 0 && 
+               !trimmed.startsWith('//') && 
+               !trimmed.startsWith('/*') && 
+               !trimmed.startsWith('*') &&
+               !trimmed.startsWith('#') &&
+               trimmed !== '/*' &&
+               trimmed !== '*/';
+      });
+      return sum + codeLines.length;
+    }, 0);
     
-    const avgComplexity = files.length > 0 ? totalFileComplexity / files.length : 0;
-    const rawCodeQuality = files.length > 0 ? Math.max(0, 10 - (avgComplexity / 10)) : 0;
-    const codeQuality = parseFloat(rawCodeQuality.toFixed(2));    const testCoverage = files.length > 0 ? (files.filter(f => f.path.includes('test')).length / files.length) * 100 : 0;
+    // Additional file metrics showcasing comprehensive analysis
+    const totalFiles = files.length;
+    const analyzableFiles = sourceFiles.length;
+    const filesWithComplexity = files.filter(f => f.complexity && f.complexity > 0);
+    
+    const totalFileComplexity = filesWithComplexity.reduce((sum, f) => sum + (f.complexity || 0), 0);
+    const avgComplexity = filesWithComplexity.length > 0 ? totalFileComplexity / filesWithComplexity.length : 0;
+    
+    // Enhanced code quality calculation based on comprehensive metrics
+    let rawCodeQuality = 5.0; // Start with baseline
+    
+    // Factor in complexity (lower is better)
+    if (avgComplexity > 0) {
+      const complexityScore = Math.max(0, 10 - (avgComplexity / 5)); // Scale complexity appropriately
+      rawCodeQuality = (rawCodeQuality + complexityScore) / 2;
+    }
+    
+    // Factor in file structure and organization
+    const hasTests = files.some(f => f.path.includes('test') || f.path.includes('spec'));
+    const hasDocumentation = files.some(f => f.path.toLowerCase().includes('readme') || f.path.includes('doc'));
+    const hasConfigFiles = files.some(f => f.name.includes('config') || f.name.includes('.json'));
+    
+    if (hasTests) rawCodeQuality += 1;
+    if (hasDocumentation) rawCodeQuality += 0.5;
+    if (hasConfigFiles) rawCodeQuality += 0.5;
+    
+    const codeQuality = Math.min(10, Math.max(0, parseFloat(rawCodeQuality.toFixed(2))));
+    
+    // Enhanced test coverage calculation
+    const testFiles = files.filter(f => 
+      f.path.includes('test') || f.path.includes('spec') || f.path.includes('__tests__')
+    );
+    const testLOC = testFiles.reduce((sum, f) => sum + (f.content?.split('\n').length || 0), 0);
+    const testCoverage = linesOfCode > 0 ? Math.min(100, (testLOC / linesOfCode) * 100 * 2) : 0; // Multiply by 2 for better scaling
     
     // Calculate recent activity (commits in last 30 days)
     const thirtyDaysAgo = new Date();
@@ -1350,11 +1598,11 @@ private generateKeyFunctions(files: FileInfo[]): KeyFunction[] {
           return (merged - created) / (1000 * 60 * 60 * 24); // Convert to days
         });
       avgMergeTime = mergeTimes.length > 0 ? Math.round(mergeTimes.reduce((sum, time) => sum + time, 0) / mergeTimes.length) : 0;
-    }
-      return {
+    }      return {
       totalCommits: commits.length,
       totalContributors: contributors.length,
-      fileCount: files.length,
+      fileCount: totalFiles, // Total files from archive
+      analyzableFileCount: analyzableFiles, // Source files that were analyzed
       linesOfCode,
       codeQuality: isNaN(codeQuality) ? 0 : codeQuality, 
       testCoverage: parseFloat(testCoverage.toFixed(2)),
@@ -1371,7 +1619,9 @@ private generateKeyFunctions(files: FileInfo[]): KeyFunction[] {
       prMergeRate: mergeRate,
       avgPRMergeTime: avgMergeTime,
       recentActivity, // Add recent activity count
-      avgCommitsPerWeek // Add average commits per week
+      avgCommitsPerWeek, // Add average commits per week
+      avgComplexity: parseFloat(avgComplexity.toFixed(2)), // Add average complexity
+      filesWithComplexity: filesWithComplexity.length // Add count of files with complexity analysis
     };
   }
 

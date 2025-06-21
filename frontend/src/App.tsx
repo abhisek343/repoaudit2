@@ -11,6 +11,7 @@ const ReportPage = lazy(() => import('./pages/ReportPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const APITreePage = lazy(() => import('./pages/APITreePage'));
 const FeatureMatrixPage = lazy(() => import('./pages/FeatureMatrixPage'));
+const SystemArchitecturePage = lazy(() => import('./pages/SystemArchitecturePage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 // Loading spinner component
@@ -188,6 +189,11 @@ function App() {
             path: "/feature-matrix/:reportId",
             element: <ErrorBoundary><FeatureMatrixPage /></ErrorBoundary>,
             errorElement: <ErrorBoundary><div>Feature Matrix Error</div></ErrorBoundary>,
+          },
+          {
+            path: "/system-architecture",
+            element: <ErrorBoundary><SystemArchitecturePage /></ErrorBoundary>,
+            errorElement: <ErrorBoundary><div>System Architecture Error</div></ErrorBoundary>,
           },
           {
             path: "*",
