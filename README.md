@@ -110,12 +110,14 @@ This tool uses an **efficient archive-based analysis method** that downloads ent
 - **📈 Scalability**: Handles massive codebases (10,000+ files) efficiently
 - **⚡ Speed**: Up to 10x faster analysis for large repositories
 - **🛡️ Consistency**: Ensures all files are from the same commit/branch
-- **💾 Smart Caching**: Automatic IndexedDB caching for instant re-analysis
+- **💾 Smart Caching**: Automatic IndexedDB caching for frontend assets and Redis for backend analysis results
 
 ### How It Works
 1. **Repository Archive Download**: Fetches the entire repository as a ZIP file using GitHub's archive API
 2. **Efficient Extraction**: Extracts and processes files in memory without disk I/O
-3. **Browser-Based Caching**: Stores archive in IndexedDB (not local filesystem) for instant access
+3. **Dual-Layer Caching**:
+   - **Frontend (IndexedDB)**: Stores repository archives in the browser for instant re-analysis without re-downloading.
+   - **Backend (Redis)**: Caches full analysis reports to provide immediate results for previously analyzed repositories.
 4. **Smart Cache Management**: Automatic cache expiration, size limits, and cleanup
 5. **Smart Filtering**: Automatically filters out binary files, large files, and unnecessary directories
 6. **Progressive Analysis**: Processes files in batches with real-time progress updates
@@ -234,7 +236,7 @@ The application automatically caches repository archives in your browser's Index
 3. **Benefits**:
    - **Instant Re-analysis**: Cached repositories analyze immediately
    - **Extreme Compression**: 1GB repositories stored in ~10MB (100:1+ ratios)
-   - **Offline Capability**: Analyze cached repositories without internet
+   - **Offline Capability (Partial)**: Analyze cached repositories without internet (Note: Full client-side analysis is not yet implemented; currently requires backend connection).
    - **Bandwidth Savings**: No re-downloading for repeat analysis
    - **Privacy Friendly**: Cache stays in browser, never on local filesystem
    - **Smart Management**: Automatic cleanup and size optimization

@@ -84,8 +84,8 @@ export class RepositoryArchiveServiceTest {
       throw new Error('No cached archive found');
     }
     
-    if (cached.files.length !== mockFiles.length) {
-      throw new Error(`Expected ${mockFiles.length} files, got ${cached.files.length}`);
+    if (cached.length !== mockFiles.length) {
+      throw new Error(`Expected ${mockFiles.length} files, got ${cached.length}`);
     }
     
     console.log('✅ Cached archive retrieved successfully');
@@ -100,11 +100,11 @@ export class RepositoryArchiveServiceTest {
       throw new Error('Expected at least 1 cached archive');
     }
     
-    if (stats.totalSize === 0) {
+    if (stats.totalCompressedSize === 0) {
       throw new Error('Expected cache size > 0');
     }
     
-    console.log(`✅ Cache stats: ${stats.totalArchives} archives, ${stats.totalSize} bytes`);
+    console.log(`✅ Cache stats: ${stats.totalArchives} archives, ${stats.totalCompressedSize} bytes`);
   }
   
   private async testClearCache(): Promise<void> {

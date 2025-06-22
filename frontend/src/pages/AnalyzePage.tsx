@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react'; // Added useRef
-import { Link, useNavigate } from 'react-router-dom'; // Added useNavigate
+import React, { useState, useEffect, useLayoutEffect, useReducer, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   Search, 
   Github, 
@@ -15,46 +15,72 @@ import {
   BarChart3,
   AlertTriangle,
   Key,
-  Loader2, // For spinner
-  RefreshCw, // For force refresh
-  Database // For cache management
+  Loader2,
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
-import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index'; // Added AnalysisResult
-import { AnalysisService } from '../services/analysisService'; // Added AnalysisService
-import { RepositoryArchiveService } from '../services/repositoryArchiveService'; // Added for cache management
+import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index';
+
+type State = {
+  status: 'idle' | 'analyzing' | 'success' | 'error';
+  progress: number;
+  currentStep: string;
+  error: string | null;
+  analysisResult: AnalysisResult | null;
+};
+
+type Action =
+  | { type: 'START_ANALYSIS' }
+  | { type: 'SET_PROGRESS'; payload: { step: string; progress: number } }
+  | { type: 'SET_SUCCESS'; payload: AnalysisResult }
+  | { type: 'SET_ERROR'; payload: string }
+  | { type: 'RESET' };
+
+const initialState: State = {
+  status: 'idle',
+  progress: 0,
+  currentStep: '',
+  error: null,
+  analysisResult: null,
+};
+
+function analysisReducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'START_ANALYSIS':
+      return { ...initialState, status: 'analyzing', currentStep: 'Initializing analysis...' };
+    case 'SET_PROGRESS':
+      return { ...state, status: 'analyzing', ...action.payload };
+    case 'SET_SUCCESS':
+      return { ...state, status: 'success', progress: 100, analysisResult: action.payload };
+    case 'SET_ERROR':
+      return { ...state, status: 'error', error: action.payload };
+    case 'RESET':
+      return initialState;
+    default:
+      return state;
+  }
+}
 
 const AnalyzePage = () => {
   const navigate = useNavigate();
+  const [analysisState, dispatch] = useReducer(analysisReducer, initialState);
   const [githubUrl, setGithubUrl] = useState('');
-    // Debug: Track githubUrl changes - only in development
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🎯 githubUrl changed:', githubUrl);
-    }
-  }, [githubUrl]);
   const [selectedCategory, setSelectedCategory] = useState('comprehensive');
   const [showSettings, setShowSettings] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig | undefined>();
   const [githubToken, setGithubToken] = useState<string | undefined>();
-  // State for analysis lifecycle, moved from App.tsx
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | undefined>();  const [progress, setProgress] = useState(0);
-  const [currentStep, setCurrentStep] = useState('');
   const [cancelFunction, setCancelFunction] = useState<(() => void) | null>(null);
-  const [lastAnalysisTime, setLastAnalysisTime] = useState<number>(0);
-  // Cache management state
-  const [forceRefresh, setForceRefresh] = useState(false);
-  const [showCacheInfo, setShowCacheInfo] = useState(false);
-  type CacheStats = Awaited<ReturnType<typeof RepositoryArchiveService.getCacheStats>>;
-  const [cacheStats, setCacheStats] = useState<CacheStats>({
-    totalArchives: 0,
-    totalOriginalSize: 0,
-    totalCompressedSize: 0,
-    averageCompressionRatio: 0,
-    totalSpaceSaved: 0,
-  });
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Effect for cleaning up the EventSource on component unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        console.log("Closing EventSource due to component unmount or re-render.");
+        eventSourceRef.current.close();
+      }
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount and unmount
 
   const reportCategories: ReportCategory[] = [
     {
@@ -146,7 +172,7 @@ const AnalyzePage = () => {
       requiredPlan: 'free'
     }
   ];  
-  // Load saved config and GitHub token on component mount
+
   useEffect(() => {
     const savedLlmConfigString = localStorage.getItem('llmConfig');
     if (savedLlmConfigString) {
@@ -168,25 +194,10 @@ const AnalyzePage = () => {
     }
   }, []);
 
-  // Load cache statistics on component mount
-  useEffect(() => {
-    const loadCacheStats = async () => {
-      try {
-        const stats = await RepositoryArchiveService.getCacheStats();
-        setCacheStats(stats);
-      } catch (error) {
-        console.warn('Failed to load cache statistics:', error);
-      }
-    };
-    
-    loadCacheStats();
-  }, []);
-
-  // Effect for body overflow, moved from App.tsx
   useLayoutEffect(() => {
     const originalOverflow = document.body.style.overflow;
     const originalPaddingRight = document.body.style.paddingRight;
-    const isModalOpen = isAnalyzing || !!error;
+    const isModalOpen = analysisState.status === 'analyzing' || analysisState.status === 'error';
 
     if (isModalOpen) {
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -201,8 +212,7 @@ const AnalyzePage = () => {
       document.body.style.overflow = originalOverflow;
       document.body.style.paddingRight = originalPaddingRight;
     };
-  }, [isAnalyzing, error]);
-
+  }, [analysisState.status]);
 
   const handleSettingsSave = (config: LLMConfig, token?: string) => {
     setLlmConfig(config);
@@ -215,117 +225,99 @@ const AnalyzePage = () => {
       setGithubToken(undefined);
       localStorage.removeItem('githubToken');
     }
-  };  const handleAnalysisSubmit = async (e: React.FormEvent) => {
-    console.log('🚨 handleAnalysisSubmit called!', {
-      githubUrl,
-      eventType: e.type,
-      target: e.target,
-      stack: new Error().stack
-    });
-    
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Additional validation to prevent accidental analysis
-    if (!githubUrl.trim()) {
-      setError('Please enter a GitHub repository URL');
-      return;
-    }
-      // Prevent starting analysis if one is already running
-    if (isAnalyzing) {
-      console.log('Analysis already in progress, ignoring new request');
-      return;
-    }
-
-    // Rate limiting - prevent rapid repeated analysis (minimum 5 seconds between requests)
-    const now = Date.now();
-    if (lastAnalysisTime && (now - lastAnalysisTime) < 5000) {
-      setError('Please wait a few seconds before starting another analysis');
-      return;
-    }
-
-    console.log(`🚀 Starting analysis for: ${githubUrl.trim()}`);
-    setLastAnalysisTime(now);
-    setIsAnalyzing(true);
-    setError(undefined);
-    setProgress(0);
-    setCurrentStep('Initializing analysis...');    const savedToken = localStorage.getItem('githubToken');
-    console.log('Starting analysis with LLM config:', llmConfig); // Debug log
-    const analysisService = new AnalysisService(savedToken || undefined, llmConfig);
-
-    // Use the new caching-enabled analysis method
-    try {
-      const analysisPromise = analysisService.analyzeRepositoryWithCaching(
-        githubUrl,
-        (step: string, progressValue: number) => {
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`🎯 Progress callback received: ${step} - ${progressValue}%`);
-          }
-          setCurrentStep(step);
-          setProgress(progressValue);
-        },
-        forceRefresh // Pass force refresh flag
-      );      // Store a cancel function (we don't have EventSource in this approach)
-      setCancelFunction(() => {
-        // Signal cancellation to the analysis service
-        analysisService.isCancelled = true;
-      });
-
-      analysisPromise
-        .then((result: AnalysisResult) => {
-          setIsAnalyzing(false);
-          setCancelFunction(null);
-          
-          // Refresh cache stats after successful analysis
-          RepositoryArchiveService.getCacheStats().then(setCacheStats).catch(console.warn);
-          
-          const reportId = result.id;
-          const navigationPath = `/report/${reportId}`;
-          navigate(navigationPath, { state: { analysisResultFromNavigation: result } });
-        })
-        .catch((err) => {
-          console.error('Analysis failed:', err);
-          setError(err.message || 'Analysis failed. Please try again.');
-          setIsAnalyzing(false);
-          setCancelFunction(null);
-        });
-
-      // Reset force refresh flag
-      setForceRefresh(false);
-    } catch (err) {
-      console.error('Failed to start analysis:', err);
-      setError('Failed to start analysis. Please check the repository URL and try again.');
-      setIsAnalyzing(false);
-    }
   };
-    const handleCancelAnalysis = () => {
-    // Use the proper cancel function from analysis service
+
+  const handleAnalysisSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const githubUrlPattern = /^https:\/\/github\.com\/[^/]+\/[^/]+$/;
+    if (!githubUrl.trim() || !githubUrlPattern.test(githubUrl.trim())) {
+      dispatch({ type: 'SET_ERROR', payload: 'Please enter a valid GitHub repository URL.' });
+      return;
+    }
+
+    dispatch({ type: 'START_ANALYSIS' });
+
+    const queryParams = new URLSearchParams({
+      repoUrl: githubUrl,
+    });
+
+    if (llmConfig) {
+      queryParams.append('llmConfig', JSON.stringify(llmConfig));
+    }
+    if (githubToken) {
+      queryParams.append('githubToken', githubToken);
+    }
+
+    const eventSource = new EventSource(`/api/analyze?${queryParams.toString()}`);
+    eventSourceRef.current = eventSource; // Track the event source
+
+    let doneReceived = false;
+
+    setCancelFunction(() => () => {
+      eventSource.close();
+      dispatch({ type: 'SET_ERROR', payload: 'Analysis cancelled by user.' });
+    });
+
+    eventSource.addEventListener('progress', (event) => {
+      const data = JSON.parse(event.data);
+      dispatch({ type: 'SET_PROGRESS', payload: { step: data.step, progress: data.progress } });
+    });
+
+    eventSource.addEventListener('result', (event) => {
+      console.log("Received final report data.");
+      const report = JSON.parse(event.data);
+      dispatch({ type: 'SET_SUCCESS', payload: report });
+      navigate(`/report/${report.id}`, { state: { analysisResultFromNavigation: report } });
+    });
+
+    eventSource.addEventListener('done', (event) => {
+      console.log("Server signaled completion:", JSON.parse(event.data).message);
+      doneReceived = true;
+      eventSource.close();
+    });
+
+    eventSource.addEventListener('error-message', (event) => {
+      const data = JSON.parse(event.data);
+      dispatch({ type: 'SET_ERROR', payload: data.error });
+      eventSource.close();
+    });
+
+    eventSource.onerror = (err) => {
+      // If the 'done' event was received, the closing is expected.
+      if (doneReceived) {
+        console.log('Connection closed gracefully after completion.');
+        return;
+      }
+      
+      console.error('EventSource failed:', err);
+      
+      // Avoid showing an error if the connection is already closed or was just closed.
+      if (eventSource.readyState === EventSource.CLOSED) {
+        // Only show error if status is still 'analyzing'
+        if (analysisState.status === 'analyzing') {
+          dispatch({ type: 'SET_ERROR', payload: 'Connection to server was lost unexpectedly.' });
+        }
+      } else {
+        dispatch({ type: 'SET_ERROR', payload: 'A network error occurred during analysis.' });
+      }
+      eventSource.close();
+    };
+  };
+
+  const handleCancelAnalysis = () => {
     if (cancelFunction) {
-      console.log('Cancelling analysis using proper cancel function');
       cancelFunction();
       setCancelFunction(null);
     } 
     
-    setIsAnalyzing(false);
-    setProgress(0);
-    setCurrentStep('');
-    setError('Analysis cancelled by user.');
-  };
-  const handleErrorClear = () => {
-    setError(undefined);
+    dispatch({ type: 'SET_ERROR', payload: 'Analysis cancelled by user.' });
   };
 
-  // Cache management functions
-  const clearRepositoryCache = async (repoUrl: string) => {
-    try {
-      const { owner, repo, branch } = new AnalysisService().parseRepositoryUrl(repoUrl);
-      await RepositoryArchiveService.removeArchive(owner, repo, branch);
-      const stats = await RepositoryArchiveService.getCacheStats();
-      setCacheStats(stats);
-    } catch (error) {
-      console.error('Failed to clear repository cache:', error);
-    }
+  const handleErrorClear = () => {
+    dispatch({ type: 'RESET' });
   };
+
   const getIconComponent = (iconName: string) => {
     const icons: Record<string, React.ReactNode> = {
       BarChart3: <BarChart3 className="w-6 h-6" />,
@@ -428,12 +420,12 @@ const AnalyzePage = () => {
             {reportCategories.map((category) => (
               <div
                 key={category.id}
-                onClick={() => !isAnalyzing && setSelectedCategory(category.id)}
+                onClick={() => analysisState.status !== 'analyzing' && setSelectedCategory(category.id)}
                 className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 hover:shadow-lg ${
                   selectedCategory === category.id
                     ? 'border-indigo-500 bg-indigo-50 shadow-lg ring-2 ring-indigo-500 ring-offset-2'
                     : 'border-gray-200 bg-white hover:border-indigo-300'
-                } ${isAnalyzing ? 'opacity-70 cursor-not-allowed' : ''}`}
+                } ${analysisState.status === 'analyzing' ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
                 <div className={`p-3 rounded-xl mb-4 inline-block ${
                   selectedCategory === category.id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'
@@ -480,95 +472,16 @@ const AnalyzePage = () => {
                 placeholder="https://github.com/owner/repository"
                 className="w-full pl-16 pr-6 py-4 text-lg border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-600 transition-all duration-200 bg-white shadow-sm"
                 required
-                disabled={isAnalyzing}
-              />            </div>
-            
-            {/* Cache Management Options */}
-            <div className="mb-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="flex items-center space-x-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={forceRefresh}
-                    onChange={(e) => setForceRefresh(e.target.checked)}
-                    className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2"
-                    disabled={isAnalyzing}
-                  />
-                  <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <RefreshCw className="w-4 h-4" />
-                    Force fresh download (skip cache)
-                  </span>
-                </label>
-                
-                <button
-                  type="button"
-                  onClick={() => setShowCacheInfo(!showCacheInfo)}
-                  className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
-                  disabled={isAnalyzing}
-                >
-                  <Database className="w-4 h-4" />
-                  Cache Info
-                </button>
-              </div>
-              
-              {/* Cache Information Display */}
-              {showCacheInfo && (
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="font-medium text-gray-700">Cached Repositories:</span>
-                      <p className="text-gray-600">{cacheStats.totalArchives}</p>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-700">Total Cache Size:</span>
-                      <p className="text-gray-600">
-                        {(cacheStats.totalCompressedSize / (1024 * 1024)).toFixed(2)} MB
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await RepositoryArchiveService.clearAllArchives();
-                          const stats = await RepositoryArchiveService.getCacheStats();
-                          setCacheStats(stats);
-                        } catch (error) {
-                          console.error('Failed to clear cache:', error);
-                        }
-                      }}
-                      className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-md hover:bg-red-200 transition-colors"
-                      disabled={isAnalyzing}
-                    >
-                      Clear All Cache
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          const stats = await RepositoryArchiveService.getCacheStats();
-                          setCacheStats(stats);
-                        } catch (error) {
-                          console.error('Failed to refresh cache stats:', error);
-                        }
-                      }}
-                      className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-md hover:bg-blue-200 transition-colors"
-                      disabled={isAnalyzing}
-                    >
-                      Refresh Stats
-                    </button>
-                  </div>
-                </div>
-              )}
+                disabled={analysisState.status === 'analyzing'}
+              />
             </div>
             
             <button
               type="submit"
-              disabled={isAnalyzing || !githubUrl.trim()}
+              disabled={analysisState.status === 'analyzing' || !githubUrl.trim()}
               className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-lg font-semibold rounded-xl hover:from-indigo-700 hover:to-purple-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/30 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-md hover:shadow-lg"
             >
-              {isAnalyzing ? (
+              {analysisState.status === 'analyzing' ? (
                 <>
                   <Loader2 className="w-6 h-6 animate-spin" />
                   Analyzing...
@@ -595,7 +508,7 @@ const AnalyzePage = () => {
                 <button
                   key={index}
                   onClick={() => setGithubUrl(url)}
-                  disabled={isAnalyzing}
+                  disabled={analysisState.status === 'analyzing'}
                   className="px-4 py-2 bg-white/80 hover:bg-white text-gray-700 rounded-lg transition-colors duration-200 text-sm font-medium disabled:opacity-50 border border-gray-300 hover:border-gray-400 shadow-sm"
                 >
                   {url.split('/').slice(-2).join('/')}
@@ -615,15 +528,13 @@ const AnalyzePage = () => {
       />
 
       <ProgressModal
-        isOpen={isAnalyzing || !!error}
-        currentStep={currentStep}
-        progress={progress}
-        error={error}
-        onClose={handleErrorClear} // Use local handler
-        onOpenSettings={() => {
-          setShowSettings(true);
-        }}
-        onCancel={handleCancelAnalysis} // Use local handler
+        isOpen={analysisState.status === 'analyzing' || analysisState.status === 'error'}
+        currentStep={analysisState.currentStep}
+        progress={analysisState.progress}
+        error={analysisState.error || undefined}
+        onClose={handleErrorClear}
+        onOpenSettings={() => setShowSettings(true)}
+        onCancel={handleCancelAnalysis}
       />
     </>
   );

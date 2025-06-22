@@ -328,7 +328,7 @@ export interface AnalysisResult {
     vulnerabilityDistribution: Array<{ severity: string; count: number; color: string }>;
   };
   qualityMetrics?: QualityMetrics;  repository?: RepositoryData; // Using the defined RepositoryData type
-  architectureAnalysis?: string;
+  architectureAnalysis?: SystemArchitecture;
   systemArchitecture?: SystemArchitecture; // System architecture analysis with Mermaid diagram
   analysisWarnings?: AnalysisWarning[];
   // Diagram-specific data structures

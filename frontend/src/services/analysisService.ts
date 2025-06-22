@@ -1,3 +1,4 @@
+import { SystemArchitecture } from '../types';
 import { LLMConfig, AnalysisResult, Contributor, FileInfo } from '../types';
 import { StorageService } from './storageService';
 import { RepositoryArchiveService } from './repositoryArchiveService';
@@ -41,6 +42,26 @@ export class AnalysisService {
     }
     
     return { owner, repo, branch };
+  }
+async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
+    try {
+      const response = await fetch('/api/architecture/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ files }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Architecture analysis failed: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to analyze architecture:', error);
+      throw error;
+    }
   }
 
   /**
@@ -126,167 +147,89 @@ export class AnalysisService {
   }  /**
    * Common EventSource-based analysis logic
    */
-  private async analyzeWithEventSource(
+  private analyzeWithEventSource(
     params: URLSearchParams,
     onProgress: (step: string, progress: number) => void
   ): Promise<AnalysisResult> {
     return new Promise((resolve, reject) => {
       const eventSourceUrl = `/api/analyze?${params.toString()}`;
-      const eventSource = new EventSource(eventSourceUrl);
       
-      // Extract repo info from the repoUrl parameter for caching
-      const repoUrl = params.get('repoUrl');
-      let repoInfo: { owner: string; repo: string; branch: string } | null = null;
-      if (repoUrl) {
-        try {
-          repoInfo = this.parseRepositoryUrl(repoUrl);
-        } catch (error) {
-          console.warn('Failed to parse repository URL for caching:', error);
-        }
-      }
-      
+      let eventSource: EventSource;
       let retryTimeout: NodeJS.Timeout | null = null;
       let retryCount = 0;
       const maxRetries = 3;
 
       const cleanup = () => {
-        if (retryTimeout) {
-          clearTimeout(retryTimeout);
-          retryTimeout = null;
-        }
-        if (eventSource.readyState !== EventSource.CLOSED) {
+        if (retryTimeout) clearTimeout(retryTimeout);
+        if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
           eventSource.close();
         }
       };
 
-      // Handle connection open
-      eventSource.onopen = () => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔗 SSE Connection established, readyState:', eventSource.readyState);
-        }
-        // Log keep-alive events for debugging
-        eventSource.addEventListener('keep-alive', (evt) => {
-          console.log('🛡️ SSE keep-alive event:', evt.data);
-        });
-        // Log any generic messages
-        eventSource.onmessage = (evt) => {
-          console.log('📨 SSE message received:', evt.data);
+      const setupEventListeners = (es: EventSource) => {
+        es.onopen = () => {
+          console.log('🔗 SSE Connection established.');
+          retryCount = 0;
         };
-        retryCount = 0;
-      };
 
-      // Handle progress events
-      eventSource.addEventListener('progress', (event) => {
-        if (this.isCancelled) return;
-        
-        try {
-          const data = JSON.parse((event as MessageEvent).data);
-          if (data.step && typeof data.progress === 'number') {
-            onProgress(data.step, data.progress);
-          }
-        } catch (error) {
-          console.error('Error parsing progress event:', error);
-        }
-      });
-
-      // Handle completion events
-      eventSource.addEventListener('complete', async (event) => {
-        if (this.isCancelled) {
-          cleanup();
-          reject(new Error('Analysis cancelled'));
-          return;
-        }
-        
-        try {
-          const result = JSON.parse((event as MessageEvent).data) as Partial<AnalysisResult>;
-          onProgress('Analysis complete!', 100);
-          cleanup();
-          
-          const finalResult = this.ensureDefaults(result, params.get('repoUrl') || '');
-          
-          if (!this.validateAnalysisResult(finalResult)) {
-            reject(new Error('Invalid analysis result received from backend'));
+        es.onmessage = (event) => {
+          if (this.isCancelled) {
+            cleanup();
             return;
           }
 
-          // Cache the repository archive if we have the files and repo info
-          if (repoInfo && finalResult.files && finalResult.files.length > 0) {
-            try {
-              await RepositoryArchiveService.storeArchive(
-                repoInfo.owner,
-                repoInfo.repo,
-                repoInfo.branch,
-                finalResult.files
-              );
-              console.log(`Cached repository archive for ${repoInfo.owner}/${repoInfo.repo}@${repoInfo.branch}`);
-            } catch (error) {
-              console.warn('Failed to cache repository archive:', error);
-              // Continue with analysis even if caching fails
+          try {
+            const payload = JSON.parse(event.data);
+            const { status, data } = payload;
+
+            switch (status) {
+              case 'progress':
+                onProgress(data.step, data.progress);
+                break;
+              case 'complete':
+                cleanup();
+                resolve(this.ensureDefaults(data, params.get('repoUrl') || ''));
+                break;
+              case 'error':
+                cleanup();
+                reject(new Error(data.message || 'Unknown error occurred during analysis.'));
+                break;
+              default:
+                console.warn('Received unknown event status:', status);
+            }
+          } catch (error) {
+            console.error('Error parsing SSE message:', error);
+            // Don't reject on parse error, could be a keep-alive ping
+          }
+        };
+
+        es.onerror = () => {
+          if (this.isCancelled) {
+            cleanup();
+            return;
+          }
+          
+          console.error('EventSource failed. ReadyState:', es.readyState);
+
+          if (es.readyState === EventSource.CLOSED) {
+            if (retryCount < maxRetries) {
+              retryCount++;
+              cleanup();
+              retryTimeout = setTimeout(() => {
+                console.log(`Retrying EventSource connection (attempt ${retryCount}/${maxRetries})`);
+                eventSource = new EventSource(eventSourceUrl);
+                setupEventListeners(eventSource);
+              }, Math.pow(2, retryCount) * 1000);
+            } else {
+              cleanup();
+              reject(new Error('Connection failed after maximum retries.'));
             }
           }
-          
-          // Store analysis result
-          try {
-            await StorageService.storeAnalysisResult(finalResult);
-            resolve(finalResult);
-          } catch (error) {
-            console.error('Failed to store analysis result:', error);
-            resolve(finalResult); // Still resolve with result
-          }
-        } catch (error) {
-          console.error('Error parsing completion event:', error);
-          reject(new Error('Failed to parse analysis result'));
-        }
-      });      // Handle error events
-      eventSource.addEventListener('error', (event) => {
-        console.error('EventSource error event:', event);
-        
-        if (this.isCancelled) {
-          cleanup();
-          reject(new Error('Analysis cancelled'));
-          return;
-        }
+        };
+      };
 
-        if (eventSource.readyState === EventSource.CLOSED) {
-          console.warn(`EventSource connection closed, retry attempt ${retryCount + 1}/${maxRetries}`);
-          
-          if (retryCount < maxRetries) {
-            retryCount++;
-            retryTimeout = setTimeout(() => {
-              console.log(`Retrying EventSource connection (attempt ${retryCount})`);
-              const newEventSource = new EventSource(eventSourceUrl);
-              Object.assign(eventSource, newEventSource);
-            }, Math.pow(2, retryCount) * 1000);
-          } else {
-            cleanup();
-            reject(new Error('Connection failed after maximum retries. This could be due to network issues or server timeout.'));
-          }
-        } else if (eventSource.readyState === EventSource.CONNECTING) {
-          console.log('EventSource is connecting...');
-          // Let it continue trying to connect
-        } else {
-          console.error('EventSource encountered an unexpected error');
-          cleanup();
-          reject(new Error('EventSource connection error occurred'));
-        }
-      });
-
-      // Handle explicit error messages
-      eventSource.addEventListener('error-message', (event) => {
-        if (this.isCancelled) {
-          cleanup();
-          reject(new Error('Analysis cancelled'));
-          return;
-        }
-        
-        try {
-          const data = JSON.parse((event as MessageEvent).data);
-          cleanup();
-          reject(new Error(data.error || 'Unknown error occurred'));
-        } catch {
-          reject(new Error('Failed to parse error message'));
-        }
-      });
+      eventSource = new EventSource(eventSourceUrl);
+      setupEventListeners(eventSource);
     });
   }
   
@@ -679,7 +622,7 @@ export class AnalysisService {
       languages: {},
       dependencyGraph: { nodes: [], links: [] }, // Matches ArchitectureData
       qualityMetrics: {},
-      architectureAnalysis: '',
+      architectureAnalysis: undefined,
       analysisWarnings: [],
       dependencyWheelData: [],
       fileSystemTree: { name: 'root', path: '/', size: 0, type: 'directory', children: [] },
@@ -715,7 +658,7 @@ export class AnalysisService {
       languages: result?.languages || {},
       dependencyGraph: result?.dependencyGraph || { nodes: [], links: [] },
       qualityMetrics: result?.qualityMetrics || {},
-      architectureAnalysis: result?.architectureAnalysis || '',
+      architectureAnalysis: result?.architectureAnalysis,
       analysisWarnings: result?.analysisWarnings || [],
       dependencyWheelData: result?.dependencyWheelData || [],
       fileSystemTree: result?.fileSystemTree || { name: 'root', path: '/', size: 0, type: 'directory', children: [] },

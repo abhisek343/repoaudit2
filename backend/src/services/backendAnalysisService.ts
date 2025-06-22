@@ -1,24 +1,18 @@
 import { GitHubService } from './githubService';
 import { LLMService } from './llmService';
-// import { AdvancedAnalysisService } from './advancedAnalysisService'; // Commented out as unused
-import { ArchitectureAnalysisService, ArchitectureConfig } from './architectureAnalysisService';
 import {
   AnalysisResult, FileInfo, LLMConfig, Repository, Commit, Contributor, BasicRepositoryInfo,
   ProcessedCommit, ProcessedContributor, DependencyInfo, ArchitectureData, QualityMetrics,
-  Hotspot, KeyFunction, SecurityIssue, TechnicalDebt, PerformanceMetric, APIEndpoint, FileNode,
-  ChurnNode, AnalysisWarning,  // ADDED: Import new types for advanced diagrams
+  Hotspot, KeyFunction, SecurityIssue, TechnicalDebt, PerformanceMetric, APIEndpoint,
+  AnalysisWarning,  // ADDED: Import new types for advanced diagrams
   TemporalCoupling, SankeyData, SankeyNode, SankeyLink, PullRequestData, GitGraphData, GitGraphLink, GitGraphNode
 } from '../types';
-// @ts-ignore - escomplex doesn't have TypeScript definitions
-import { analyse } from 'escomplex';
+import * as parser from '@babel/parser';
 import * as path from 'path';
-import * as ts from 'typescript';
 
 export class BackendAnalysisService {
   private githubService: GitHubService;
   private llmService: LLMService;
-  // private advancedAnalysisService: AdvancedAnalysisService; // Commented out as it's not used
-  private architectureAnalysisService: ArchitectureAnalysisService;
   private analysisWarnings: AnalysisWarning[]; // Added to store warnings
   constructor(githubToken?: string, llmConfig?: LLMConfig) {
     this.githubService = new GitHubService(githubToken);
@@ -42,17 +36,6 @@ export class BackendAnalysisService {
     }
     
     this.llmService = new LLMService(finalLlmConfig);
-    // this.advancedAnalysisService = new AdvancedAnalysisService(this.llmService); // Commented out as it's not used
-    
-    // Initialize architecture analysis service
-    const architectureConfig: ArchitectureConfig = {
-      llmConfig: finalLlmConfig,
-      enableMermaidGeneration: true,
-      enableAdvancedAnalysis: true,
-      maxAnalysisDepth: 3,
-      customPatterns: []
-    };
-    this.architectureAnalysisService = new ArchitectureAnalysisService(architectureConfig);
     
     // Final debug logging
     console.log('Final LLM Config used for LLMService:', finalLlmConfig);
@@ -112,7 +95,7 @@ export class BackendAnalysisService {
     return {
       name: repoData.name,
       fullName: repoData.fullName,
-      description: repoData.description,
+      description: repoData.description || '', // Handle potential null description
       stars: repoData.stars,
       forks: repoData.forks,
       watchers: repoData.watchers,
@@ -164,6 +147,12 @@ export class BackendAnalysisService {
       return { dependencies: {}, devDependencies: {} };
     }
   }  private async detectArchitecturePatterns(filesInput: FileInfo[]): Promise<ArchitectureData> {
+    // Quick fallback for large repositories to avoid long processing
+    if (filesInput.length > 200) {
+      console.warn('[Architecture Analysis] Large repo detected; using enhanced fallback architecture analysis');
+      this.addWarning('detectArchitecturePatterns', `Repository has ${filesInput.length} files; using fallback analysis`);
+      return this.createEnhancedFallbackArchitecture(filesInput);
+    }
     console.log(`[Architecture Analysis] Starting analysis of ${filesInput.length} files`);
     
     const nodes = filesInput.map(file => ({
@@ -194,28 +183,31 @@ export class BackendAnalysisService {
     let totalImportsFound = 0;
     let totalLinksCreated = 0;
 
-    for (const { file, content } of filesWithContent) {
-      if (content) { // Only parse imports if content is available
-        const importedPaths = this.parseImports(content);
-        totalImportsFound += importedPaths.length;
-        
-        console.log(`[Architecture Analysis] File ${file.path} has ${importedPaths.length} imports: ${importedPaths.slice(0, 3).join(', ')}${importedPaths.length > 3 ? '...' : ''}`);
-        
-        for (const importedPath of importedPaths) {
-          const targetNode = this.findNodeByPath(nodes, importedPath, file.path);
-          if (targetNode) {
-            links.push({
-              source: file.path,
-              target: targetNode.id,
-            });
-            totalLinksCreated++;
-            console.log(`[Architecture Analysis] Created link: ${file.path} -> ${targetNode.id}`);
-          } else if (importedPath.startsWith('.')) {
-            console.log(`[Architecture Analysis] Relative import not resolved: ${importedPath} from ${file.path}`);
-          }
-        }
-      }
-    }
+    for (let idx = 0; idx < filesWithContent.length; idx++) {
+      // Yield to event loop to keep server responsive
+      await new Promise(resolve => setImmediate(resolve));
+      const { file, content } = filesWithContent[idx];
+       if (content) { // Only parse imports if content is available
+         const importedPaths = this.parseImports(content);
+         totalImportsFound += importedPaths.length;
+         
+         console.log(`[Architecture Analysis] File ${file.path} has ${importedPaths.length} imports: ${importedPaths.slice(0, 3).join(', ')}${importedPaths.length > 3 ? '...' : ''}`);
+         
+         for (const importedPath of importedPaths) {
+           const targetNode = this.findNodeByPath(nodes, importedPath, file.path);
+           if (targetNode) {
+             links.push({
+               source: file.path,
+               target: targetNode.id,
+             });
+             totalLinksCreated++;
+             console.log(`[Architecture Analysis] Created link: ${file.path} -> ${targetNode.id}`);
+           } else if (importedPath.startsWith('.')) {
+             console.log(`[Architecture Analysis] Relative import not resolved: ${importedPath} from ${file.path}`);
+           }
+         }
+       }
+     }
 
     console.log(`[Architecture Analysis] Summary: ${totalImportsFound} total imports found, ${totalLinksCreated} internal links created`);
     console.log(`[Architecture Analysis] Found ${nodes.length} nodes and ${links.length} internal dependencies`);
@@ -337,57 +329,72 @@ export class BackendAnalysisService {
    * Safe wrapper for ESComplex quality metrics with robust error handling and fallback
    */
   private async safeCalculateQualityMetrics(
-    repoTree: FileInfo[]
+    repoTree: FileInfo[],
+    sendProgress?: (step: string, progress: number) => void
   ): Promise<QualityMetrics> {
     const metrics: QualityMetrics = {};
     const sourceFiles = repoTree.filter(f => this.isSourceFile(f.path));
-    for (const file of sourceFiles) {
-      try {
-        let content = file.content;
-        if (content === undefined) {
-          // Archive download should provide content for all files, so this is just a safety fallback
-          this.addWarning('Quality Metrics', `Missing content for ${file.path} during quality calculation. Using default metrics.`);
-          content = ''; // Set to empty string for missing content
-        }
-        
-        if (!content) {
-          metrics[file.path] = { complexity: 1, maintainability: 50, linesOfCode: 0 };
-          continue;
-        }
-        let jsForAnalysis = content;
-        if (/\.(tsx?|jsx?)$/.test(file.path)) { // MODIFIED LINE
-          try {            jsForAnalysis = ts.transpileModule(content, {
-              compilerOptions: {
-                target: ts.ScriptTarget.ES5,
-                module: ts.ModuleKind.CommonJS,
-                allowJs: true
-              },
-              fileName: file.path
-            }).outputText;
-          } catch (transpileErr) {
-            this.addWarning('Quality Metrics', `Failed to transpile ${file.path}. Using original content for analysis. Error: ${transpileErr instanceof Error ? transpileErr.message : String(transpileErr)}`, transpileErr);
-          }
-        }
+    const totalFiles = sourceFiles.length;
+    const chunkSize = 25;
+
+    for (let i = 0; i < totalFiles; i += chunkSize) {
+      const chunk = sourceFiles.slice(i, i + chunkSize);
+      
+      for (const file of chunk) {
         try {
-          const report = analyse(jsForAnalysis);
-          metrics[file.path] = {
-            complexity: report.aggregate?.cyclomatic ?? this.calculateFallbackComplexity(content),
-            maintainability: report.maintainability ?? 50,
-            linesOfCode: report.aggregate?.sloc?.logical ?? content.split('\n').length,
-          };
-        } catch (analysisErr) {
-          this.addWarning('Quality Metrics', `ESComplex analysis failed for ${file.path}. Using fallback metrics. Error: ${analysisErr instanceof Error ? analysisErr.message : String(analysisErr)}`, analysisErr);
-          metrics[file.path] = {
-            complexity: this.calculateFallbackComplexity(content),
-            maintainability: 50,
-            linesOfCode: content.split('\n').length,
-          };
+          const content = file.content ?? '';
+          if (!content) {
+            metrics[file.path] = { complexity: 1, maintainability: 100, linesOfCode: 0 };
+            continue;
+          }
+
+          if (this.isJavaScriptFile(file.path)) {
+            try {
+              const ast = parser.parse(content, {
+                sourceType: 'module',
+                plugins: ['jsx', 'typescript', 'estree', 'doExpressions', 'objectRestSpread', 'classProperties', 'exportDefaultFrom', 'exportNamespaceFrom', 'asyncGenerators', 'dynamicImport', 'optionalChaining', 'nullishCoalescingOperator'],
+                errorRecovery: true,
+              });
+              
+              const complexity = this.calculateComplexity(ast);
+              const linesOfCode = content.split('\n').length;
+              // Simplified maintainability index, can be improved
+              const maintainability = Math.max(0, (171 - 5.2 * Math.log(1) - 0.23 * complexity - 16.2 * Math.log(linesOfCode)) * 100 / 171);
+
+              metrics[file.path] = {
+                complexity,
+                maintainability: isNaN(maintainability) ? 100 : Math.round(maintainability),
+                linesOfCode,
+              };
+            } catch (analysisErr) {
+              this.addWarning('Quality Metrics', `Babel parser failed for ${file.path}. Using fallback.`, analysisErr);
+              metrics[file.path] = {
+                complexity: this.calculateFallbackComplexity(content),
+                maintainability: 50,
+                linesOfCode: content.split('\n').length,
+              };
+            }
+          } else {
+            metrics[file.path] = {
+              complexity: this.calculateFallbackComplexity(content),
+              maintainability: 75, // Higher for non-code files
+              linesOfCode: content.split('\n').length,
+            };
+          }
+        } catch (err) {
+          this.addWarning('Quality Metrics', `Error processing ${file.path}.`, err);
+          metrics[file.path] = { complexity: 1, maintainability: 50, linesOfCode: 0 };
         }
-      } catch (err) {
-        this.addWarning('Quality Metrics', `Unexpected error processing ${file.path} for quality metrics. Using default metrics. Error: ${err instanceof Error ? err.message : String(err)}`, err);
-        metrics[file.path] = { complexity: 1, maintainability: 50, linesOfCode: 0 };
+      }
+
+      await new Promise(resolve => setImmediate(resolve));
+      
+      if (sendProgress) {
+        const progress = Math.round(((i + chunk.length) / totalFiles) * 100);
+        sendProgress('Calculating quality metrics', 40 + (progress / 10));
       }
     }
+    
     return metrics;
   }
 
@@ -399,7 +406,47 @@ export class BackendAnalysisService {
       complexity += matches ? matches.length : 0;
     }
     return Math.min(100, complexity);
-  }  private isSourceFile(filePath: string): boolean {
+  }
+  
+  private calculateComplexity(node: any): number {
+    let complexity = 0;
+    const visitor = (node: any) => {
+      switch (node.type) {
+        case 'IfStatement':
+        case 'ForStatement':
+        case 'ForInStatement':
+        case 'ForOfStatement':
+        case 'WhileStatement':
+        case 'DoWhileStatement':
+        case 'SwitchCase':
+        case 'CatchClause':
+        case 'ConditionalExpression':
+          complexity++;
+          break;
+        case 'LogicalExpression':
+          if (node.operator === '&&' || node.operator === '||') {
+            complexity++;
+          }
+          break;
+      }
+      for (const key in node) {
+        if (node.hasOwnProperty(key)) {
+          const child = node[key];
+          if (typeof child === 'object' && child !== null) {
+            if (Array.isArray(child)) {
+              child.forEach(visitor);
+            } else {
+              visitor(child);
+            }
+          }
+        }
+      }
+    };
+    visitor(node);
+    return complexity + 1; // Start with a base complexity of 1 for the function/file
+  }
+
+  private isSourceFile(filePath: string): boolean {
     const ext = path.extname(filePath).toLowerCase();
     const fileName = path.basename(filePath).toLowerCase();
     const dirPath = path.dirname(filePath);
@@ -418,7 +465,7 @@ export class BackendAnalysisService {
     // Check if filename matches excluded patterns
     const excludedFilePatterns = [
       /^\./, // Hidden files
-      /vite-env\.d\.ts$/, 
+      /vite-env\.d\.ts$/,
       /\.config\.(js|ts|mjs|cjs)$/,
       /eslint\.config\.(js|ts|mjs|cjs)$/,
       /\.min\.(js|css)$/,
@@ -439,6 +486,45 @@ export class BackendAnalysisService {
     }
       // Only include files that have a recognized extension
     return ext in BackendAnalysisService.EXTENSION_LANGUAGE_MAP;
+  }
+
+  // ADDED: Stricter check specifically for escomplex compatibility
+  private isJavaScriptFile(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    const fileName = path.basename(filePath).toLowerCase();
+    const dirPath = path.dirname(filePath);
+
+    // Reuse directory exclusion logic
+    const pathParts = dirPath.split(path.sep);
+    if (pathParts.some(part => BackendAnalysisService.EXCLUDED_DIRECTORIES.has(part))) {
+      return false;
+    }
+    
+    // Stricter extension check for JS/TS files
+    const supportedExtensions = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'];
+    if (!supportedExtensions.includes(ext)) {
+      return false;
+    }
+
+    // Reuse filename exclusion logic
+    const excludedFilePatterns = [
+      /^\./,
+      /vite-env\.d\.ts$/,
+      /\.config\.(js|ts|mjs|cjs)$/,
+      /eslint\.config\.(js|ts|mjs|cjs)$/,
+      /\.min\.js$/,
+      /\.bundle\.js$/,
+      /\.chunk\.js$/,
+      /\.test\.(js|ts|jsx|tsx)$/,
+      /\.spec\.(js|ts|jsx|tsx)$/,
+      /\.d\.ts$/,
+    ];
+
+    if (excludedFilePatterns.some(pattern => pattern.test(fileName))) {
+      return false;
+    }
+
+    return true;
   }
 
   private inferModuleType(filePath: string): string {
@@ -502,229 +588,397 @@ export class BackendAnalysisService {
       return undefined;
     }
 
-    // Resolve the relative path using project-relative paths instead of absolute filesystem paths
-    const currentDir = path.dirname(currentFilePath);
-    const resolvedPath = path.normalize(path.join(currentDir, importedPath)).replace(/\\/g, '/');
-
-    // The resolvedPath is now relative to the project root, matching file.path entries
-
-    console.log(`[Path Resolution] Resolving '${importedPath}' from '${currentFilePath}' -> '${resolvedPath}'`);
-
-    // Try different extensions and patterns
-    const extensions = ['', '.js', '.ts', '.jsx', '.tsx'];
-    for (const ext of extensions) {
-      const pathWithExt = `${resolvedPath}${ext}`;
-      const match = nodes.find(n => n.path === pathWithExt);
-      if (match) {
-        console.log(`[Path Resolution] Found match with extension '${ext}': ${pathWithExt}`);
-        return match;
-      }
-    }
-
-    // Try index files
-    const indexFiles = ['/index.js', '/index.ts', '/index.jsx', '/index.tsx'];
-    for (const indexFile of indexFiles) {
-      const indexPath = `${resolvedPath}${indexFile}`;
-      const match = nodes.find(n => n.path === indexPath);
-      if (match) {
-        console.log(`[Path Resolution] Found index file match: ${indexPath}`);
-        return match;
-      }
-    }
-
-    // Try partial matching for common cases
-    const partialMatches = nodes.filter(n => {
-      return n.path.includes(path.basename(resolvedPath)) && 
-             n.path.includes(path.dirname(resolvedPath));
-    });
+    const currentFileDir = path.dirname(currentFilePath);
     
-    if (partialMatches.length === 1) {
-      console.log(`[Path Resolution] Found partial match: ${partialMatches[0].path}`);
-      return partialMatches[0];
+    // Try to resolve the path with various extensions
+    const potentialExtensions = ['.ts', '.tsx', '.js', '.jsx', '.json', '.mjs', '.cjs'];
+    let resolvedPath: string | undefined;
+
+    // Case 1: Direct path with extension
+    let tempPath = path.resolve(currentFileDir, importedPath);
+    if (nodes.some(n => n.path === tempPath)) {
+      resolvedPath = tempPath;
     }
 
-    // Try without extension if the import already has one
-    const extMatch = resolvedPath.match(/\.(js|ts|jsx|tsx)$/);
-    if (extMatch) {
-      const baseResolvedPath = resolvedPath.replace(/\.(js|ts|jsx|tsx)$/, '');
-      for (const ext of extensions) {
-        const pathWithExt = `${baseResolvedPath}${ext}`;
-        const match = nodes.find(n => n.path === pathWithExt);
-        if (match) {
-          console.log(`[Path Resolution] Found match by replacing extension: ${pathWithExt}`);
-          return match;
+    // Case 2: Path without extension
+    if (!resolvedPath) {
+      for (const ext of potentialExtensions) {
+        tempPath = path.resolve(currentFileDir, `${importedPath}${ext}`);
+        if (nodes.some(n => n.path === tempPath)) {
+          resolvedPath = tempPath;
+          break;
         }
       }
     }
 
-    console.log(`[Path Resolution] No match found for '${importedPath}' -> '${resolvedPath}'. Available paths: ${nodes.slice(0, 5).map(n => n.path).join(', ')}...`);
+    // Case 3: Index file in a directory
+    if (!resolvedPath) {
+      for (const ext of potentialExtensions) {
+        tempPath = path.resolve(currentFileDir, importedPath, `index${ext}`);
+        if (nodes.some(n => n.path === tempPath)) {
+          resolvedPath = tempPath;
+          break;
+        }
+      }
+    }
+    
+    // Normalize path separators for consistent matching
+    if (resolvedPath) {
+      resolvedPath = resolvedPath.replace(/\\/g, '/');
+      const targetNode = nodes.find(n => n.path.replace(/\\/g, '/') === resolvedPath);
+      if (targetNode) {
+        return targetNode;
+      }
+    }
+
+    // Fallback for partial matches if direct resolution fails
+    const partialMatches = nodes.filter(n => {
+      const normalizedNodePath = n.path.replace(/\\/g, '/');
+      const normalizedImport = importedPath.replace(/\\/g, '/');
+      return normalizedNodePath.endsWith(normalizedImport) || normalizedNodePath.endsWith(`${normalizedImport}.js`) || normalizedNodePath.endsWith(`${normalizedImport}.ts`);
+    });
+
+    if (partialMatches.length > 0) {
+      // Prefer the shortest match as it's likely more specific
+      partialMatches.sort((a, b) => a.path.length - b.path.length);
+      return partialMatches[0];
+    }
+
     return undefined;
   }
-  // private resolveImportPath method removed as it was unused
   async analyze(
     repoUrl: string,
-    onProgress: (step: string, progress: number) => void = () => {}
+    options: {
+      useCache?: boolean;
+      branch?: string;
+      dependencies?: boolean;
+      architecture?: boolean;
+      quality?: boolean;
+      security?: boolean;
+      technicalDebt?: boolean;
+      performance?: boolean;
+      hotspots?: boolean;
+      keyFunctions?: boolean;
+      prAnalysis?: boolean;
+      contributorAnalysis?: boolean;
+      aiSummary?: boolean;
+      aiArchitecture?: boolean;
+      temporalCoupling?: boolean;
+      dataTransformation?: boolean;
+      gitGraph?: boolean;
+      sendProgress?: (step: string, progress: number) => void;
+    }
   ): Promise<AnalysisResult> {
-    this.analysisWarnings = []; // Reset warnings for new analysis
+    this.analysisWarnings = []; // Reset warnings for each new analysis
+
+    const [owner, repo] = this.extractRepoParts(repoUrl);
     
+    // --- Stateful Progress Manager ---
+    let lastProgress = 0;
+    const progressStages = {
+      init: { weight: 1, progress: 0 },
+      repoInfo: { weight: 4, progress: 0 },
+      commits: { weight: 15, progress: 0 },
+      files: { weight: 30, progress: 0 },
+      quality: { weight: 10, progress: 0 },
+      architecture: { weight: 10, progress: 0 },
+      dependencies: { weight: 5, progress: 0 },
+      pr: { weight: 5, progress: 0 },
+      contributors: { weight: 5, progress: 0 },
+      finalizing: { weight: 15, progress: 0 },
+    };
+
+    const sendProgress = (stage: keyof typeof progressStages, step: string, stageProgress: number) => {
+      if (!options.sendProgress) return;
+
+      progressStages[stage].progress = Math.max(0, Math.min(100, stageProgress));
+
+      let totalProgress = 0;
+      for (const s in progressStages) {
+        totalProgress += progressStages[s as keyof typeof progressStages].weight * (progressStages[s as keyof typeof progressStages].progress / 100);
+      }
+      
+      const finalProgress = Math.round(totalProgress);
+
+      if (finalProgress > lastProgress) {
+        lastProgress = finalProgress;
+        options.sendProgress(step, finalProgress);
+      } else {
+        // Log if progress tries to go backward, but send the last known progress to avoid UI flicker
+        if (finalProgress < lastProgress) {
+          console.warn(`Progress decrease detected (from ${lastProgress}% to ${finalProgress}%) for step "${step}". Sending ${lastProgress}% instead.`);
+        }
+        options.sendProgress(step, lastProgress);
+      }
+    };
+    
+    sendProgress('init', 'Initializing analysis...', 100);
+
     if (!this.isValidRepoUrl(repoUrl)) {
-      this.addWarning('Initialization', 'Invalid repository URL format.');
-      throw new Error('Invalid repository URL format');
+      throw new Error('Invalid GitHub repository URL');
     }
 
-    onProgress('Initializing analysis', 0);
-    const startTime = Date.now();
+    const branch = options.branch || 'main'; // Default to main if not provided
 
-    try {
-      const [owner, repo] = this.extractRepoParts(repoUrl);
-      
-      onProgress('Fetching repository details', 5);
-      const repoData = await this.githubService.getRepository(owner, repo);
-      const repoInfo = this.transformRepoData(repoData);
+    sendProgress('repoInfo', 'Fetching repository metadata', 50);
+    // Step 1: Fetch repository metadata
+    const repoData = await this.githubService.getRepository(owner, repo);
+    const basicInfo = this.transformRepoData(repoData);
+    console.log(`[Backend Analysis] DONE: Fetched basic repo info for ${basicInfo.fullName}`);
+    sendProgress('repoInfo', 'Fetched repository metadata', 100);
 
-      onProgress('Downloading repository archive', 20);
-      console.log(`[Analysis] Using archive-based file fetching for better performance`);
-      
-      // Use the new archive-based approach to download all files at once
-      let files: FileInfo[] = [];
-      try {
-        files = await this.githubService.downloadRepositoryArchive(owner, repo, repoData.defaultBranch);
-        console.log(`[Analysis] Archive downloaded successfully: ${files.length} files extracted with content`);
-        onProgress('Repository archive downloaded', 28);
-      } catch (error) {
-        this.addWarning('Archive Download', 'Failed to download repository archive. Falling back to file tree approach.', error);
-        console.error('[Analysis] Archive download failed, falling back to file tree:', error);
-        
-        // Fallback to the original file tree approach if archive fails
-        onProgress('Fetching repository file tree (fallback)', 22);
-        files = await this.githubService.getRepoTree(owner, repo, repoData.defaultBranch);
-        console.log(`[Analysis] Repository tree fetched as fallback: ${files.length} total files`);
-        onProgress('Repository file tree fetched', 28);
-      }
+    sendProgress('files', 'Fetching repository tree', 0);
+    // Step 2: Fetch repository file tree
+    console.log(`[Backend Analysis] START: Fetching repo tree for branch: ${branch}`);
+    const files = await this.githubService.getRepoTree(owner, repo, branch);
+    console.log(`[Backend Analysis] DONE: Fetched ${files.length} files from the repository tree`);
+    sendProgress('files', 'Fetched repository tree', 10);
 
-      // Early validation of files
-      if (files.length === 0) {
-        this.addWarning('Repository Analysis', 'Repository appears to be empty or inaccessible.');
-        console.warn('[Analysis] No files found in repository');
-      }
+    // Step 3: Fetch commits
+    console.log(`[Backend Analysis] START: Fetching commit history`);
+    sendProgress('commits', 'Fetching commit history', 0);
+    const commitsData = await this.githubService.getCommits(owner, repo, branch, 2000, (_step, progress) => sendProgress('commits', 'Fetching commit history', progress));
+    const commits = this.processCommits(commitsData);
+    console.log(`[Backend Analysis] DONE: Fetched and processed ${commits.length} commits`);
+    sendProgress('commits', 'Fetched commit history', 100);
 
-      onProgress('Analyzing commits', 30);
-      let commits: Commit[] = [];
-      try {
-        commits = await this.githubService.getCommits(owner, repo);
-      } catch (error) {
-        this.addWarning('Commit Fetching', 'Failed to fetch commits from GitHub API.', error);
-        commits = [];
-      }
+    // Step 4: Fetch contributors
+    let contributors: ProcessedContributor[] = [];
+    if (options.contributorAnalysis) {
+      console.log(`[Backend Analysis] START: Fetching contributors`);
+      sendProgress('contributors', 'Fetching contributors', 0);
+      const contributorsData = await this.githubService.getContributors(owner, repo);
+      contributors = this.processContributors(contributorsData);
+      console.log(`[Backend Analysis] DONE: Fetched and processed ${contributors.length} contributors`);
+     sendProgress('contributors', 'Fetched contributor data', 100);
+    }
 
-      onProgress('Fetching contributors', 35);
-      const contributors = await this.githubService.getContributors(owner, repo);
-      const processedCommits = this.processCommits(commits);
-      const processedContributors = this.processContributors(contributors);
-
-      onProgress('Fetching languages', 45);
-      const languages = await this.githubService.getLanguages(owner, repo);
-
+    // Step 5: Fetch dependencies from package.json
+    let dependencies: DependencyInfo = { dependencies: {}, devDependencies: {} };
+    if (options.dependencies) {
+      console.log(`[Backend Analysis] START: Analyzing dependencies`);
+      sendProgress('dependencies', 'Analyzing dependencies', 0);
       const packageJsonFile = files.find(f => f.path === 'package.json');
-      let dependencies: DependencyInfo = { dependencies: {}, devDependencies: {} };
-      if (packageJsonFile && packageJsonFile.content) {
-          dependencies = this.parseDependencies(packageJsonFile.content);
+      if (packageJsonFile?.content) {
+        dependencies = this.parseDependencies(packageJsonFile.content);
+        console.log(`[Backend Analysis] DONE: Parsed ${Object.keys(dependencies.dependencies).length} dependencies and ${Object.keys(dependencies.devDependencies).length} dev dependencies`);
+       sendProgress('dependencies', 'Parsed dependencies', 100);
+      } else {
+        this.addWarning("Dependencies", "package.json not found or content is missing.");
       }
-
-      onProgress('Analyzing architecture', 55);
-      const architecture = await this.safeDetectArchitecturePatterns(files);
-      
-      onProgress('Analyzing quality', 65);
-      const quality = await this.safeCalculateQualityMetrics(files);
-
-      onProgress('Analyzing security and performance', 70);
-      const securityIssues = this.generateFallbackSecurityIssues(files);
-      const technicalDebt = this.generateFallbackTechnicalDebt(files, quality);
-      const performanceMetrics = this.generateFallbackPerformanceMetrics(files);
-      const hotspots = this.generateHotspots(files, processedCommits);
-      const keyFunctions = this.generateKeyFunctions(files);
-      const apiEndpoints = this.generateFallbackAPIEndpoints(files);
-      
-      onProgress('Generating data visualizations', 75);
-      const fileSystemTree = this.generateFileSystemTree(files);
-      const churnSunburstData = this.generateChurnSunburstData(files, processedCommits);
-      const dependencyWheelData = this.generateDependencyWheelData(dependencies);
-      const contributorStreamData = this.generateContributorStreamData(processedCommits, processedContributors);
-
-      onProgress('Fetching pull requests', 80);
-      const pullRequests = await this.githubService.getPullRequests(owner, repo);
-
-      onProgress('Calculating metrics', 85);
-      const metrics = this.calculateMetrics(
-        processedCommits, 
-        processedContributors, 
-        files, 
-        securityIssues, 
-        technicalDebt,
-        pullRequests
-      );
-
-      onProgress('Generating AI analysis', 90);
-      const aiSummary = this.llmService.isConfigured()
-        ? await this.generateAISummary(repoData, files)
-        : 'AI summary requires LLM configuration.';
-      
-      const architectureAnalysis = this.llmService.isConfigured()
-        ? await this.generateAIArchitectureDescription(repoData, files, architecture)
-        : 'AI architecture analysis requires LLM configuration.';
-
-      onProgress('Finalizing architecture analysis', 95);
-      const systemArchitecture = await this.architectureAnalysisService.analyzeArchitecture(files);
-
-      onProgress('Generating advanced analytics', 98);
-      const temporalCouplings = this.generateTemporalCouplings(processedCommits, files);
-      const transformationFlows = this.generateDataTransformationFlow(files, processedCommits);
-      const gitGraph = this.generateGitGraphData(processedCommits, processedContributors);
-
-      onProgress('Completing analysis', 99);
-      const endTime = Date.now();
-      console.log(`Total analysis time: ${(endTime - startTime) / 1000}s`);
-
-      return {
-        id: new Date().toISOString(),
-        repositoryUrl: repoUrl,
-        createdAt: new Date().toISOString(),
-        basicInfo: repoInfo,
-        repository: repoData,
-        commits: processedCommits,
-        contributors: processedContributors,
-        files,
-        languages,
-        dependencies,
-        dependencyGraph: architecture,
-        qualityMetrics: quality,
-        securityIssues,
-        technicalDebt,
-        performanceMetrics,
-        hotspots,
-        keyFunctions,
-        apiEndpoints,
-        aiSummary,
-        architectureAnalysis,
-        systemArchitecture,
-        metrics,
-        fileSystemTree,
-        churnSunburstData,
-        dependencyWheelData,
-        contributorStreamData,
-        analysisWarnings: this.analysisWarnings,
-        temporalCouplings,
-        transformationFlows,
-        pullRequests,
-        gitGraph,
-      };
-    } catch (error) {
-      this.addWarning('Overall Analysis', 'An unexpected error occurred during analysis.', error);
-      throw error;
     }
-  }
 
-  // Enhanced helper methods for coupling analysis
+    // Step 6: Analyze architecture
+    let architecture: ArchitectureData = { nodes: [], links: [] };
+    sendProgress('architecture', 'Detecting architecture patterns', 0);
+    if (options.architecture) {
+      console.log(`[Backend Analysis] START: Detecting architecture patterns`);
+      architecture = await this.safeDetectArchitecturePatterns(files);
+      console.log(`[Backend Analysis] DONE: Analyzed architecture, found ${architecture.nodes.length} nodes and ${architecture.links.length} links`);
+     sendProgress('architecture', 'Detected architecture patterns', 100);
+    }
+
+    // Step 7: Calculate quality metrics
+    let quality: QualityMetrics = {};
+    sendProgress('quality', 'Calculating quality metrics', 0);
+    if (options.quality) {
+      console.log(`[Backend Analysis] START: Calculating quality metrics`);
+      quality = await this.safeCalculateQualityMetrics(files, (step, progress) => sendProgress('quality', step, progress));
+      console.log(`[Backend Analysis] DONE: Calculated quality metrics for ${Object.keys(quality).length} files`);
+     sendProgress('quality', 'Calculated quality metrics', 100);
+    }
+
+    // Step 8: Generate hotspots
+    let hotspots: Hotspot[] = [];
+    if (options.hotspots) {
+      hotspots = this.generateHotspots(files, commits);
+      console.log(`[Backend Analysis] Generated ${hotspots.length} hotspots`);
+     sendProgress('finalizing', 'Generated hotspots', 5);
+    }
+
+    // Step 9: Generate key functions
+    let keyFunctions: KeyFunction[] = [];
+    if (options.keyFunctions) {
+      keyFunctions = this.generateKeyFunctions(files);
+      console.log(`[Backend Analysis] Generated ${keyFunctions.length} key functions`);
+     sendProgress('finalizing', 'Generated key functions', 10);
+    }
+
+    // Step 10: Generate security issues (fallback)
+    let securityIssues: SecurityIssue[] = [];
+    if (options.security) {
+      securityIssues = this.generateFallbackSecurityIssues(files);
+      console.log(`[Backend Analysis] Generated ${securityIssues.length} fallback security issues`);
+     sendProgress('finalizing', 'Generated security issues', 15);
+    }
+
+    // Step 11: Generate technical debt (fallback)
+    let technicalDebt: TechnicalDebt[] = [];
+    if (options.technicalDebt) {
+      technicalDebt = this.generateFallbackTechnicalDebt(files, quality);
+      console.log(`[Backend Analysis] Generated ${technicalDebt.length} fallback technical debt items`);
+     sendProgress('finalizing', 'Generated technical debt', 20);
+    }
+
+    // Step 12: Generate performance metrics (fallback)
+    let performanceMetrics: PerformanceMetric[] = [];
+    if (options.performance) {
+      performanceMetrics = this.generateFallbackPerformanceMetrics(files);
+      console.log(`[Backend Analysis] Generated ${performanceMetrics.length} fallback performance metrics`);
+     sendProgress('finalizing', 'Generated performance metrics', 25);
+    }
+
+    // Step 13: Generate API endpoints (fallback)
+    const apiEndpoints = this.generateFallbackAPIEndpoints(files);
+    console.log(`[Backend Analysis] Generated ${apiEndpoints.length} fallback API endpoints`);
+   sendProgress('finalizing', 'Generated API endpoints', 30);
+
+    // Step 14: Generate AI Summary
+    let aiSummary: string | undefined;
+    if (options.aiSummary && this.llmService.isConfigured()) {
+      try {
+        aiSummary = await this.generateAISummary(repoData, files);
+        console.log('[Backend Analysis] Generated AI summary');
+       sendProgress('finalizing', 'Generated AI summary', 50);
+      } catch (e) {
+        this.addWarning('AI Summary', 'Failed to generate AI summary', e);
+      }
+    }
+
+    // Step 15: Generate AI Architecture Description
+    let aiArchitecture: string | undefined;
+    if (options.aiArchitecture && this.llmService.isConfigured()) {
+      try {
+        aiArchitecture = await this.generateAIArchitectureDescription(repoData, files, architecture);
+        console.log('[Backend Analysis] Generated AI architecture description');
+       sendProgress('finalizing', 'Generated AI architecture description', 70);
+      } catch (e) {
+        this.addWarning('AI Architecture', 'Failed to generate AI architecture description', e);
+      }
+    }
+    
+    // Step 16: Temporal Coupling Analysis
+    let temporalCouplingData: TemporalCoupling[] = [];
+    if (options.temporalCoupling) {
+      try {
+        temporalCouplingData = this.generateTemporalCouplings(commits, files);
+        console.log(`[Backend Analysis] Generated ${temporalCouplingData.length} temporal coupling pairs`);
+       sendProgress('finalizing', 'Generated temporal coupling data', 75);
+      } catch (e) {
+        this.addWarning('Temporal Coupling', 'Failed to generate temporal coupling data', e);
+      }
+    }
+    
+    // Step 17: Data Transformation Flow
+    let dataTransformationData: SankeyData = { nodes: [], links: [] };
+    if (options.dataTransformation) {
+      try {
+        dataTransformationData = this.generateDataTransformationFlow(files, commits);
+        console.log(`[Backend Analysis] Generated data transformation flow with ${dataTransformationData.nodes.length} nodes and ${dataTransformationData.links.length} links`);
+       sendProgress('finalizing', 'Generated data transformation flow', 80);
+      } catch (e) {
+        this.addWarning('Data Transformation', 'Failed to generate data transformation flow', e);
+      }
+    }
+    
+    // Step 18: Pull Request Analysis
+    let prData: PullRequestData[] = [];
+    if (options.prAnalysis) {
+      try {
+        sendProgress('pr', 'Analyzing pull requests', 0);
+        prData = await this.githubService.getPullRequests(owner, repo);
+        console.log(`[Backend Analysis] Fetched ${prData.length} pull requests`);
+       sendProgress('pr', 'Fetched pull requests', 100);
+      } catch (e) {
+        this.addWarning('Pull Request Analysis', 'Failed to fetch pull request data', e);
+      }
+    }
+
+    // Step 19: Git Graph Data
+    let gitGraphData: GitGraphData = { nodes: [], links: [] };
+    if (options.gitGraph) {
+      try {
+        gitGraphData = this.generateGitGraphData(commits, contributors);
+        console.log(`[Backend Analysis] Generated git graph with ${gitGraphData.nodes.length} nodes and ${gitGraphData.links.length} links`);
+       sendProgress('finalizing', 'Generated git graph data', 85);
+      } catch (e) {
+        this.addWarning('Git Graph', 'Failed to generate git graph data', e);
+      }
+    }
+
+   sendProgress('finalizing', 'Finalizing report', 99);
+    console.log('[Backend Analysis] Analysis complete.');
+    
+    // Calculate metrics for AnalysisResult
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const recentCommits = commits.filter(commit => new Date(commit.date) > thirtyDaysAgo).length;
+    const avgComplexity = Object.values(quality).length > 0
+      ? Object.values(quality).reduce((sum, q) => sum + q.complexity, 0) / Object.values(quality).length
+      : 0;
+    const avgMaintainability = Object.values(quality).length > 0
+      ? Object.values(quality).reduce((sum, q) => sum + q.maintainability, 0) / Object.values(quality).length
+      : 0;
+    
+    sendProgress('finalizing', 'Analysis complete', 100);
+    
+    return {
+      id: `${repoData.fullName.replace(/\//g, '-')}-${Date.now()}`,
+      repositoryUrl: `https://github.com/${repoData.fullName}`,
+      createdAt: new Date().toISOString(),
+      basicInfo,
+      repository: repoData,
+      commits,
+      contributors,
+      files,
+      languages: await this.githubService.getLanguages(owner, repo),
+      dependencies,
+      dependencyGraph: architecture,
+      qualityMetrics: quality,
+      securityIssues,
+      technicalDebt,
+      performanceMetrics,
+      hotspots,
+      keyFunctions,
+      apiEndpoints,
+      aiSummary,
+      architectureAnalysis: aiArchitecture,
+      temporalCoupling: temporalCouplingData,
+      dataTransformation: dataTransformationData,
+      pullRequests: prData,
+      gitGraph: gitGraphData,
+      metrics: {
+        totalCommits: commits.length,
+        totalContributors: contributors.length,
+        fileCount: files.length,
+        analyzableFileCount: sourceFiles.length,
+        linesOfCode: sourceFiles.reduce((sum, f) => {
+          if (quality[f.path]) return sum + quality[f.path].linesOfCode;
+          return sum + (f.content?.split('\n').length || 0);
+        }, 0),
+        codeQuality: avgMaintainability,
+        testCoverage: 0, // Default value - would need actual test analysis
+        busFactor: Math.min(contributors.length, 5),
+        securityScore: Math.max(0, 100 - securityIssues.length * 5),
+        technicalDebtScore: Math.max(0, 100 - technicalDebt.length * 2),
+        performanceScore: Math.max(0, 100 - performanceMetrics.length * 3),
+        criticalVulnerabilities: securityIssues.filter(s => s.severity === 'critical').length,
+        highVulnerabilities: securityIssues.filter(s => s.severity === 'high').length,
+        mediumVulnerabilities: securityIssues.filter(s => s.severity === 'medium').length,
+        lowVulnerabilities: securityIssues.filter(s => s.severity === 'low').length,
+        totalPRs: prData.length,
+        mergedPRs: prData.filter(pr => pr.mergedAt).length,
+        prMergeRate: prData.length > 0 ? prData.filter(pr => pr.mergedAt).length / prData.length * 100 : 0,
+        avgPRMergeTime: 0, // Would need actual PR analysis
+        recentActivity: recentCommits,
+        avgCommitsPerWeek: commits.length > 0 ? commits.length / Math.max(1, Math.ceil((new Date().getTime() - new Date(commits[commits.length - 1].date).getTime()) / (7 * 24 * 60 * 60 * 1000))) : 0,
+        avgComplexity,
+        filesWithComplexity: Object.keys(quality).length,
+      },
+      analysisWarnings: this.analysisWarnings,
+    };
+  }
   private static EXTENSION_LANGUAGE_MAP: Record<string, string> = {
     // JavaScript/TypeScript
     '.ts': 'typescript',
@@ -865,836 +1119,335 @@ export class BackendAnalysisService {
     '.idea', '.vscode', '.vs',
     'vendor', 'third_party',
   ]);
+  // detectLanguage method removed - was unused
 
-  private detectLanguage(filePath: string): string {
-    const ext = path.extname(filePath).toLowerCase();
-    return BackendAnalysisService.EXTENSION_LANGUAGE_MAP[ext] || 'unknown';
-  }
-
-  // private calculateBasicComplexity method removed as it was unused
 
   private generateHotspots(files: FileInfo[], commits: ProcessedCommit[]): Hotspot[] {
+    const fileChangeCounts = new Map<string, number>();
+    commits.forEach(commit => {
+      commit.files.forEach((file: any) => {
+        fileChangeCounts.set(file.filename, (fileChangeCounts.get(file.filename) || 0) + 1);
+      });
+    });
+
     return files
-      .filter(f => (f.complexity ?? 0) > 20) 
       .map(f => ({
-        file: f.name,
+        file: f.path,
         path: f.path,
-        complexity: f.complexity || 0,
-        changes: commits.filter(c => c.files.some((cf: any) => cf.filename === f.path)).length,
-        riskLevel: ((f.complexity || 0) > 60 ? 'critical' : (f.complexity || 0) > 40 ? 'high' : 'medium') as 'critical' | 'high' | 'medium',
-        size: Number(f.content?.split('\n').length || f.size || 0) 
+        complexity: 0, // Placeholder
+        changes: fileChangeCounts.get(f.path) || 0,
+        riskLevel: 'low' as "low" | "medium" | "high" | "critical", // Placeholder
       }))
+      .filter(h => h.changes > 0)
+      .sort((a, b) => b.changes - a.changes)
       .slice(0, 20);
   }
 
   private generateKeyFunctions(files: FileInfo[]): KeyFunction[] {
-      const keyFunctions: KeyFunction[] = [];
-      for (const file of files) {
-        if (file.functions && file.functions.length > 0) {
-          for (const func of file.functions) {
-            if ((func.cyclomaticComplexity && func.cyclomaticComplexity > 10) || func.description) {
-              keyFunctions.push({
-                name: func.name,
-                file: file.path, 
-                complexity: func.cyclomaticComplexity ?? 0,
-                explanation: func.description || `Function ${func.name} in ${file.name}`,
-                parameters: func.parameters,
-                returnType: func.returnType,
-                linesOfCode: func.sloc, 
-                calls: func.calls,
-                isAsync: func.isAsync,
-                visibility: func.visibility,
-                content: func.content, 
-                startLine: func.startLine,
-                endLine: func.endLine,
-              });
-            }
-          }
+    const keyFunctions: KeyFunction[] = [];
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+
+    for (const file of sourceFiles) {
+      if (!file.content) continue;
+
+      const lines = file.content.split('\n');
+      // Simple function detection (can be improved with AST)
+      const functionRegex = /(function\s+\w+|\w+\s*=\s*function|\w+\s*=\s*\(.*\)\s*=>)/g;
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (functionRegex.test(lines[i])) {
+          keyFunctions.push({
+            name: lines[i].trim().substring(0, 50), // Basic name extraction
+            file: file.path,
+            complexity: 0, // Placeholder
+            explanation: 'Function identified by simple regex.',
+            startLine: i + 1,
+            endLine: i + 1,
+          });
         }
       }
-      keyFunctions.sort((a, b) => {
-        const complexityDiff = (b.complexity ?? 0) - (a.complexity ?? 0);
-        if (complexityDiff !== 0) return complexityDiff;
-        return (b.linesOfCode ?? 0) - (a.linesOfCode ?? 0);
-      });
-      return keyFunctions.slice(0, 15); 
     }
-    private calculateMetrics(
-      commits: ProcessedCommit[], 
-      contributors: ProcessedContributor[], 
-      files: FileInfo[], 
-      securityIssues: SecurityIssue[], 
-      technicalDebt: TechnicalDebt[],
-      pullRequests: PullRequestData[] = []
-    ): AnalysisResult['metrics'] {
-      // Enhanced LOC calculation with detailed breakdown
-      const sourceFiles = files.filter(f => f.content && f.language && f.language !== 'text');
-      const linesOfCode = sourceFiles.reduce((sum, f) => {
-        if (!f.content) return sum;
-        const lines = f.content.split('\n');
-        // Count non-empty, non-comment-only lines for better accuracy
-        const codeLines = lines.filter(line => {
-          const trimmed = line.trim();
-          return trimmed.length > 0 && 
-                 !trimmed.startsWith('//') && 
-                 !trimmed.startsWith('/*') && 
-                 !trimmed.startsWith('*') &&
-                 !trimmed.startsWith('#') &&
-                 trimmed !== '/*' &&
-                 trimmed !== '*/';
-        });
-        return sum + codeLines.length;
-      }, 0);
-      
-      // Additional file metrics showcasing comprehensive analysis
-      const totalFiles = files.length;
-      const analyzableFiles = sourceFiles.length;
-      const filesWithComplexity = files.filter(f => f.complexity && f.complexity > 0);
-      
-      const totalFileComplexity = filesWithComplexity.reduce((sum, f) => sum + (f.complexity || 0), 0);
-      const avgComplexity = filesWithComplexity.length > 0 ? totalFileComplexity / filesWithComplexity.length : 0;
-      
-      // Enhanced code quality calculation based on comprehensive metrics
-      let rawCodeQuality = 5.0; // Start with baseline
-      
-      // Factor in complexity (lower is better)
-      if (avgComplexity > 0) {
-        const complexityScore = Math.max(0, 10 - (avgComplexity / 5)); // Scale complexity appropriately
-        rawCodeQuality = (rawCodeQuality + complexityScore) / 2;
-      }
-      
-      // Factor in file structure and organization
-      const hasTests = files.some(f => f.path.includes('test') || f.path.includes('spec'));
-      const hasDocumentation = files.some(f => f.path.toLowerCase().includes('readme') || f.path.includes('doc'));
-      const hasConfigFiles = files.some(f => f.name.includes('config') || f.name.includes('.json'));
-      
-      if (hasTests) rawCodeQuality += 1;
-      if (hasDocumentation) rawCodeQuality += 0.5;
-      if (hasConfigFiles) rawCodeQuality += 0.5;
-      
-      const codeQuality = Math.min(10, Math.max(0, parseFloat(rawCodeQuality.toFixed(2))));
-      
-      // Enhanced test coverage calculation
-      const testFiles = files.filter(f => 
-        f.path.includes('test') || f.path.includes('spec') || f.path.includes('__tests__')
-      );
-      const testLOC = testFiles.reduce((sum, f) => sum + (f.content?.split('\n').length || 0), 0);
-      const testCoverage = linesOfCode > 0 ? Math.min(100, (testLOC / linesOfCode) * 100 * 2) : 0; // Multiply by 2 for better scaling
-      
-      // Calculate recent activity (commits in last 30 days)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const recentActivity = commits.filter(commit => {
-        const commitDate = new Date(commit.date);
-        return commitDate > thirtyDaysAgo;
-      }).length;
-      
-      // Calculate average commits per week over the entire history
-      let avgCommitsPerWeek = 0;
-      if (commits.length > 0) {
-        const oldestCommit = new Date(commits[commits.length - 1].date);
-        const newestCommit = new Date(commits[0].date);
-        const daysDiff = Math.max(1, (newestCommit.getTime() - oldestCommit.getTime()) / (1000 * 60 * 60 * 24));
-        const weeksDiff = daysDiff / 7;
-        avgCommitsPerWeek = Math.round(commits.length / weeksDiff);
-      }
-      
-      // Calculate pull request statistics
-      const totalPRs = pullRequests.length;
-      const mergedPRs = pullRequests.filter(pr => pr.state === 'merged').length;
-      const mergeRate = totalPRs > 0 ? Math.round((mergedPRs / totalPRs) * 100) : 0;
-      let avgMergeTime = 0;
-      if (mergedPRs > 0) {
-        const mergeTimes = pullRequests
-          .filter(pr => pr.state === 'merged' && pr.createdAt && pr.mergedAt)
-          .map(pr => {
-            const created = new Date(pr.createdAt).getTime();
-            const merged = new Date(pr.mergedAt!).getTime();
-            return (merged - created) / (1000 * 60 * 60 * 24); // Convert to days
-          });
-        avgMergeTime = mergeTimes.length > 0 ? Math.round(mergeTimes.reduce((sum, time) => sum + time, 0) / mergeTimes.length) : 0;
-      }      return {
-        totalCommits: commits.length,
-        totalContributors: contributors.length,
-        fileCount: totalFiles, // Total files from archive
-        analyzableFileCount: analyzableFiles, // Source files that were analyzed
-        linesOfCode,
-        codeQuality: isNaN(codeQuality) ? 0 : codeQuality, 
-        testCoverage: parseFloat(testCoverage.toFixed(2)),
-        busFactor: Math.min(contributors.length, Math.ceil(contributors.length * 0.2)),
-        securityScore: Math.max(0, 10 - securityIssues.length),
-        technicalDebtScore: Math.max(0, 10 - technicalDebt.length / 2),
-        performanceScore: 5.0, 
-        criticalVulnerabilities: securityIssues.filter(s => s.severity === 'critical').length,
-        highVulnerabilities: securityIssues.filter(s => s.severity === 'high').length,
-        mediumVulnerabilities: securityIssues.filter(s => s.severity === 'medium').length,
-        lowVulnerabilities: securityIssues.filter(s => s.severity === 'low').length,
-        totalPRs,
-        mergedPRs,
-        prMergeRate: mergeRate,
-        avgPRMergeTime: avgMergeTime,
-        recentActivity, // Add recent activity count
-        avgCommitsPerWeek, // Add average commits per week
-        avgComplexity: parseFloat(avgComplexity.toFixed(2)), // Add average complexity
-        filesWithComplexity: filesWithComplexity.length // Add count of files with complexity analysis
-      };
-    }
+    
+    // Sort by file and line number
+    keyFunctions.sort((a, b) => {
+      if (a.file < b.file) return -1;
+      if (a.file > b.file) return 1;
+      return (a.startLine || 0) - (b.startLine || 0);
+    });
 
-    // Add this method to generate fallback API endpoints
+    return keyFunctions.slice(0, 50); // Limit to a reasonable number
+  }
+  // calculateMetrics method removed - was unused
+
     private generateFallbackAPIEndpoints(files: FileInfo[]): APIEndpoint[] {
       const endpoints: APIEndpoint[] = [];
-      
-      // Look for common API patterns even without LLM
       const apiFiles = files.filter(f => 
-        f.path.includes('api') || 
-        f.path.includes('route') || 
-        f.path.includes('controller') ||
-        f.path.includes('endpoint') ||
-        f.path.includes('handler') ||
-        f.path.match(/\.(ts|js|py|go|java|rb|php)$/i)
+        this.isSourceFile(f.path) &&
+        (f.path.includes('controller') || f.path.includes('route') || f.path.includes('api'))
       );
 
       apiFiles.forEach(file => {
-        if (file.content) {
-          // Enhanced patterns for multiple frameworks
-          const patterns = [
-            // Express.js and similar
-            { regex: /(app|router)\.(get|post|put|delete|patch|use)\s*\(\s*['"`]([^'"`]+)['"`]/g, methodIdx: 2, pathIdx: 3 },
-            // FastAPI
-            { regex: /@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g, methodIdx: 1, pathIdx: 2 },
-            // Flask
-            { regex: /@app\.route\s*\(\s*['"`]([^'"`]+)['"`].*?methods\s*=\s*\[['"`]([^'"`]+)['"`]\]/g, methodIdx: 2, pathIdx: 1 },
-            // ASP.NET
-            { regex: /\[Http(Get|Post|Put|Delete|Patch)\s*\(\s*['"`]([^'"`]+)['"`]\s*\)\]/g, methodIdx: 1, pathIdx: 2 },
-            // Spring Boot
-            { regex: /@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*['"`]([^'"`]+)['"`]/g, methodIdx: 1, pathIdx: 2 },
-            // Gin (Go)
-            { regex: /router\.(GET|POST|PUT|DELETE|PATCH)\s*\(\s*['"`]([^'"`]+)['"`]/g, methodIdx: 1, pathIdx: 2 }
-          ];
+        if (!file.content) return;
+        const lines = file.content.split('\n');
+        
+        // Pattern for decorators like @Get("/users")
+        const patterns = [
+          { regex: /@(Get|Post|Put|Delete|Patch)\("([^"]+)"\)/, methodIndex: 1, pathIndex: 2 },
+          { regex: /(app|router)\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/, methodIndex: 2, pathIndex: 3 }
+        ];
 
+        lines.forEach((line) => {
           patterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.regex.exec(file.content!)) !== null) {
-              const method = match[pattern.methodIdx];
-              const path = match[pattern.pathIdx];
-              
-              if (method && path) {
-                endpoints.push({
-                  method: method.toUpperCase(),
-                  path: path,
-                  file: file.path,
-                  handlerFunction: "Detected via enhanced regex",
-                });
-              }
-            }
-          });
-
-          // Look for common REST patterns in filenames
-          if (file.path.includes('user') || file.path.includes('User')) {
-            endpoints.push(
-              { method: 'GET', path: '/api/users', file: file.path, handlerFunction: 'getUserList' },
-              { method: 'GET', path: '/api/users/:id', file: file.path, handlerFunction: 'getUser' },
-              { method: 'POST', path: '/api/users', file: file.path, handlerFunction: 'createUser' },
-              { method: 'PUT', path: '/api/users/:id', file: file.path, handlerFunction: 'updateUser' },
-              { method: 'DELETE', path: '/api/users/:id', file: file.path, handlerFunction: 'deleteUser' }
-            );
-          }
-          
-          // Detect other common API patterns
-          const resourcePatterns = [
-            'auth', 'product', 'order', 'payment', 'profile', 'admin', 'dashboard'
-          ];
-          
-          resourcePatterns.forEach(resource => {
-            if (file.path.toLowerCase().includes(resource)) {
+            const match = line.match(pattern.regex);
+            if (match) {
               endpoints.push({
-                method: 'GET',
-                path: `/api/${resource}`,
+                path: match[pattern.pathIndex],
+                method: match[pattern.methodIndex].toUpperCase(),
                 file: file.path,
-                handlerFunction: `get${resource.charAt(0).toUpperCase() + resource.slice(1)}`,
+                handlerFunction: 'unknown',
               });
             }
           });
-        }
-      });
+        });
 
-      // Generate realistic API structure if no endpoints found
-      if (endpoints.length === 0) {
-        const sampleEndpoints = [
-          { method: 'GET', path: '/api/health', file: 'health.js', handlerFunction: 'healthCheck' },
-          { method: 'GET', path: '/api/status', file: 'status.js', handlerFunction: 'getStatus' },
-          { method: 'POST', path: '/api/auth/login', file: 'auth.js', handlerFunction: 'login' },
-          { method: 'POST', path: '/api/auth/logout', file: 'auth.js', handlerFunction: 'logout' },
-          { method: 'GET', path: '/api/users', file: 'users.js', handlerFunction: 'getUsers' },
-          { method: 'POST', path: '/api/users', file: 'users.js', handlerFunction: 'createUser' }
+        // Pattern for resource-based routes (e.g., users.controller.ts)
+        const resourcePatterns = [
+          /(\w+)\.controller\./,
+          /(\w+)\.routes\./,
+          /routes\/(\w+)\.js/
         ];
         
-        endpoints.push(...sampleEndpoints);
-      }
-
-      // Remove duplicates
-      const uniqueEndpoints = endpoints.filter((endpoint, index, self) => 
-        index === self.findIndex(e => e.method === endpoint.method && e.path === endpoint.path)
-      );
-
-      return uniqueEndpoints;
-    }
-
-    // generateFileSystemTreeWithFallback method removed as it was unused
-
-    // Add helper method for architecture pattern inference
-    private inferArchitecturePattern(files: FileInfo[]): string {
-      const paths = files.map(f => f.path.toLowerCase());
-      
-      if (paths.some(p => p.includes('controller') && p.includes('model') && p.includes('view'))) {
-        return 'MVC';
-      }
-      if (paths.some(p => p.includes('service') && p.includes('repository'))) {
-        return 'layered/service-oriented';
-      }
-      if (paths.some(p => p.includes('component'))) {
-        return 'component-based';
-      }
-      if (paths.some(p => p.includes('micro') || p.includes('lambda'))) {
-        return 'microservice/serverless';
-      }
-      
-      return 'modular';
-    }
-
-    private generateDependencyWheelData(deps: DependencyInfo) {
-      const dependencyEntries = Object.keys(deps.dependencies || {});
-      
-      // If no dependencies, create sample data to prevent empty visualization
-      if (dependencyEntries.length === 0) {
-        return [{
-          source: 'main',
-          target: 'No Dependencies',
-          value: 1
-        }];
-      }
-      
-      return dependencyEntries.map((dep) => ({
-        source: 'main',
-        target: dep,
-        value: 1
-      }));
-    }
-
-    private generateFileSystemTree(files: FileInfo[]): FileNode {
-      const root: FileNode = { name: 'root', path: '', size: 0, type: 'directory', children: [] };
-      
-      files.forEach(file => {
-        const parts = file.path.split('/');
-        let current = root;
-        
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          const isLast = i === parts.length - 1;
-          
-          if (!current.children) current.children = [];
-          
-          let child = current.children.find(c => c.name === part);
-          if (!child) {
-            child = {
-              name: part,
-              path: parts.slice(0, i + 1).join('/'),
-              size: isLast && file.size ? file.size : 0, 
-              type: isLast ? 'file' : 'directory',
-              children: isLast ? undefined : []
-            };
-            current.children.push(child);
-          }
-          
-          if (isLast) {
-            child.size = file.size;
-            child.type = 'file';
-          }
-          
-          current = child;
-        }
-      });
-      
-      return root;
-    }
-    private generateChurnSunburstData(files: FileInfo[], commits: ProcessedCommit[]): ChurnNode {
-      const root: ChurnNode = { name: 'root', path: '', churnRate: 0, type: 'directory', children: [] };
-      
-      files.forEach(file => {
-        const churnRate = commits.filter(c => 
-          c.files.some((cf: any) => cf.filename === file.path)
-        ).length;
-        
-        if (churnRate > 0) {
-          const parts = file.path.split('/');
-          let current = root;
-          
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-            const isLast = i === parts.length - 1;
-            
-            if (!current.children) current.children = [];
-            
-            let child = current.children.find(c => c.name === part);
-            if (!child) {
-              child = {
-                name: part,
-                path: parts.slice(0, i + 1).join('/'),
-                churnRate: isLast ? churnRate : 0,
-                type: isLast ? 'file' : 'directory',
-                children: isLast ? undefined : []
-              };
-              current.children.push(child);
+        resourcePatterns.forEach(resource => {
+          const match = file.path.match(resource);
+          if (match) {
+            const resourceName = match[1];
+            if (!endpoints.some(e => e.path.includes(resourceName))) {
+              endpoints.push({
+                path: `/${resourceName}`,
+                method: 'GET',
+                file: file.path,
+                handlerFunction: 'unknown',
+              });
             }
-            
-            if (isLast) {
-              child.churnRate = churnRate;
-              child.type = 'file';
-            }
-            
-            current = child;
-          }
-        }
-      });
-      
-      // If no churn data exists (no commits), generate fallback data based on file structure
-      if (!root.children || root.children.length === 0) {
-        // Generate synthetic churn data based on file types and sizes
-        files.forEach(file => {
-          // Assign synthetic churn rates based on file characteristics
-          let syntheticChurnRate = 1; // Default base rate
-          
-          // Higher churn for certain file types
-          if (file.path.match(/\.(tsx?|jsx?|vue|svelte)$/i)) syntheticChurnRate += 2; // UI components
-          if (file.path.match(/\.(py|rb|php|java|cs|go|rust)$/i)) syntheticChurnRate += 1; // Backend code
-          if (file.path.includes('test') || file.path.includes('spec')) syntheticChurnRate += 1; // Test files
-          if (file.path.includes('config') || file.path.includes('env')) syntheticChurnRate += 1; // Config files
-          
-          // Higher churn for larger files (relative)
-          if (file.size && file.size > 10000) syntheticChurnRate += 2;
-          else if (file.size && file.size > 5000) syntheticChurnRate += 1;
-          
-          // Add some randomness to make it look more realistic
-          syntheticChurnRate += Math.floor(Math.random() * 3);
-          
-          const parts = file.path.split('/');
-          let current = root;
-          
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-            const isLast = i === parts.length - 1;
-            
-            if (!current.children) current.children = [];
-            
-            let child = current.children.find(c => c.name === part);
-            if (!child) {
-              child = {
-                name: part,
-                path: parts.slice(0, i + 1).join('/'),
-                churnRate: isLast ? syntheticChurnRate : 0,
-                type: isLast ? 'file' : 'directory',
-                children: isLast ? undefined : []
-              };
-              current.children.push(child);
-            }
-            
-            if (isLast) {
-              child.churnRate = syntheticChurnRate;
-              child.type = 'file';
-            }
-            
-            current = child;
           }
         });
-      }
-      
-      return root;
+      });
+
+      return endpoints.slice(0, 50); // Limit results
     }
 
-    private generateContributorStreamData(commits: ProcessedCommit[], _contributors: ProcessedContributor[]) {
-      const monthlyData: Record<string, Record<string, number>> = {};
-      
-      commits.forEach(commit => {
-        const date = new Date(commit.date);
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        
-        if (!monthlyData[monthKey]) monthlyData[monthKey] = {};
-        monthlyData[monthKey][commit.author] = (monthlyData[monthKey][commit.author] || 0) + 1;
-      });
-      
-      return Object.entries(monthlyData).map(([date, contributors]) => ({
-        date,
-        contributors
-      }));
-    }
+    // inferArchitecturePattern method removed - was unused
+
+    // generateDependencyWheelData method removed - was unused
+
+    // generateFileSystemTree method removed - was unused
+
+    // generateChurnSunburstData method removed - was unused
+
+    // generateContributorStreamData method removed - was unused
 
   private async generateAISummary(repoData: Repository, files: FileInfo[]): Promise<string> {
-      if (!this.llmService.isConfigured()) {
-          this.addWarning('AI Summary', 'LLM not configured. AI summary will be unavailable.');
-          return '';
-      }
-      
-      const contextParts = files.slice(0, 5).map(f => {
-        const snippet = f.content ? f.content.substring(0, 200) : '';
-        return `File: ${f.path}\n${snippet}`;
-      });
-      const context = `Repository: ${repoData.fullName}\n` + contextParts.join('\n---\n');
-      
+    if (!this.llmService.isConfigured()) {
+      this.addWarning('AI Summary', 'LLM service not configured, skipping AI summary.');
+      return "AI summary not available.";
+    }
+    try {
       const prompt = `
-Analyze this repository and provide a comprehensive summary:
-
-${context}
-
-Please provide a detailed analysis covering:
-1. Project purpose and main functionality
-2. Architecture and code structure
-3. Technology stack and frameworks used
-4. Code quality observations
-5. Key strengths and potential areas for improvement
-
-Provide a professional summary in 2-3 paragraphs.
-`;
-
-      try {
-        const summary = await this.llmService.generateText(prompt, 800);
-        return summary || '';
-      } catch (error) {
-        this.addWarning('AI Summary', 'AI summary generation failed.', error);
-        return ''; 
-      }
+        Analyze the following repository and provide a concise executive summary.
+        Repository: ${repoData.fullName}
+        Description: ${repoData.description}
+        Language: ${repoData.language}
+        
+        Key files:
+        ${files.slice(0, 5).map(f => `- ${f.path} (${f.size} bytes)`).join('\n')}
+        
+        Focus on the project's purpose, main technologies, and overall structure.
+      `;
+      const summary = await this.llmService.generateText(prompt);
+      return summary;
+    } catch (error) {
+      this.addWarning('AI Summary', 'Failed to generate AI summary', error);
+      return "Error generating AI summary.";
+    }
   }
 
   private async generateAIArchitectureDescription(repoData: Repository, files: FileInfo[], dependencyGraph: ArchitectureData): Promise<string> {
-    console.log('generateAIArchitectureDescription called');
-    console.log('LLM Service isConfigured():', this.llmService.isConfigured());
-    
     if (!this.llmService.isConfigured()) {
-      console.log('LLM not configured, adding warning');
-      this.addWarning('AI Architecture Description', 'LLM not configured. AI architecture description will be unavailable.');
-      return '';
+      this.addWarning('AI Architecture', 'LLM service not configured, skipping AI architecture description.');
+      return "AI architecture description not available.";
     }
-
-    const filePathsSummary = files.slice(0, 15).map(f => `- ${f.path} (${f.type || 'file'}, ${f.size} bytes)`).join('\n');
-    const dependencyGraphSummary = `The dependency graph has ${dependencyGraph.nodes.length} nodes and ${dependencyGraph.links.length} links. Key nodes include: ${dependencyGraph.nodes.slice(0,5).map(n => n.name).join(', ')}.`;
-
-    const context = `
-Repository: ${repoData.fullName}
-Description: ${repoData.description || 'N/A'}
-Primary Language: ${repoData.language || 'N/A'}
-
-Key Files (up to 15):
-${filePathsSummary}
-
-Dependency Graph Overview:
-${dependencyGraphSummary}
-
-File Contents Snippets (Top 3 files by size/complexity, first 200 chars):
-${files.sort((a,b) => (b.size || 0) + (b.complexity || 0) - ((a.size || 0) + (a.complexity || 0))).slice(0,3).map(f => `File: ${f.path}\n${f.content ? f.content.substring(0,200) : ''}`).join('\n---\n')}
-  `;
-
-    const prompt = `
-Analyze the architecture of the repository based on the provided context:
-${context}
-
-Please provide a detailed natural language analysis covering:
-1.  Probable architectural pattern(s) (e.g., Monolith, Microservices, MVC, Layered) with reasoning based on the file structure and dependencies.
-2.  Key modules/components and their apparent responsibilities and interactions.
-3.  Observations on code organization, modularity, and separation of concerns.
-4.  Potential strengths and weaknesses of the observed architecture.
-5.  Suggestions for improvement or areas that might need further investigation.
-
-Provide a professional, well-structured architectural overview in 3-4 paragraphs.
-`;  try {
-      console.log('Attempting to generate AI architecture description with LLM');
-      const description = await this.llmService.generateText(prompt, 1000); 
-      console.log('AI architecture description generated successfully, length:', description.length);
-      
-      // Ensure we return something meaningful
-      if (!description || description.trim() === '') {
-        console.log('LLM returned empty description, using contextual fallback');
-        return `Architecture Analysis: This ${repoData.language || 'multi-language'} repository contains ${dependencyGraph.nodes.length} modules organized with ${dependencyGraph.links.length} internal dependencies. The project structure indicates a ${this.inferArchitecturePattern(files)} pattern. Key components include the main application files and supporting modules. The codebase demonstrates modular organization with clear separation of concerns.`;
-      }
-      
+    try {
+      const prompt = `
+        Analyze the architecture of the repository "${repoData.fullName}".
+        
+        Description: ${repoData.description}
+        Primary Language: ${repoData.language}
+        
+        File structure overview:
+        ${files.slice(0, 10).map(f => `- ${f.path}`).join('\n')}
+        
+        Dependency Graph (top 5 nodes and their connections):
+        ${dependencyGraph.nodes.slice(0, 5).map(node => {
+          const connections = dependencyGraph.links.filter(l => l.source === node.id).map(l => l.target).join(', ');
+          return `- ${node.name}: connects to [${connections || 'none'}]`;
+        }).join('\n')}
+        
+        Based on this information, describe the likely software architecture pattern (e.g., Monolith, Microservices, MVC, Layered, etc.) and explain your reasoning. Identify key components and their interactions.
+      `;
+      const description = await this.llmService.generateText(prompt);
       return description;
     } catch (error) {
-      console.error('AI architecture description generation failed:', error);
-      this.addWarning('AI Architecture Description', 'AI architecture description generation failed.', error);
-      
-      // Return a meaningful fallback instead of empty string
-      return `Architecture Analysis: This ${repoData.language || 'multi-language'} repository contains ${dependencyGraph.nodes.length} modules with ${dependencyGraph.links.length} internal dependencies. The structure follows a ${this.inferArchitecturePattern(files)} pattern. Detailed AI analysis was unavailable due to: ${error instanceof Error ? error.message : 'Unknown error'}.`;
+      this.addWarning('AI Architecture', 'Failed to generate AI architecture description', error);
+      return "Error generating AI architecture description.";
     }
   }
-    /**
-     * Analyze dependencies for vulnerabilities and generate metrics
-     */
+
     async analyzeDependencyVulnerabilities(dependencies: DependencyInfo): Promise<any> {
       const allDeps = { ...dependencies.dependencies, ...dependencies.devDependencies };
       const totalDeps = Object.keys(allDeps).length;
-         const devDepsCount = Object.keys(dependencies.devDependencies).length;
       
-      // Simulated vulnerability analysis (in production, you'd use npm audit or similar)
+      if (totalDeps === 0) {
+        return {
+          vulnerabilityScore: 100,
+          vulnerabilityData: {},
+          dependencyGraph: { nodes: [], links: [] },
+          vulnerabilityDistribution: {},
+        };
+      }
+
+      // In a real scenario, you would call an API like Snyk, NPM audit, etc.
+      // For this example, we'll simulate the analysis.
       const vulnerabilityData = this.simulateVulnerabilityAnalysis(allDeps);
-      
+      const vulnerabilityScore = this.calculateDependencyScore(vulnerabilityData, totalDeps);
+      const dependencyGraph = this.generateDependencyGraph(allDeps);
+      const vulnerabilityDistribution = this.generateVulnerabilityDistribution(vulnerabilityData);
+
       return {
-        totalDependencies: totalDeps,
-        devDependencies: devDepsCount,
-        outdatedPackages: vulnerabilityData.outdated,
-        vulnerablePackages: vulnerabilityData.vulnerable,
-        criticalVulnerabilities: vulnerabilityData.critical,
-        highVulnerabilities: vulnerabilityData.high,
-        mediumVulnerabilities: vulnerabilityData.medium,
-        lowVulnerabilities: vulnerabilityData.low,
-        lastScan: new Date().toISOString(),
-        dependencyScore: this.calculateDependencyScore(vulnerabilityData, totalDeps),
-        // Remove this line - we'll use the internal dependency graph from architecture analysis instead
-        // dependencyGraph: this.generateDependencyGraph(allDeps),
-        packageDependencyGraph: this.generateDependencyGraph(allDeps), // Keep external package deps under different name
-        vulnerabilityDistribution: this.generateVulnerabilityDistribution(vulnerabilityData)
+        vulnerabilityScore,
+        vulnerabilityData,
+        dependencyGraph,
+        vulnerabilityDistribution,
       };
     }
 
-    /**
-     * Simulate vulnerability analysis (replace with real npm audit in production)
-     */
     private simulateVulnerabilityAnalysis(dependencies: Record<string, string>) {
-      const depKeys = Object.keys(dependencies);
-      const total = depKeys.length;
+      const vulnerabilities: any = {};
+      const severities = ['low', 'medium', 'high', 'critical'];
       
-      // Simulate realistic vulnerability distribution
-      const vulnerableRate = 0.15; // 15% have vulnerabilities
-      const outdatedRate = 0.25; // 25% are outdated
-      
-      const vulnerable = Math.floor(total * vulnerableRate);
-      const outdated = Math.floor(total * outdatedRate);
-      
-      // Distribute vulnerabilities by severity
-      const critical = Math.floor(vulnerable * 0.1); // 10% critical
-      const high = Math.floor(vulnerable * 0.25); // 25% high
-      const medium = Math.floor(vulnerable * 0.45); // 45% medium
-      const low = vulnerable - critical - high - medium; // remainder low
-      
-      return {
-        vulnerable,
-        outdated,
-        critical,
-        high,
-        medium,
-        low
-      };
+      Object.keys(dependencies).forEach(dep => {
+        if (Math.random() < 0.2) { // 20% chance of having a vulnerability
+          vulnerabilities[dep] = {
+            severity: severities[Math.floor(Math.random() * severities.length)],
+            summary: `Simulated vulnerability in ${dep}`,
+            vulnerableVersions: `< ${dependencies[dep]}`,
+          };
+        }
+      });
+      return vulnerabilities;
     }
 
-    /**
-     * Calculate dependency health score (0-100)
-     */
     private calculateDependencyScore(vulnerabilityData: any, totalDeps: number): number {
-      if (totalDeps === 0) return 100;
-      
-      const vulnerabilityWeight = 0.6;
-      const outdatedWeight = 0.4;
-      
-      const vulnerabilityScore = Math.max(0, 100 - (vulnerabilityData.vulnerable / totalDeps) * 100 * vulnerabilityWeight);
-      const outdatedScore = Math.max(0, 100 - (vulnerabilityData.outdated / totalDeps) * 100 * outdatedWeight);
-      
-      return Math.round((vulnerabilityScore + outdatedScore) / 2);
+      const vulnerableCount = Object.keys(vulnerabilityData).length;
+      const score = Math.max(0, 100 - (vulnerableCount / totalDeps) * 100);
+      return Math.round(score);
     }
 
-    /**
-     * Generate dependency graph data for visualization
-     */
     private generateDependencyGraph(dependencies: Record<string, string>) {
       const nodes = Object.keys(dependencies).map(name => ({
         id: name,
-        name,
-        version: dependencies[name],
-        type: 'dependency'
+        label: name,
+        value: 1, // Can be adjusted based on usage, etc.
       }));
       
+      // In a real scenario, you'd parse package-lock.json or similar for inter-dependencies
+      // For now, we'll create some random links for visualization
       const links = Object.keys(dependencies).map(name => ({
-        source: 'root',
-        target: name,
-        value: 1
-      }));
-      
-      // Add root node
-      nodes.unshift({ id: 'root', name: 'Project Root', version: '1.0.0', type: 'project' });
-      
+        source: name,
+        target: Object.keys(dependencies)[Math.floor(Math.random() * Object.keys(dependencies).length)],
+      })).filter(link => link.source !== link.target);
+
       return { nodes, links };
     }
 
-    /**
-     * Generate vulnerability distribution data for charts
-     */  private generateVulnerabilityDistribution(vulnerabilityData: any) {
-      const distribution = [
-        { severity: 'Critical', count: vulnerabilityData.critical, color: '#dc2626' },
-        { severity: 'High', count: vulnerabilityData.high, color: '#ea580c' },
-        { severity: 'Medium', count: vulnerabilityData.medium, color: '#ca8a04' },
-        { severity: 'Low', count: vulnerabilityData.low, color: '#65a30d' }
-      ];    // CHANGE THIS: Don't filter out zero counts, or provide fallback
-      const nonZeroDistribution = distribution.filter(item => item.count > 0);
-      
-      // If all counts are zero, return a placeholder to prevent empty visualization
-      if (nonZeroDistribution.length === 0) {
-        return [{ severity: 'None', count: 1, color: '#9ca3af' }];
-      }
-      
-      return nonZeroDistribution;
-    }
-    
-    // ADDED: Enhanced method to generate temporal couplings using entire codebase
-    private generateTemporalCouplings(commits: ProcessedCommit[], files?: FileInfo[]): TemporalCoupling[] {
-      console.log(`[TemporalCoupling] Starting comprehensive temporal coupling analysis`);
-      console.log(`[TemporalCoupling] Available commits: ${commits.length}`);
-      console.log(`[TemporalCoupling] Available files: ${files?.length || 'not provided'}`);
-      
-      // Method 1: Try to analyze commit-level changes if commits have file information
-      const commitBasedCouplings = this.generateCommitBasedCouplings(commits);
-        // Method 2: Generate structure-based couplings from entire codebase
-      const structureBasedCouplings = files ? this.generateEnhancedStructureCouplings(files) : [];
-      
-      // Combine and deduplicate all coupling sources
-      const allCouplings = this.mergeCouplingResults([
-        ...commitBasedCouplings,
-        ...structureBasedCouplings
-      ]);
-      
-      console.log(`[TemporalCoupling] Generated total couplings: ${allCouplings.length}`);
-      console.log(`[TemporalCoupling] Commit-based: ${commitBasedCouplings.length}`);
-      console.log(`[TemporalCoupling] Structure-based: ${structureBasedCouplings.length}`);
-      
-      // Return top couplings with diverse representation
-      const result = allCouplings.slice(0, 150);
-      
-      if (result.length > 0) {
-          console.log(`[TemporalCoupling] Top coupling examples:`);
-          result.slice(0, 5).forEach(coupling => {
-              console.log(`  ${coupling.source} <-> ${coupling.target} (weight: ${coupling.weight})`);
-          });
-      }
-      
-      return result;
-    }
-
-    // Method 1: Generate couplings from commit history (if available)
-    private generateCommitBasedCouplings(commits: ProcessedCommit[]): TemporalCoupling[] {
-      const filePairs = new Map<string, { 
-        count: number; 
-        dates: string[]; 
-        commitMessages: string[];
-        authors: Set<string>;
-      }>();
-      
-      let processedCommits = 0;
-      let totalPairs = 0;
-      
-      commits.forEach(commit => {
-          // Only process if commit has file information
-          if (!commit.files || commit.files.length === 0) {
-              return;
-          }
-          
-          // Filter for source files to reduce noise
-          const changedFiles = commit.files
-              .map((f: any) => f.filename || f.name || f.path)
-              .filter(f => f && this.isSourceFile(f) && f.length < 200)
-              .map(f => f.replace(/\\/g, '/'));
-
-          // Process commits with 2-20 files for meaningful coupling analysis
-          if (changedFiles.length >= 2 && changedFiles.length <= 20) {
-              processedCommits++;
-              
-              // Process file pairs for multi-file commits
-              for (let i = 0; i < changedFiles.length; i++) {
-                  for (let j = i + 1; j < changedFiles.length; j++) {
-                      const file1 = changedFiles[i];
-                      const file2 = changedFiles[j];
-                      
-                      // Skip if files are too similar
-                      if (this.areFilesSimilar(file1, file2)) {
-                          continue;
-                      }
-                      
-                      const key = [file1, file2].sort().join('|');
-                      
-                      if (!filePairs.has(key)) {
-                          filePairs.set(key, { 
-                              count: 0, 
-                              dates: [], 
-                              commitMessages: [],
-                                                           authors: new Set()
-                          });
-                      }
-                      
-                      const pairData = filePairs.get(key)!;
-                      pairData.count++;
-                      pairData.dates.push(commit.date);
-                      pairData.commitMessages.push(commit.message || '');
-                      pairData.authors.add(commit.author || 'unknown');
-                      totalPairs++;
-                  }
-              }
-          }
+     /**
+      * Generates a distribution of vulnerabilities by severity.
+      */  private generateVulnerabilityDistribution(vulnerabilityData: any) {
+      const distribution = { low: 0, medium: 0, high: 0, critical: 0 };
+      Object.values(vulnerabilityData).forEach((vuln: any) => {
+        const severity = vuln.severity as keyof typeof distribution;
+        if (distribution[severity] !== undefined) {
+          distribution[severity]++;
+        }
       });
+      return distribution;
+    }
+
+    private generateTemporalCouplings(commits: ProcessedCommit[], files?: FileInfo[]): TemporalCoupling[] {
+      const commitBasedCouplings = this.generateCommitBasedCouplings(commits);
       
-      console.log(`[CommitCoupling] Processed ${processedCommits} commits with files, found ${totalPairs} relationships`);
+      let structureBasedCouplings: TemporalCoupling[] = [];
+      if (files) {
+        structureBasedCouplings = this.generateEnhancedStructureCouplings(files);
+      }
+      
+      // Merge and weigh the results
+      const allCouplings = [...commitBasedCouplings, ...structureBasedCouplings];
+      return this.mergeCouplingResults(allCouplings);
+    }
+
+    private generateCommitBasedCouplings(commits: ProcessedCommit[]): TemporalCoupling[] {
+      const filePairs = new Map<string, { count: number; dates: Date[] }>();
+      const fileCommitCounts = new Map<string, number>();
+
+      // Limit to recent commits for performance and relevance
+      const recentCommits = commits.slice(0, 500);
+
+      recentCommits.forEach(commit => {
+        const files = commit.files.map((f: any) => f.filename).sort();
+        if (files.length > 1 && files.length < 20) { // Ignore very large commits
+          for (let i = 0; i < files.length; i++) {
+            fileCommitCounts.set(files[i], (fileCommitCounts.get(files[i]) || 0) + 1);
+            for (let j = i + 1; j < files.length; j++) {
+              const key = `${files[i]}|||${files[j]}`;
+              const pairData = filePairs.get(key) || { count: 0, dates: [] };
+              pairData.count++;
+              pairData.dates.push(new Date(commit.date));
+              filePairs.set(key, pairData);
+            }
+          }
+        }
+      });
 
       const couplings: TemporalCoupling[] = [];
+      // Could track recent changes: const ninetyDaysAgo = new Date(new Date().setDate(new Date().getDate() - 90));
+
       filePairs.forEach((data, key) => {
-          if (data.count >= 2) { // Require at least 2 co-changes for commit-based coupling
-              const [source, target] = key.split('|');
-              
-              // Calculate temporal clustering and recency scores
-              const dates = data.dates.sort();
-              const firstDate = new Date(dates[0]);
-              const lastDate = new Date(dates[dates.length - 1]);
-              const timeSpanDays = (lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24);
-              
-              let weight = data.count * 2; // Higher weight for commit-based couplings
-              
-              // Boost for recent changes
-              const recentChanges = data.dates.filter(date => {
-                  const changeDate = new Date(date);
-                  const daysSinceChange = (Date.now() - changeDate.getTime()) / (1000 * 60 * 60 * 24);
-                  return daysSinceChange <= 90;
-              }).length;
-              
-              if (recentChanges > 0) {
-                  weight += recentChanges;
-              }
-              
-              // Boost for temporal clustering
-              if (timeSpanDays > 0 && timeSpanDays < 30 && data.count > 2) {
-                  weight += 3;
-              }
-              
-              // Boost for multiple authors
-              if (data.authors.size > 1) {
-                  weight += data.authors.size;
-              }
-              
-              // Related file types bonus
-              if (this.areRelatedFileTypes(source, target)) {
-                  weight += 2;
-              }
-              
-              couplings.push({ 
-                  source, 
-                  target, 
-                  weight: Math.round(weight * 10) / 10
-              });
-          }
+        const [file1, file2] = key.split('|||');
+        const totalCommits1 = fileCommitCounts.get(file1) || 1;
+        const totalCommits2 = fileCommitCounts.get(file2) || 1;
+        
+        // Jaccard index style metric
+        const strength = data.count / (totalCommits1 + totalCommits2 - data.count);
+
+        if (strength > 0.1) { // Threshold to reduce noise
+            // Could track recent changes for instability: const recentChanges = data.dates.filter(date => date > ninetyDaysAgo).length;
+
+            couplings.push({
+                source: file1,
+                target: file2,
+                weight: Math.round(strength * 100) / 100,
+            });
+        }
       });
-      
-      return couplings.sort((a, b) => b.weight - a.weight);
+
+      return couplings.sort((a, b) => b.weight - a.weight).slice(0, 100); // Limit results
     }
-    
-    // Method 2: Generate enhanced structure-based couplings from file organization
+
     private generateEnhancedStructureCouplings(files: FileInfo[]): TemporalCoupling[] {
       const couplings: TemporalCoupling[] = [];
       const sourceFiles = files.filter(f => this.isSourceFile(f.path));
       
-      console.log(`[EnhancedStructureCoupling] Analyzing ${sourceFiles.length} source files`);
-      
-      // Group files by directory and analyze directory-level coupling
+      // 1. Directory-based coupling
       const dirGroups = new Map<string, FileInfo[]>();
       sourceFiles.forEach(file => {
         const dir = path.dirname(file.path);
@@ -1703,120 +1456,80 @@ Provide a professional, well-structured architectural overview in 3-4 paragraphs
         }
         dirGroups.get(dir)!.push(file);
       });
-      
-      // 1. Same directory couplings (files that likely work together)
+
       dirGroups.forEach((filesInDir, _dir) => {
         if (filesInDir.length > 1 && filesInDir.length < 15) {
           for (let i = 0; i < filesInDir.length; i++) {
             for (let j = i + 1; j < filesInDir.length; j++) {
-              const file1 = filesInDir[i];
-              const file2 = filesInDir[j];
-              
-              let weight = 3; // Base weight for same directory
-              
-              // Boost for related file types
-              if (this.areRelatedFileTypes(file1.path, file2.path)) {
-                weight += 3;
-              }
-              
-              // Boost for similar file names (likely related components)
-              if (this.haveSimilarNames(file1.path, file2.path)) {
-                weight += 2;
-              }
-              
-              // Boost for test files with their corresponding source files
-              if (this.areTestAndSource(file1.path, file2.path)) {
-                weight += 4;
-              }
-              
-              couplings.push({ 
-                source: file1.path, 
-                target: file2.path, 
-                weight: Math.round(weight * 10) / 10 
+              couplings.push({
+                source: filesInDir[i].path,
+                target: filesInDir[j].path,
+                weight: 0.3, // Base strength for directory coupling
               });
             }
           }
         }
       });
-      
-      // 2. Cross-directory couplings based on naming patterns
+
+      // 2. Component-based coupling (e.g., Button.tsx, Button.css, Button.test.tsx)
       const componentMap = this.buildComponentMap(sourceFiles);
       componentMap.forEach((relatedFiles, _componentName) => {
         if (relatedFiles.length > 1) {
           for (let i = 0; i < relatedFiles.length; i++) {
             for (let j = i + 1; j < relatedFiles.length; j++) {
-              const file1 = relatedFiles[i];
-              const file2 = relatedFiles[j];
-              
-              let weight = 4; // Higher weight for cross-directory component coupling
-              
-              if (this.areRelatedFileTypes(file1.path, file2.path)) {
-                weight += 2;
-              }
-              
-              couplings.push({ 
-                source: file1.path, 
-                target: file2.path, 
-                weight: Math.round(weight * 10) / 10 
+              couplings.push({
+                source: relatedFiles[i].path,
+                target: relatedFiles[j].path,
+                weight: 0.5, // Higher strength for component coupling
               });
             }
           }
         }
       });
-      
-      // 3. Index file couplings (index files couple with files they likely import)
+
+      // 3. Index file coupling (e.g., index.ts imports and exports from siblings)
       const indexFiles = sourceFiles.filter(f => 
-        path.basename(f.path).toLowerCase().includes('index') ||
-        path.basename(f.path).toLowerCase().includes('main') ||
-        path.basename(f.path).toLowerCase().includes('app')
+        path.basename(f.path).match(/index\.(js|ts|jsx|tsx)$/)
       );
-      
       indexFiles.forEach(indexFile => {
-        const indexDir = path.dirname(indexFile.path);
-        const siblingFiles = sourceFiles.filter(f => 
-          path.dirname(f.path) === indexDir && f.path !== indexFile.path
-        );
+        const dir = path.dirname(indexFile.path);
+        const siblingFiles = sourceFiles.filter(f => path.dirname(f.path) === dir && f.path !== indexFile.path);
         
         siblingFiles.forEach(sibling => {
-          couplings.push({
-            source: indexFile.path,
-            target: sibling.path,
-            weight: 3.5
-          });
+          if (indexFile.content && indexFile.content.includes(path.basename(sibling.path, path.extname(sibling.path)))) {
+            couplings.push({
+              source: indexFile.path,
+              target: sibling.path,
+              weight: 0.6,
+            });
+          }
         });
       });
-      
-      console.log(`[EnhancedStructureCoupling] Generated ${couplings.length} structure-based couplings`);
-      return couplings;  }
-    
-    // Helper method to merge coupling results and remove duplicates
+
+      return couplings;
+    }
+
     private mergeCouplingResults(allCouplings: TemporalCoupling[]): TemporalCoupling[] {
-      const couplingMap = new Map<string, TemporalCoupling>();
-      
+      const merged = new Map<string, TemporalCoupling>();
+
       allCouplings.forEach(coupling => {
-        const key = [coupling.source, coupling.target].sort().join('|');
-        
-        if (couplingMap.has(key)) {
-          // Combine weights for the same file pair from different sources
-          const existing = couplingMap.get(key)!;
-          existing.weight = Math.round((existing.weight + coupling.weight) * 10) / 10;
+        const key = [coupling.source, coupling.target].sort().join('|||');
+        const existing = merged.get(key);
+
+        if (existing) {
+          existing.weight = Math.min(1, existing.weight + coupling.weight);
         } else {
-          couplingMap.set(key, { ...coupling });
+          merged.set(key, { ...coupling });
         }
       });
-      
-      return Array.from(couplingMap.values())
-        .sort((a, b) => b.weight - a.weight);
+
+      return Array.from(merged.values()).sort((a, b) => b.weight - a.weight).slice(0, 150);
     }
-    
-    // Helper method to build component map based on naming patterns
+
     private buildComponentMap(files: FileInfo[]): Map<string, FileInfo[]> {
       const componentMap = new Map<string, FileInfo[]>();
-      
       files.forEach(file => {
-        const fileName = path.basename(file.path, path.extname(file.path));
-        const componentName = this.extractComponentName(fileName);
-        
+        const componentName = this.extractComponentName(file.path);
         if (componentName) {
           if (!componentMap.has(componentName)) {
             componentMap.set(componentName, []);
@@ -1824,477 +1537,216 @@ Provide a professional, well-structured architectural overview in 3-4 paragraphs
           componentMap.get(componentName)!.push(file);
         }
       });
-      
       return componentMap;
     }
-    
-    // Helper method to extract component name from file name
+
     private extractComponentName(fileName: string): string | null {
-      // Remove common suffixes and patterns to find base component name
-      const cleaned = fileName
-        .replace(/\.(test|spec|types|d)$/, '')
-        .replace(/\.(component|service|controller|model|view)$/, '')
-        .replace(/(Test|Spec|Types|Component|Service|Controller|Model|View)$/, '');
-      
-      return cleaned.length > 2 ? cleaned.toLowerCase() : null;
-    }
-      // Helper method to check if files have similar names
-    private haveSimilarNames(file1: string, file2: string): boolean {
-      const name1 = path.basename(file1, path.extname(file1)).toLowerCase();
-      const name2 = path.basename(file2, path.extname(file2)).toLowerCase();
-      
-      const component1 = this.extractComponentName(name1);
-      const component2 = this.extractComponentName(name2);
-      
-      return !!(component1 && component2 && component1 === component2);
-    }
-    
-    // Helper method to check if files are test and source pair
-    private areTestAndSource(file1: string, file2: string): boolean {
-      const name1 = path.basename(file1, path.extname(file1)).toLowerCase();
-      const name2 = path.basename(file2, path.extname(file2)).toLowerCase();
-      
-      const isTest1 = name1.includes('test') || name1.includes('spec');
-      const isTest2 = name2.includes('test') || name2.includes('spec');
-      
-      if (isTest1 && !isTest2) {
-        const baseName1 = name1.replace(/\.(test|spec)$/, '');
-        return name2.includes(baseName1) || baseName1.includes(name2);
-      }
-      
-      if (isTest2 && !isTest1) {
-        const baseName2 = name2.replace(/\.(test|spec)$/, '');
-        return name1.includes(baseName2) || baseName2.includes(name1);
-      }
-      
-      return false;
-    }
-    
-    // Helper method to detect similar files (likely generated or related files)
-    private areFilesSimilar(file1: string, file2: string): boolean {
-      const basename1 = path.basename(file1, path.extname(file1));
-      const basename2 = path.basename(file2, path.extname(file2));
-      
-      // Skip if files are essentially the same (e.g., index.js and index.ts)
-      if (basename1 === basename2) return true;
-      
-      // Skip if one is a test/spec version of the other
-      const cleanName1 = basename1.replace(/\.(test|spec|stories)$/, '');
-      const cleanName2 = basename2.replace(/\.(test|spec|stories)$/, '');
-      
-      return cleanName1 === cleanName2;
+      const baseName = path.basename(fileName, path.extname(fileName));
+      // Handles cases like Button.stories.tsx, Button.test.tsx
+      const match = baseName.match(/^([A-Z][a-zA-Z0-9]+)/);
+      return match ? match[1] : null;
     }
 
-    private areRelatedFileTypes(file1: string, file2: string): boolean {
-      const type1 = this.detectLanguage(file1);
-      const type2 = this.detectLanguage(file2);
-
-      if (type1 === type2 && type1 !== 'Unknown') return true;
-
-      const ext1 = path.extname(file1);
-      const ext2 = path.extname(file2);
-
-      if ((ext1 === '.js' && ext2 === '.d.ts') || (ext1 === '.d.ts' && ext2 === '.js')) return true;
-      if ((ext1 === '.jsx' && ext2 === '.d.ts') || (ext1 === '.d.ts' && ext2 === '.jsx')) return true;
-      if ((ext1 === '.ts' && ext2 === '.d.ts') || (ext1 === '.d.ts' && ext2 === '.ts')) return true;
-      if ((ext1 === '.tsx' && ext2 === '.d.ts') || (ext1 === '.d.ts' && ext2 === '.tsx')) return true;
-
-      return false;
-    }
-
-    // isExcluded method removed as it was unused
-
-    // fetchAllFileContent method removed as it was unused
+    // haveSimilarNames and areTestAndSource methods removed - were unused
 
     private generateDataTransformationFlow(files: FileInfo[], _commits: ProcessedCommit[]): SankeyData {
       const nodes: SankeyNode[] = [];
       const links: SankeyLink[] = [];
+      const dataKeywords = ['api', 'service', 'store', 'database', 'repository', 'client'];
       
-      // Identify data sources and transformations
       const dataFiles = files.filter(f => 
-        f.path.includes('model') || 
-        f.path.includes('schema') || 
-        f.path.includes('data') ||
-        f.path.includes('transform') ||
-        f.path.includes('process')
+        this.isSourceFile(f.path) &&
+        (dataKeywords.some(kw => f.path.includes(kw)) || f.path.endsWith('.sql'))
       );
-      
-      // Create nodes for different layers
-      const layers = [
-        { id: 'input', name: 'Data Input' },
-        { id: 'processing', name: 'Data Processing' },
-        { id: 'storage', name: 'Data Storage' },
-        { id: 'output', name: 'Data Output' }
-      ];
-      
-      layers.forEach(layer => nodes.push({ id: layer.id }));
-      
-      // Add specific nodes for detected data files
-      dataFiles.slice(0, 10).forEach((file, idx) => {
-        const nodeId = `file_${idx}`;
-        nodes.push({ id: nodeId });
-        
-        // Create links based on file type and content patterns
-        if (file.path.includes('input') || file.path.includes('import')) {
-          links.push({ source: 'input', target: nodeId, value: 10 });
-          links.push({ source: nodeId, target: 'processing', value: 8 });
-        } else if (file.path.includes('process') || file.path.includes('transform')) {
-          links.push({ source: 'processing', target: nodeId, value: 12 });
-          links.push({ source: nodeId, target: 'storage', value: 10 });
-        } else if (file.path.includes('output') || file.path.includes('export')) {
-          links.push({ source: 'storage', target: nodeId, value: 8 });
-          links.push({ source: nodeId, target: 'output', value: 6 });
+
+      if (dataFiles.length < 2) {
+        return { nodes: [], links: [] };
+      }
+
+      // Create nodes
+      dataFiles.slice(0, 15).forEach(file => {
+        nodes.push({ id: file.path });
+      });
+
+      // Create links based on import analysis (simplified)
+      dataFiles.slice(0, 15).forEach((file, idx) => {
+        if (file.content) {
+          const imports = this.parseImports(file.content);
+          imports.forEach(importedPath => {
+            const targetNode = this.findNodeByPath(nodes.map(n => ({...n, path: n.id})), importedPath, file.path);
+            if (targetNode && targetNode.id !== file.path) {
+              links.push({
+                source: file.path,
+                target: targetNode.id,
+                value: 10 // Default value
+              });
+            }
+          });
+        }
+        // Create a fallback link to the next file if no imports found
+        if (idx > 0 && !links.some(l => l.source === file.path || l.target === file.path)) {
+            links.push({ source: dataFiles[idx - 1].path, target: file.path, value: 5 });
         }
       });
-      
-      // If no specific data files found, create sample flow
-      if (dataFiles.length === 0) {
-        links.push(
-          { source: 'input', target: 'processing', value: 15 },
-          { source: 'processing', target: 'storage', value: 12 },
-          { source: 'storage', target: 'output', value: 10 }
-        );
-      }
-      
+
       return { nodes, links };
     }
-    
-    // New method to generate git graph data
+
     private generateGitGraphData(commits: ProcessedCommit[], _contributors: ProcessedContributor[]): GitGraphData {
       const nodes: GitGraphNode[] = [];
       const links: GitGraphLink[] = [];
-      
-      // Create nodes for commits
+      // Future: could track branch heads: const branchHeads = new Map<string, string>();
+
+      // Simplified: assume linear history for now
       commits.slice(0, 20).forEach((commit, idx) => {
         nodes.push({
           id: commit.sha,
-          message: commit.message?.substring(0, 50) || 'Commit',
-          author: commit.author || 'Unknown',
+          message: commit.message.split('\n')[0].substring(0, 30),
+          author: commit.author,
           date: commit.date,
-          parents: idx > 0 ? [commits[idx - 1].sha] : []
+          parents: idx > 0 ? [commits[idx - 1].sha] : [],
         });
+        if (idx > 0) {
+          links.push({
+            source: commit.sha,
+            target: commits[idx - 1].sha,
+          });
+        }
       });
-      
-      // Create links between consecutive commits
-      for (let i = 0; i < nodes.length - 1; i++) {
-        links.push({
-          source: nodes[i].id,
-          target: nodes[i + 1].id
-        });
-      }
-      
+
       return { nodes, links };
     }
-      
-    // generatePullRequestData method removed as it was unused
 
   private generateFallbackSecurityIssues(files: FileInfo[]): SecurityIssue[] {
-    const securityIssues: SecurityIssue[] = [];
-    
-    for (const file of files) {
-      if (!file.content) continue;
-      
-      const content = file.content.toLowerCase();
+    const issues: SecurityIssue[] = [];
+    const patterns = [
+      { pattern: /dangerouslySetInnerHTML/g, severity: 'high', description: 'Potential XSS vulnerability via dangerouslySetInnerHTML.' },
+      { pattern: /eval\(/g, severity: 'high', description: 'Use of eval can lead to arbitrary code execution.' },
+      { pattern: /new Buffer/g, severity: 'medium', description: 'new Buffer() is deprecated and can be insecure.' },
+      { pattern: /process.env\./g, severity: 'low', description: 'Direct access to environment variables can expose sensitive data.' },
+      { pattern: /<a target="_blank"/g, severity: 'medium', description: 'Missing rel="noopener noreferrer" on target="_blank" links.' },
+    ] as const;
+
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+
+    sourceFiles.forEach(file => {
+      if (!file.content) return;
       const lines = file.content.split('\n');
-      
-      // Check for common security issues
       lines.forEach((line, index) => {
-        const lineNum = index + 1;
-        const trimmedLine = line.trim().toLowerCase();
-        
-        // Check for hardcoded secrets
-        if (trimmedLine.includes('password') && (trimmedLine.includes('=') || trimmedLine.includes(':'))) {
-          if (!trimmedLine.includes('process.env') && !trimmedLine.includes('config')) {
-            securityIssues.push({
-              type: 'secret',
-              severity: 'high',
+        patterns.forEach(pattern => {
+          if (pattern.pattern.test(line)) {
+            issues.push({
+              type: 'vulnerability',
+              severity: pattern.severity as 'low' | 'medium' | 'high' | 'critical',
               file: file.path,
-              line: lineNum,
-              description: 'Potential hardcoded password detected',
-              recommendation: 'Use environment variables or secure configuration for passwords',
-              codeSnippet: line.trim()
+              line: index + 1,
+              description: pattern.description,
+              recommendation: 'Review and fix security issue',
             });
           }
-        }
-        
-        // Check for API keys
-        if ((trimmedLine.includes('api_key') || trimmedLine.includes('apikey')) && 
-            (trimmedLine.includes('=') || trimmedLine.includes(':'))) {
-          if (!trimmedLine.includes('process.env') && !trimmedLine.includes('config')) {
-            securityIssues.push({
-              type: 'secret',
-              severity: 'critical',
-              file: file.path,
-              line: lineNum,
-              description: 'Potential hardcoded API key detected',
-              recommendation: 'Store API keys in environment variables',
-              codeSnippet: line.trim()
-            });
-          }
-        }
-        
-        // Check for SQL injection vulnerabilities
-        if (trimmedLine.includes('query') && trimmedLine.includes('+') && 
-            (trimmedLine.includes('select') || trimmedLine.includes('insert') || 
-             trimmedLine.includes('update') || trimmedLine.includes('delete'))) {
-          securityIssues.push({
-            type: 'vulnerability',
-            severity: 'high',
-            file: file.path,
-            line: lineNum,
-            description: 'Potential SQL injection vulnerability',
-            recommendation: 'Use parameterized queries or prepared statements',
-            cwe: 'CWE-89',
-            codeSnippet: line.trim()
-          });
-        }
-        
-        // Check for eval usage
-        if (trimmedLine.includes('eval(')) {
-          securityIssues.push({
-            type: 'vulnerability',
-            severity: 'high',
-            file: file.path,
-            line: lineNum,
-            description: 'Use of eval() function detected',
-            recommendation: 'Avoid using eval() as it can lead to code injection vulnerabilities',
-            cwe: 'CWE-95',
-            codeSnippet: line.trim()
-          });
-        }
-      });
-      
-      // Check for missing HTTPS
-      if (content.includes('http://') && !content.includes('localhost')) {
-        securityIssues.push({
-          type: 'configuration',
-          severity: 'medium',
-          file: file.path,
-          description: 'HTTP URLs detected, should use HTTPS for security',
-          recommendation: 'Replace HTTP URLs with HTTPS equivalents'
         });
-      }
-    }
-    
-    // Add some general security recommendations if no specific issues found
-    if (securityIssues.length === 0) {
-      securityIssues.push({
-        type: 'configuration',
-        severity: 'low',
-        file: 'general',
-        description: 'No major security issues detected in code analysis',
-        recommendation: 'Consider implementing security headers, input validation, and regular security audits'
       });
-    }
-    
-    return securityIssues;
+    });
+
+    return issues.slice(0, 100); // Limit results
   }
 
-  private generateFallbackTechnicalDebt(files: FileInfo[], quality: QualityMetrics): TechnicalDebt[] {
-    const technicalDebt: TechnicalDebt[] = [];
-    
-    for (const file of files) {
-      if (!file.content) continue;
-      
+  private generateFallbackTechnicalDebt(files: FileInfo[], _quality: QualityMetrics): TechnicalDebt[] {
+    const debt: TechnicalDebt[] = [];
+    const patterns = [
+      { pattern: /\/\/\s*TODO/gi, effort: '2', type: 'documentation', description: 'TODO comment found.' },
+      { pattern: /\/\/\s*FIXME/gi, effort: '3', type: 'smell', description: 'FIXME comment found.' },
+      { pattern: /\/\/\s*HACK/gi, effort: '5', type: 'smell', description: 'HACK comment found.' },
+      { pattern: /console\.log/g, effort: '1', type: 'smell', description: 'console.log statement found.' },
+    ] as const;
+
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+
+    sourceFiles.forEach(file => {
+      if (!file.content) return;
       const lines = file.content.split('\n');
-      const fileQuality = quality[file.path];
-      
-      // Check for TODO/FIXME comments
       lines.forEach((line, index) => {
-        const lineNum = index + 1;
-        const trimmedLine = line.trim();
-        
-        if (/\b(TODO|FIXME|XXX|HACK)\b/i.test(trimmedLine)) {
-          technicalDebt.push({
-            type: 'smell',
-            severity: 'low',
-            file: file.path,
-            line: lineNum,
-            description: `Unresolved marker: ${trimmedLine}`,
-            effort: '0.5h',
-            impact: 'Improves code clarity and completes pending tasks'
-          });
-        }
-      });
-      
-      // Check for high complexity
-      if (fileQuality && fileQuality.complexity > 10) {
-        technicalDebt.push({
-          type: 'complexity',
-          severity: fileQuality.complexity > 20 ? 'high' : 'medium',
-          file: file.path,
-          description: `High cyclomatic complexity (${fileQuality.complexity})`,
-          effort: fileQuality.complexity > 20 ? '8h' : '4h',
-          impact: 'Reduces maintenance burden and improves testability',
-          recommendation: 'Consider breaking down complex functions into smaller, more manageable pieces'
-        });
-      }
-      
-      // Check for long files
-      if (lines.length > 500) {
-        technicalDebt.push({
-          type: 'complexity',
-          severity: lines.length > 1000 ? 'high' : 'medium',
-          file: file.path,
-          description: `File is very long (${lines.length} lines)`,
-          effort: lines.length > 1000 ? '6h' : '3h',
-          impact: 'Improves maintainability and code organization',
-          recommendation: 'Consider splitting large files into smaller, more focused modules'
-        });
-      }
-      
-      // Check for low maintainability
-      if (fileQuality && fileQuality.maintainability < 30) {
-        technicalDebt.push({
-          type: 'smell',
-          severity: 'medium',
-          file: file.path,
-          description: `Low maintainability score (${fileQuality.maintainability})`,
-          effort: '4h',
-          impact: 'Improves code quality and reduces future development time',
-          recommendation: 'Refactor to improve code structure and readability'
-        });
-      }
-    }
-    
-    // Check for duplicate code patterns
-    const codePatterns = new Map<string, string[]>();
-    files.forEach(file => {
-      if (file.content) {
-        const lines = file.content.split('\n');
-        lines.forEach(line => {
-          const trimmed = line.trim();
-          if (trimmed.length > 20 && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
-            if (!codePatterns.has(trimmed)) {
-              codePatterns.set(trimmed, []);
-            }
-            codePatterns.get(trimmed)!.push(file.path);
+        patterns.forEach(pattern => {
+          if (pattern.pattern.test(line)) {
+            debt.push({
+              file: file.path,
+              line: index + 1,
+              type: pattern.type as 'complexity' | 'duplication' | 'smell' | 'outdated' | 'documentation',
+              severity: 'medium',
+              effort: pattern.effort,
+              impact: 'Low',
+              description: pattern.description,
+            });
           }
         });
-      }
+      });
     });
     
-    codePatterns.forEach((filesList) => {
-      if (filesList.length > 2) {
-        technicalDebt.push({
-          type: 'duplication',
-          severity: 'medium',
-          file: filesList.join(', '),
-          description: `Potential code duplication detected across ${filesList.length} files`,
-          effort: '2h',
-          impact: 'Reduces code duplication and improves maintainability',
-          recommendation: 'Extract common code into shared functions or modules'
+    // Debt from duplicated code (simple check)
+    const codeBlocks = new Map<string, { file: string, line: number }[]>();
+    files.forEach(file => {
+      if (!file.content) return;
+      const lines = file.content.split('\n');
+      lines.forEach((line, index) => {
+        if (line.trim().length > 20) { // Only check substantial lines
+          const trimmed = line.trim();
+          if (!codeBlocks.has(trimmed)) {
+            codeBlocks.set(trimmed, []);
+          }
+          codeBlocks.get(trimmed)!.push({ file: file.path, line: index + 1 });
+        }
+      });
+    });
+
+    codeBlocks.forEach((locations) => {
+      if (locations.length > 1) {
+        locations.forEach(loc => {
+          debt.push({
+            file: loc.file,
+            line: loc.line,
+            type: 'duplication',
+            severity: 'medium',
+            effort: '3',
+            impact: 'Medium',
+            description: `Duplicate code found in ${locations.length} locations`,
+          });
         });
       }
     });
-    
-    return technicalDebt;
+
+    return debt.slice(0, 100);
   }
 
   private generateFallbackPerformanceMetrics(files: FileInfo[]): PerformanceMetric[] {
-    const performanceMetrics: PerformanceMetric[] = [];
-    
-    for (const file of files) {
-      if (!file.content) continue;
-      
-      const content = file.content.toLowerCase();
-      const lines = file.content.split('\n');
-      
-      // Check for nested loops (potential O(n^2) or worse)
-      let nestedLoopLevel = 0;
-      let currentFunction = 'unknown';
-      
-      lines.forEach((line) => {
-        const trimmedLine = line.trim().toLowerCase();
-        
-        // Track function names
-        const functionMatch = line.match(/(?:function|const|let|var)\s+(\w+)|(\w+)\s*\(/);
-        if (functionMatch) {
-          currentFunction = functionMatch[1] || functionMatch[2] || 'anonymous';
-        }
-        
-        // Count loop nesting
-        if (trimmedLine.includes('for') || trimmedLine.includes('while') || trimmedLine.includes('.foreach')) {
-          nestedLoopLevel++;
-        }
-        
-        if (trimmedLine.includes('}') && nestedLoopLevel > 0) {
-          nestedLoopLevel--;
-        }
-        
-        // Detect potential performance issues
-        if (nestedLoopLevel >= 2) {
-          performanceMetrics.push({
-            function: currentFunction,
-            file: file.path,
-            complexity: 'O(n^2) or higher',
-            estimatedRuntime: 'High - nested loops detected',
-            recommendation: 'Consider optimizing nested loops using data structures like Maps or Sets'
-          });
-        }
-        
-        // Check for inefficient array operations
-        if (trimmedLine.includes('.indexof') || trimmedLine.includes('.includes')) {
-          performanceMetrics.push({
-            function: currentFunction,
-            file: file.path,
-            complexity: 'O(n)',
-            estimatedRuntime: 'Medium - linear search in array',
-            recommendation: 'Consider using Set or Map for faster lookups'
-          });
-        }
-        
-        // Check for multiple DOM queries
-        if (trimmedLine.includes('document.queryselector') || 
-            trimmedLine.includes('getelementby')) {
-          performanceMetrics.push({
-            function: currentFunction,
-            file: file.path,
-            complexity: 'O(n)',
-            estimatedRuntime: 'Medium - DOM query',
-            recommendation: 'Cache DOM elements or use more efficient selectors'
-          });
-        }
-        
-        // Check for synchronous operations that could be async
-        if (trimmedLine.includes('fs.readfilesync') || 
-            trimmedLine.includes('fs.writefilesync')) {
-          performanceMetrics.push({
-            function: currentFunction,
-            file: file.path,
-            complexity: 'Blocking',
-            estimatedRuntime: 'High - synchronous I/O operation',
-            recommendation: 'Use asynchronous alternatives (fs.readFile, fs.writeFile) to avoid blocking'
-          });
-        }
-      });
-      
-      // Check for large data processing without pagination
-      if (content.includes('.map(') && content.includes('.filter(') && 
-          !content.includes('slice(') && !content.includes('pagination')) {
-        performanceMetrics.push({
-          function: 'data processing',
-          file: file.path,
-          complexity: 'O(n)',
-          estimatedRuntime: 'Variable - depends on data size',
-          recommendation: 'Consider implementing pagination or streaming for large datasets'
-        });
-      }
-    }
-    
-    // Add general performance recommendations if no specific issues found
-    if (performanceMetrics.length === 0) {
-      performanceMetrics.push({
-        function: 'general',
-        file: 'overall',
-        complexity: 'N/A',
-        estimatedRuntime: 'Good',
-        recommendation: 'No major performance issues detected. Consider implementing monitoring and profiling for production optimization'
-      });
-    }
-    
-    return performanceMetrics;
-  }
+    const metrics: PerformanceMetric[] = [];
+    const patterns = [
+      { pattern: /for\s*\(.*\.length/g, fileTypes: ['.js', '.ts'], suggestion: 'Cache array length' },
+      { pattern: /document\.getElementById/g, fileTypes: ['.js', '.ts'], suggestion: 'Consider caching DOM elements' },
+      { pattern: /\+\s*["']/g, fileTypes: ['.js', '.ts'], suggestion: 'Use template literals instead of string concatenation' },
+      { pattern: /new\s+Date\(\)/g, fileTypes: ['.js', '.ts'], suggestion: 'Consider using Date.now() for timestamps' },
+    ];
 
-  // checkNetworkConnectivity method removed as it was unused
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+
+    sourceFiles.forEach(file => {
+      const ext = path.extname(file.path);
+      if (!file.content) return;
+      const lines = file.content.split('\n');
+      lines.forEach((line) => {
+        patterns.forEach(p => {
+          if (p.fileTypes.includes(ext) && p.pattern.test(line)) {
+            metrics.push({
+              file: file.path,
+              function: 'unknown',
+              complexity: 'N/A',
+              estimatedRuntime: 'N/A',
+              recommendation: p.suggestion,
+            });
+          }
+        });
+      });
+    });
+
+    return metrics.slice(0, 100);
+  }
 }

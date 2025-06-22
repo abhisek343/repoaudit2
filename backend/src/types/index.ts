@@ -309,28 +309,11 @@ export interface SankeyData {
   links: SankeyLink[];
 }
 
-export interface FeatureFileMatrixItem {
-  featureFile: string;
-  sourceFiles: string[];
-}
-
-export interface PullRequestData {
-  id: number;
-  title: string;
-  author: string;
-  state: 'open' | 'closed' | 'merged';
-  createdAt: string;
-  closedAt: string | null;
-  mergedAt: string | null;
-  timeToMergeHours?: number | null;
-  timeToCloseHours?: number | null;
-}
-
 export interface GitGraphNode {
-  id: string; // sha
+  id: string;
   message: string;
-  date: string;
   author: string;
+  date: string;
   parents: string[];
 }
 
@@ -344,11 +327,21 @@ export interface GitGraphData {
   links: GitGraphLink[];
 }
 
+export interface PullRequestData {
+  id: number;
+  title: string;
+  author: string;
+  state: 'open' | 'closed' | 'merged';
+  createdAt: string;
+  closedAt?: string | null;
+  mergedAt?: string | null;
+}
+
 // Analysis warning structure for error reporting
 export interface AnalysisWarning {
   step: string;
   message: string;
-  error?: any;
+  error?: string;
 }
 
 // --- Main Analysis Result Structure ---
@@ -429,13 +422,12 @@ export interface AnalysisResult {
   fileSystemTree?: FileNode;
   churnSunburstData?: ChurnNode;
   contributorStreamData?: Array<{ date: string; contributors: Record<string, number> }>;
-
   // ADDED: Data for new advanced diagrams
-  temporalCouplings?: TemporalCoupling[];
-  transformationFlows?: SankeyData;
-  featureFileMatrix?: FeatureFileMatrixItem[];
+  temporalCoupling?: TemporalCoupling[];
+  dataTransformation?: SankeyData;
   pullRequests?: PullRequestData[];
   gitGraph?: GitGraphData;
+  featureFileMatrix?: FeatureFileMatrixItem[];
 }
 
 // ADD these interfaces for archive download configuration
@@ -472,4 +464,11 @@ export interface SystemArchitecture {
   mermaidDiagram: string;
   patterns: string[];
   summary: string;
+}
+
+export interface FeatureFileMatrixItem {
+  feature: string;
+  file: string;
+  relationship: 'implements' | 'tests' | 'configures' | 'documents';
+  strength: number;
 }

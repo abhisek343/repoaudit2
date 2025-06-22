@@ -6,11 +6,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const compression_1 = __importDefault(require("compression"));
-const llmService_1 = require("./src/services/llmService");
 const backendAnalysisService_1 = require("./src/services/backendAnalysisService");
 const architectureController_1 = require("./src/controllers/architectureController");
 const redisCacheService_1 = require("./src/services/redisCacheService");
 const errorHandler_1 = require("./src/middleware/errorHandler");
+const he_1 = __importDefault(require("he"));
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3001;
 // Redis cache for analysis results
@@ -28,18 +28,14 @@ app.use((0, cors_1.default)()); // Enable CORS for all routes
 app.use(express_1.default.json({ limit: '50mb' }));
 // Safe serialization preserving all data and handling circular references
 function safeSerializeReport(report) {
-    const seen = new WeakSet();
+    const cache = new Set();
     return JSON.stringify(report, (_key, value) => {
         if (typeof value === 'object' && value !== null) {
-            if (seen.has(value))
-                return '[Circular]';
-            seen.add(value);
-        }
-        if (typeof value === 'function') {
-            return `[Function: ${value.name || 'anonymous'}]`;
-        }
-        if (value instanceof Date) {
-            return value.toISOString();
+            if (cache.has(value)) {
+                // Circular reference found, discard key
+                return;
+            }
+            cache.add(value);
         }
         return value;
     });
@@ -48,7 +44,8 @@ function safeSerializeReport(report) {
 function handleAnalysisError(res, error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     try {
-        res.write(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`);
+        // Use the new structured event protocol for errors
+        res.write(`event: error-message\ndata: ${JSON.stringify({ error: msg })}\n\n`);
         res.end();
     }
     catch (e) {
@@ -84,162 +81,78 @@ app.post('/api/validate-llm-key', (0, errorHandler_1.safeAsync)(async (req, res)
     const result = await analysisService.validateLlmKey(llmConfig);
     res.status(200).json(result);
 }));
-// Endpoint to handle diagram enhancement
-app.post('/api/llm/enhance-diagram', (0, errorHandler_1.safeAsync)(async (req, res) => {
-    const { llmConfig, diagramCode, fileInfo } = req.body;
-    if (!llmConfig || !diagramCode) {
-        res.status(400).json({ error: 'Missing required parameters' });
-        return;
-    }
-    const llmService = new llmService_1.LLMService(llmConfig);
-    const result = await llmService.enhanceMermaidDiagram(diagramCode, fileInfo);
-    res.json({ enhancedDiagram: result.enhancedCode });
-}));
-// Endpoint to generate AI summary
-app.post('/api/llm/generate-summary', (0, errorHandler_1.safeAsync)(async (req, res) => {
-    const { llmConfig, codebaseContext } = req.body;
-    if (!llmConfig || !codebaseContext) {
-        res.status(400).json({ error: 'Missing required parameters' });
-        return;
-    }
-    const llmService = new llmService_1.LLMService(llmConfig);
-    const result = await llmService.generateSummary(codebaseContext);
-    res.json(result);
-}));
-// Endpoint to analyze architecture
-app.post('/api/llm/analyze-architecture', (0, errorHandler_1.safeAsync)(async (req, res) => {
-    const { llmConfig, codeStructure } = req.body;
-    if (!llmConfig || !codeStructure) {
-        res.status(400).json({ error: 'Missing required parameters' });
-        return;
-    }
-    const llmService = new llmService_1.LLMService(llmConfig);
-    const result = await llmService.generateText(`Analyze the architecture of this codebase:
-      File Structure: ${JSON.stringify(codeStructure.files)}
-      Dependencies: ${JSON.stringify(codeStructure.dependencies)}
-      
-      Provide:
-      1. Architecture pattern identification
-      2. Structural analysis
-      3. Improvement recommendations
-      4. Potential issues or anti-patterns`, 1500);
-    res.json({ analysis: result });
-}));
-// Endpoint to perform security analysis
-app.post('/api/llm/security-analysis', (0, errorHandler_1.safeAsync)(async (req, res) => {
-    const { llmConfig, securityData } = req.body;
-    if (!llmConfig || !securityData) {
-        res.status(400).json({ error: 'Missing required parameters' });
-        return;
-    }
-    const llmService = new llmService_1.LLMService(llmConfig);
-    const result = await llmService.generateText(`Perform security analysis on this repository:
-      Security Issues: ${JSON.stringify(securityData.issues)}
-      Dependencies: ${JSON.stringify(securityData.dependencies)}
-      
-      Analyze:
-      1. Vulnerability assessment
-      2. Security best practices compliance
-      3. Risk level evaluation
-      4. Remediation recommendations`, 1200);
-    res.json({ analysis: result });
-}));
-// Endpoint to generate AI insights for overview page
-app.post('/api/llm/generate-insights', (0, errorHandler_1.safeAsync)(async (req, res) => {
-    const { llmConfig, repoData } = req.body;
-    if (!llmConfig || !repoData) {
-        res.status(400).json({ error: 'Missing required parameters' });
-        return;
-    }
-    const llmService = new llmService_1.LLMService(llmConfig);
-    const result = await llmService.generateSummary(`
-Repository Analysis Data:
-Name: ${repoData.name}
-Description: ${repoData.description}
-Languages: ${JSON.stringify(repoData.languages)}
-Metrics: ${JSON.stringify(repoData.metrics)}
-
-Generate comprehensive insights about this repository including:
-1. Technology stack assessment
-2. Project health indicators  
-3. Development patterns observed
-4. Key strengths and areas for improvement
-5. Recommendations for maintainers
-
-Provide actionable insights in a clear, structured format.`);
-    // Return the summary text from the response
-    const insights = typeof result === 'object' && 'summary' in result ? result.summary : result;
-    res.setHeader('Content-Type', 'text/plain');
-    res.send(insights);
-}));
 // Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+    // --- Step 1: Set SSE Headers ---
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive', // Explicitly set for SSE
+        'Access-Control-Allow-Origin': '*',
+    });
     res.flushHeaders();
+    // --- Step 2: Force Keep-Alive and Handle Disconnection ---
+    // The `connection: 'close'` header from the client is the root cause.
+    // We must override this behavior at the socket level to keep the connection open.
+    req.socket.setKeepAlive(true);
+    req.socket.setNoDelay(true);
+    req.socket.setTimeout(0); // Disable socket timeout to prevent premature closing
     let clientDisconnected = false;
     let keepAliveInterval = null;
-    let eventId = 0;
-    // Send keep-alive messages every 15 seconds
-    keepAliveInterval = setInterval(() => {
+    const cleanup = () => {
         if (!clientDisconnected) {
+            clientDisconnected = true;
+            if (keepAliveInterval)
+                clearInterval(keepAliveInterval);
+            console.warn('Client disconnected, cleaning up resources.');
             try {
-                res.write(`id: ${eventId++}\nevent: keep-alive\ndata: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
+                res.end();
             }
-            catch (err) {
-                console.warn('Keep-alive failed, client likely disconnected');
-                clientDisconnected = true;
-                if (keepAliveInterval)
-                    clearInterval(keepAliveInterval);
-            }
+            catch (e) { /* ignore */ }
+        }
+    };
+    // Attach listeners immediately. The fragile setTimeout is removed.
+    req.on('close', cleanup);
+    req.on('error', (err) => {
+        console.error('Request error:', err);
+        cleanup();
+    });
+    res.on('error', (err) => {
+        console.error('Response error:', err);
+        cleanup();
+    });
+    // --- Step 3: Implement a Robust Heartbeat ---
+    // Send a comment every 15 seconds to prevent proxy timeouts.
+    keepAliveInterval = setInterval(() => {
+        if (clientDisconnected) {
+            clearInterval(keepAliveInterval);
+            return;
+        }
+        try {
+            res.write(': heartbeat\n\n');
+        }
+        catch (err) {
+            console.warn('Heartbeat failed, client likely disconnected.');
+            cleanup();
         }
     }, 15000);
     const sendProgress = (step, progress) => {
         if (clientDisconnected) {
-            console.warn('Skipping progress update - client disconnected');
+            console.warn(`Skipping progress update (client disconnected): ${progress}% - ${step}`);
             return;
         }
         console.log(`[${new Date().toISOString()}] Progress: ${progress}% - ${step}`);
         try {
-            // Each event needs an ID and event type
-            res.write(`id: ${eventId++}\n` +
-                `event: progress\n` +
-                `data: ${JSON.stringify({
-                    step,
-                    progress,
-                    timestamp: Date.now()
-                })}\n\n`);
+            const payload = { step, progress, timestamp: Date.now() };
+            res.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
         }
         catch (err) {
             console.warn('Progress write failed:', err);
-            clientDisconnected = true;
-            handleAnalysisError(res, err);
+            cleanup();
         }
     };
-    // Clean up on client disconnect
-    req.on('close', () => {
-        clientDisconnected = true;
-        if (keepAliveInterval)
-            clearInterval(keepAliveInterval);
-        console.warn('Client disconnected before analysis complete');
-        try {
-            res.end();
-        }
-        catch (e) { }
-    });
-    req.on('error', (err) => {
-        clientDisconnected = true;
-        if (keepAliveInterval)
-            clearInterval(keepAliveInterval);
-        console.error('Request error:', err);
-        try {
-            res.end();
-        }
-        catch (e) { }
-    });
+    // Send initial progress from server before heavy work
+    sendProgress('Starting analysis', 1);
     try {
         console.log('Received query:', req.query);
         console.log('Request method:', req.method);
@@ -267,11 +180,11 @@ const handleAnalysisRequest = async (req, res) => {
             return;
         }
         // Additional validation for GitHub URL format
-        const githubUrlPattern = /^https?:\/\/github\.com\/[^\/]+\/[^\/]+\/?$/;
+        const githubUrlPattern = /^https:\/\/github\.com\/[a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+$/;
         if (!githubUrlPattern.test(repoUrl.trim())) {
             const error = 'Invalid GitHub repository URL format. Expected: https://github.com/owner/repo';
             console.error(error, { repoUrl: repoUrl.trim() });
-            res.write(`event: error-message\ndata: ${JSON.stringify({ error })}\n\n`);
+            res.write(`event: error-message\ndata: ${JSON.stringify({ error: he_1.default.encode(error) })}\n\n`);
             res.end();
             return;
         }
@@ -294,47 +207,66 @@ const handleAnalysisRequest = async (req, res) => {
         // Send initial progress to confirm connection
         sendProgress('Connection established', 0);
         // Check cache first
-        const cacheKey = `analysis_${cleanRepoUrl}`;
+        const sanitizedRepoUrl = cleanRepoUrl.replace(/[^a-zA-Z0-9-._:/]/g, '');
+        const cacheKey = `analysis_${sanitizedRepoUrl}`;
         const cached = await cacheService.get(cacheKey);
         if (cached) {
             console.log(`Returning cached analysis for key ${cacheKey}`);
-            res.write(`event: complete\ndata: ${cached}\n\n`);
+            // Use the same 'result' event for consistency
+            res.write(`event: result\ndata: ${cached}\n\n`);
+            // Also send the 'done' event
+            res.write(`event: done\ndata: ${JSON.stringify({ message: "Stream finished (from cache)" })}\n\n`);
             res.end();
             return;
         }
         console.log(`[${new Date().toISOString()}] Starting analysis for: ${cleanRepoUrl}`);
         const analysisService = new backendAnalysisService_1.BackendAnalysisService(githubToken, llmConfig);
-        const report = await analysisService.analyze(cleanRepoUrl, sendProgress);
-        if (keepAliveInterval)
-            clearInterval(keepAliveInterval);
-        if (clientDisconnected) {
-            console.warn('Client disconnected - skipping completion signal');
-            return;
-        }
         try {
+            const report = await analysisService.analyze(cleanRepoUrl, {
+                useCache: false, // Caching is handled at this layer
+                branch: 'main', // Default branch, can be overridden by query params
+                dependencies: true,
+                architecture: true,
+                quality: true,
+                security: true,
+                technicalDebt: true,
+                performance: true,
+                hotspots: true,
+                keyFunctions: true,
+                prAnalysis: true,
+                contributorAnalysis: true,
+                aiSummary: !!llmConfig?.apiKey,
+                aiArchitecture: !!llmConfig?.apiKey,
+                temporalCoupling: true,
+                dataTransformation: true,
+                gitGraph: true,
+                sendProgress,
+            });
+            if (keepAliveInterval)
+                clearInterval(keepAliveInterval);
+            if (clientDisconnected) {
+                console.warn('Client disconnected - skipping completion signal');
+                return;
+            }
             const jsonString = safeSerializeReport(report);
             await cacheService.set(cacheKey, jsonString);
-            const payloadSizeKB = (jsonString.length / 1024).toFixed(2);
-            console.log(`[${new Date().toISOString()}] Analysis completed (${payloadSizeKB} KB)`);
-            // Validate the JSON string before sending
-            try {
-                const testParse = JSON.parse(jsonString);
-                console.log('JSON validation passed, sending result with keys:', Object.keys(testParse));
-            }
-            catch (parseTest) {
-                console.error('JSON validation failed:', parseTest);
-                throw new Error('Generated JSON is invalid');
-            }
-            res.write(`id: ${eventId++}\nevent: complete\ndata: ${jsonString}\n\n`);
+            // Also cache the report by its ID for the /api/report/:id endpoint
+            await cacheService.set(report.id, jsonString);
+            console.log(`Report cached with both keys: ${cacheKey} and ${report.id}`);
+            // Send the final report payload under a 'result' event
+            console.log('Sending final analysis report to client.');
+            res.write(`event: result\ndata: ${jsonString}\n\n`);
+            // Send a final 'done' event to signal completion gracefully
+            console.log('Signaling end of stream to client.');
+            res.write(`event: done\ndata: ${JSON.stringify({ message: "Stream finished" })}\n\n`);
+            // Now, it's safe to close the connection.
             res.end();
         }
-        catch (serializationError) {
-            console.error('Failed to serialize analysis result:', serializationError);
-            if (!clientDisconnected) {
-                res.write(`event: error-message\n` +
-                    `data: ${JSON.stringify({ error: 'Failed to serialize analysis result: ' + (serializationError instanceof Error ? serializationError.message : 'Unknown error') })}\n\n`);
-                res.end();
-            }
+        catch (error) {
+            if (keepAliveInterval)
+                clearInterval(keepAliveInterval);
+            handleAnalysisError(res, error);
+            return;
         }
     }
     catch (error) {
@@ -357,6 +289,17 @@ app.post('/api/analyze', (req, res) => {
     console.log(`🚨 User-Agent:`, req.get('User-Agent'));
     handleAnalysisRequest(req, res);
 });
+// New endpoint to fetch the full report by ID
+app.get('/api/report/:id', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { id } = req.params;
+    const report = await cacheService.get(id);
+    if (report) {
+        res.status(200).json(JSON.parse(report));
+    }
+    else {
+        res.status(404).json({ error: 'Report not found or expired.' });
+    }
+}));
 // Endpoint to validate GitHub token
 app.post('/api/validate-github-token', (0, errorHandler_1.safeAsync)(async (req, res) => {
     const { token } = req.body;
@@ -378,6 +321,13 @@ app.get('/api/check-env-keys', (_req, res) => {
     });
 });
 // Single-process mode (cluster integration removed)
+// Add a health check endpoint
+app.get('/api/health', (_req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+    });
+});
 // Centralized error handler
 app.use(errorHandler_1.errorHandler);
 app.listen(port, () => {

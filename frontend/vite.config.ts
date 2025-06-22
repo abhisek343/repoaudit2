@@ -8,6 +8,7 @@ export default defineConfig({
     exclude: ['lucide-react'],
   }, // Added comma here
   server: {
+    host: true, // Make server accessible on the network
     proxy: {
       // Proxy SSE endpoint with no timeout for analyze
       '/api/analyze': {
@@ -17,17 +18,17 @@ export default defineConfig({
         ws: false,
         timeout: 0,
         configure: (proxy) => {
-          proxy.on('proxyReq', proxyReq => {
-            // Ensure SSE requests have correct headers
-            proxyReq.setHeader('Accept', 'text/event-stream');
-            proxyReq.setHeader('Cache-Control', 'no-cache');
+          proxy.on('error', (err) => {
+            console.error('Proxy error:', err);
           });
-          proxy.on('proxyRes', proxyRes => {
-            proxyRes.headers['cache-control'] = 'no-cache';
-            proxyRes.headers['connection'] = 'keep-alive';
-            proxyRes.headers['x-accel-buffering'] = 'no';
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // This is the key fix: the browser sends `Connection: close`
+            // which was being proxied to the backend. We must remove it.
+            proxyReq.removeHeader('connection');
+            proxyReq.setHeader('connection', 'keep-alive');
+            console.log(`Proxying request from ${req.url} to http://localhost:3001${proxyReq.path}`);
           });
-        }
+        },
       },
       // Other API routes
       '/api': {
@@ -36,6 +37,9 @@ export default defineConfig({
         secure: false,
         ws: false
       }
-    }
+    },
+    // This is crucial for SPA routing. It ensures that any deep-link
+    // request is redirected to index.html, allowing React Router to handle it.
+    historyApiFallback: true,
   }
 });

@@ -78,7 +78,7 @@ export class AdvancedCompressionService {
     /**
    * Decompress extremely compressed data
    */
-  static async decompressExtreme(compressedData: ArrayBuffer, _metadata: CompressionMetadata): Promise<string> {
+  static async decompressExtreme(compressedData: ArrayBuffer): Promise<string> {
     const startTime = performance.now();
     
     try {
@@ -306,7 +306,7 @@ export class AdvancedCompressionService {
    */
   static async decompressAuto(compressedData: ArrayBuffer, metadata: CompressionMetadata): Promise<string> {
     if (metadata.algorithm === 'extreme-multi-stage') {
-      return this.decompressExtreme(compressedData, metadata);
+      return this.decompressExtreme(compressedData);
     } else {
       return this.decompressStandard(compressedData);
     }

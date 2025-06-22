@@ -205,54 +205,73 @@ class GitHubService {
             this.handleGitHubError(error, 'fetching contributors');
         }
     }
-    async getCommits(owner, repo, branchOrSha, limit = 2000) {
+    async getCommits(owner, repo, branchOrSha, limit = 2000, sendProgress) {
         this.owner = owner;
         this.repo = repo;
         let allCommits = [];
-        // initialParams will store the consistent parameters like 'sha'
         const initialParams = {};
         if (branchOrSha) {
             initialParams.sha = branchOrSha;
         }
         let url = `${this.baseURL}/repos/${owner}/${repo}/commits`;
         let commitsFetched = 0;
+        let isFirstRequest = true;
+        const maxRetries = 3;
+        let retryCount = 0;
         try {
             while (url && commitsFetched < limit) {
                 const currentPerPage = Math.min(100, limit - commitsFetched);
-                // Construct parameters for the current request
-                // Always include sha from initialParams if it was provided
-                // And always set the per_page for the current request
-                const requestParams = {
-                    per_page: currentPerPage,
-                    ...initialParams // Spread initialParams to include 'sha' if present
-                };
-                // Make the GET request. Axios will correctly append params to the URL.
-                // If 'url' is a full pagination URL from Link header, axios handles merging.
-                const response = await axios_1.default.get(url, {
+                const requestConfig = {
                     headers: this.getHeaders(),
-                    params: requestParams,
-                });
-                const commitsOnPage = response.data.map((c) => ({
-                    sha: c.sha,
-                    message: c.commit.message,
-                    author: {
-                        name: c.commit.author?.name || c.author?.login || 'N/A',
-                        email: c.commit.author?.email || 'N/A',
-                        date: c.commit.author?.date || new Date().toISOString()
-                    },
-                    // Note: Detailed stats and files per commit are fetched by getCommitDetails
-                }));
-                allCommits = allCommits.concat(commitsOnPage);
-                commitsFetched += commitsOnPage.length;
-                if (commitsFetched >= limit)
-                    break; // Respect the limit
-                const linkHeader = response.headers['link'];
-                if (linkHeader) {
-                    const nextLink = linkHeader.split(',').find((s) => s.includes('rel="next"'));
-                    url = nextLink ? (nextLink.match(/<(.*?)>/) || [])[1] : undefined;
+                    timeout: 15000, // 15-second timeout for each request
+                };
+                if (isFirstRequest) {
+                    requestConfig.params = {
+                        per_page: currentPerPage,
+                        ...initialParams
+                    };
+                    isFirstRequest = false;
                 }
-                else {
-                    url = undefined;
+                try {
+                    const response = await axios_1.default.get(url, requestConfig);
+                    const commitsOnPage = response.data.map((c) => ({
+                        sha: c.sha,
+                        message: c.commit.message,
+                        author: {
+                            name: c.commit.author?.name || c.author?.login || 'N/A',
+                            email: c.commit.author?.email || 'N/A',
+                            date: c.commit.author?.date || new Date().toISOString()
+                        },
+                    }));
+                    allCommits = allCommits.concat(commitsOnPage);
+                    commitsFetched += commitsOnPage.length;
+                    if (sendProgress) {
+                        // Progress for commit fetching is between 15% and 20%
+                        const progress = 15 + Math.min(5, 5 * (commitsFetched / limit));
+                        sendProgress(`Fetched ${commitsFetched} commits...`, Math.round(progress));
+                    }
+                    if (commitsFetched >= limit)
+                        break;
+                    const linkHeader = response.headers['link'];
+                    if (linkHeader) {
+                        const nextLink = linkHeader.split(',').find((s) => s.includes('rel="next"'));
+                        url = nextLink ? (nextLink.match(/<(.*?)>/) || [])[1] : undefined;
+                    }
+                    else {
+                        url = undefined;
+                    }
+                    retryCount = 0; // Reset retries on success
+                }
+                catch (error) {
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+                        console.warn(`[GitHubService] Error fetching commits. Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                    else {
+                        throw error; // Max retries reached, re-throw the error
+                    }
                 }
             }
             return allCommits;
@@ -308,7 +327,7 @@ class GitHubService {
         if (filePath.match(/\.(png|jpg|gif|svg|pdf|zip|tar|gz)$/i))
             return '';
         try {
-            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/contents/${filePath}`, { headers: this.getHeaders() });
+            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/contents/${filePath}`, { headers: this.getHeaders(), timeout: 30000 });
             if (response.data && typeof response.data.content === 'string') {
                 return js_base64_1.Base64.decode(response.data.content);
             }
@@ -321,21 +340,32 @@ class GitHubService {
     async getRepoTree(owner, repo, branch) {
         this.owner = owner;
         this.repo = repo;
+        console.log(`[GitHubService] Fetching repository tree with content for ${owner}/${repo}@${branch}`);
         try {
-            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, { headers: this.getHeaders() });
-            return response.data.tree
-                .filter(item => item.type === 'blob' || item.type === 'tree')
-                .map(item => ({
-                name: item.path.split('/').pop() || item.path,
-                path: item.path,
-                size: item.size || 0,
-                type: item.type === 'blob' ? 'file' : 'dir'
-            }));
+            // Use archive download method for better performance and complete file content
+            const files = await this.downloadRepositoryArchive(owner, repo, branch);
+            if (files.length === 0) {
+                console.warn(`[GitHubService] Archive download failed, falling back to tree API`);
+                // Fallback to tree API without content
+                const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, { headers: this.getHeaders(), timeout: 60000 });
+                return response.data.tree
+                    .filter(item => item.type === 'blob')
+                    .map(item => ({
+                    name: item.path.split('/').pop() || item.path,
+                    path: item.path,
+                    size: item.size || 0,
+                    type: 'file',
+                    content: undefined // No content in fallback mode
+                }));
+            }
+            console.log(`[GitHubService] Successfully fetched ${files.length} files with content`);
+            return files;
         }
         catch (error) {
+            console.error(`[GitHubService] Failed to fetch repository tree: ${error}`);
             this.handleGitHubError(error, `fetch repository tree for ${owner}/${repo}`);
+            return [];
         }
-        return [];
     }
     async getDirectoryContents(owner, repo, path = '') {
         this.owner = owner;
