@@ -9,11 +9,10 @@ export class ArchitectureController {
   private architectureService: ArchitectureAnalysisService;
   private cacheService: RedisCacheService;
   private configManager: AIArchitectureConfigManager;
-
-  constructor() {
+  constructor(cacheService: RedisCacheService) {
     this.configManager = new AIArchitectureConfigManager();
     this.architectureService = new ArchitectureAnalysisService(this.configManager.getConfig());
-    this.cacheService = new RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
+    this.cacheService = cacheService;
   }
 
   /**

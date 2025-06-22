@@ -14,8 +14,8 @@ const port = process.env.PORT || 3001;
 // Redis cache for analysis results
 const cacheService = new RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
 
-// Initialize controllers
-const architectureController = new ArchitectureController();
+// Initialize controllers with shared cache service
+const architectureController = new ArchitectureController(cacheService);
 
 // Enable gzip/brotli compression for all responses, but not for SSE
 app.use((req: Request, res: Response, next: NextFunction) => {

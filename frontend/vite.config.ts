@@ -9,28 +9,32 @@ export default defineConfig({
   }, // Added comma here
   server: {
     proxy: {
+      // Proxy SSE endpoint with no timeout for analyze
+      '/api/analyze': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+        ws: false,
+        timeout: 0,
+        configure: (proxy) => {
+          proxy.on('proxyReq', proxyReq => {
+            // Ensure SSE requests have correct headers
+            proxyReq.setHeader('Accept', 'text/event-stream');
+            proxyReq.setHeader('Cache-Control', 'no-cache');
+          });
+          proxy.on('proxyRes', proxyRes => {
+            proxyRes.headers['cache-control'] = 'no-cache';
+            proxyRes.headers['connection'] = 'keep-alive';
+            proxyRes.headers['x-accel-buffering'] = 'no';
+          });
+        }
+      },
+      // Other API routes
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
-        // keep-alive for SSE; disable ws so it does not treat it as websocket
-        ws: false,        // Configure proxy for streaming responses
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            // Ensure streaming responses aren't buffered
-            if (req.url?.includes('/analyze')) {
-              proxyReq.setHeader('Cache-Control', 'no-cache');
-            }
-          });
-          proxy.on('proxyRes', (proxyRes, req) => {
-            // Ensure SSE responses aren't buffered by proxy
-            if (req.url?.includes('/analyze')) {
-              proxyRes.headers['cache-control'] = 'no-cache';
-              proxyRes.headers['connection'] = 'keep-alive';
-              proxyRes.headers['x-accel-buffering'] = 'no';
-            }
-          });
-        }
+        ws: false
       }
     }
   }

@@ -501,6 +501,7 @@ export class GitHubService {
         {
           params: { state: 'all', per_page: 100, sort: 'created', direction: 'desc' },
           headers: this.getHeaders(),
+          timeout: 60000, // 60 seconds timeout for pull requests
         }
       );
       return response.data.map(pr => {
@@ -520,9 +521,14 @@ export class GitHubService {
         };
       });
     } catch (error) {
-      this.handleGitHubError(error, 'fetching pull requests');
+      // For large repos, pull requests might timeout - this shouldn't fail the entire analysis
+      console.warn(`Failed to fetch pull requests for ${owner}/${repo}:`, error instanceof Error ? error.message : 'Unknown error');
+      // Return empty array instead of throwing, so analysis can continue
+      return [];
     }
-  }  /**
+  }
+
+  /**
    * Download entire repository as ZIP archive and extract files with content
    * This replaces individual file fetching for better performance
    */

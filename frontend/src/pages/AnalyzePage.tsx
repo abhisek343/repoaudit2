@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react'; // Added useLayoutEffect
+import React, { useState, useEffect, useLayoutEffect } from 'react'; // Added useRef
 import { Link, useNavigate } from 'react-router-dom'; // Added useNavigate
 import { 
   Search, 
@@ -40,18 +40,21 @@ const AnalyzePage = () => {
   const [githubToken, setGithubToken] = useState<string | undefined>();
   // State for analysis lifecycle, moved from App.tsx
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [progress, setProgress] = useState(0);
-  const [currentStep, setCurrentStep] = useState('');  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [error, setError] = useState<string | undefined>();  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState('');
   const [cancelFunction, setCancelFunction] = useState<(() => void) | null>(null);
   const [lastAnalysisTime, setLastAnalysisTime] = useState<number>(0);
   // Cache management state
   const [forceRefresh, setForceRefresh] = useState(false);
   const [showCacheInfo, setShowCacheInfo] = useState(false);
-  const [cacheStats, setCacheStats] = useState<{
-    totalArchives: number;
-    totalSize: number;
-  }>({ totalArchives: 0, totalSize: 0 });
+  type CacheStats = Awaited<ReturnType<typeof RepositoryArchiveService.getCacheStats>>;
+  const [cacheStats, setCacheStats] = useState<CacheStats>({
+    totalArchives: 0,
+    totalOriginalSize: 0,
+    totalCompressedSize: 0,
+    averageCompressionRatio: 0,
+    totalSpaceSaved: 0,
+  });
 
   const reportCategories: ReportCategory[] = [
     {
@@ -142,25 +145,17 @@ const AnalyzePage = () => {
       ],
       requiredPlan: 'free'
     }
-  ];  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔍 AnalyzePage useEffect running', {
-        cancelFunction: !!cancelFunction,
-        eventSource: !!eventSource
-      });
-      
-      // Note: Removed testEventSource call as it was interfering with real analysis
-      // by making test requests to the /api/analyze endpoint
-    }
-    
+  ];  
+  // Load saved config and GitHub token on component mount
+  useEffect(() => {
     const savedLlmConfigString = localStorage.getItem('llmConfig');
     if (savedLlmConfigString) {
       try {
         const parsedConfig: LLMConfig = JSON.parse(savedLlmConfigString);
-        if (parsedConfig && parsedConfig.provider && parsedConfig.apiKey) {
+        if (parsedConfig?.provider && parsedConfig.apiKey) {
           setLlmConfig(parsedConfig);
         } else {
-          localStorage.removeItem('llmConfig'); 
+          localStorage.removeItem('llmConfig');
         }
       } catch (e) {
         console.error("Failed to parse LLM config from localStorage", e);
@@ -171,21 +166,7 @@ const AnalyzePage = () => {
     if (savedGithubToken) {
       setGithubToken(savedGithubToken);
     }
-
-    // Cleanup function to cancel any ongoing analysis when component unmounts
-    return () => {
-      if (cancelFunction) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('Component unmounting, cancelling analysis');
-        }
-        cancelFunction();
-      } else if (eventSource) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('Component unmounting, closing EventSource');
-        }
-        eventSource.close();
-      }
-    };  }, [cancelFunction, eventSource]);
+  }, []);
 
   // Load cache statistics on component mount
   useEffect(() => {
@@ -323,11 +304,7 @@ const AnalyzePage = () => {
       console.log('Cancelling analysis using proper cancel function');
       cancelFunction();
       setCancelFunction(null);
-    } else if (eventSource) {
-      console.log('Falling back to eventSource.close()');
-      eventSource.close();
-      setEventSource(null);
-    }
+    } 
     
     setIsAnalyzing(false);
     setProgress(0);
@@ -349,7 +326,6 @@ const AnalyzePage = () => {
       console.error('Failed to clear repository cache:', error);
     }
   };
-
   const getIconComponent = (iconName: string) => {
     const icons: Record<string, React.ReactNode> = {
       BarChart3: <BarChart3 className="w-6 h-6" />,
@@ -546,7 +522,7 @@ const AnalyzePage = () => {
                     <div>
                       <span className="font-medium text-gray-700">Total Cache Size:</span>
                       <p className="text-gray-600">
-                        {(cacheStats.totalSize / (1024 * 1024)).toFixed(2)} MB
+                        {(cacheStats.totalCompressedSize / (1024 * 1024)).toFixed(2)} MB
                       </p>
                     </div>
                   </div>

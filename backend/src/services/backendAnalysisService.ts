@@ -637,19 +637,24 @@ export class BackendAnalysisService {
       onProgress('Analyzing quality', 65);
       const quality = await this.safeCalculateQualityMetrics(files);
 
+      onProgress('Analyzing security and performance', 70);
       const securityIssues = this.generateFallbackSecurityIssues(files);
       const technicalDebt = this.generateFallbackTechnicalDebt(files, quality);
       const performanceMetrics = this.generateFallbackPerformanceMetrics(files);
       const hotspots = this.generateHotspots(files, processedCommits);
       const keyFunctions = this.generateKeyFunctions(files);
       const apiEndpoints = this.generateFallbackAPIEndpoints(files);
+      
+      onProgress('Generating data visualizations', 75);
       const fileSystemTree = this.generateFileSystemTree(files);
       const churnSunburstData = this.generateChurnSunburstData(files, processedCommits);
       const dependencyWheelData = this.generateDependencyWheelData(dependencies);
       const contributorStreamData = this.generateContributorStreamData(processedCommits, processedContributors);
 
+      onProgress('Fetching pull requests', 80);
       const pullRequests = await this.githubService.getPullRequests(owner, repo);
 
+      onProgress('Calculating metrics', 85);
       const metrics = this.calculateMetrics(
         processedCommits, 
         processedContributors, 
@@ -659,6 +664,7 @@ export class BackendAnalysisService {
         pullRequests
       );
 
+      onProgress('Generating AI analysis', 90);
       const aiSummary = this.llmService.isConfigured()
         ? await this.generateAISummary(repoData, files)
         : 'AI summary requires LLM configuration.';
@@ -667,13 +673,15 @@ export class BackendAnalysisService {
         ? await this.generateAIArchitectureDescription(repoData, files, architecture)
         : 'AI architecture analysis requires LLM configuration.';
 
+      onProgress('Finalizing architecture analysis', 95);
       const systemArchitecture = await this.architectureAnalysisService.analyzeArchitecture(files);
 
+      onProgress('Generating advanced analytics', 98);
       const temporalCouplings = this.generateTemporalCouplings(processedCommits, files);
       const transformationFlows = this.generateDataTransformationFlow(files, processedCommits);
       const gitGraph = this.generateGitGraphData(processedCommits, processedContributors);
 
-
+      onProgress('Completing analysis', 99);
       const endTime = Date.now();
       console.log(`Total analysis time: ${(endTime - startTime) / 1000}s`);
 

@@ -5,17 +5,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArchitectureController = void 0;
 const architectureAnalysisService_1 = require("../services/architectureAnalysisService");
-const redisCacheService_1 = require("../services/redisCacheService");
 const aiArchitectureConfig_1 = require("../config/aiArchitectureConfig");
 const crypto_1 = __importDefault(require("crypto"));
 class ArchitectureController {
     architectureService;
     cacheService;
     configManager;
-    constructor() {
+    constructor(cacheService) {
         this.configManager = new aiArchitectureConfig_1.AIArchitectureConfigManager();
         this.architectureService = new architectureAnalysisService_1.ArchitectureAnalysisService(this.configManager.getConfig());
-        this.cacheService = new redisCacheService_1.RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
+        this.cacheService = cacheService;
     }
     /**
      * Returns raw architecture analysis data without handling HTTP

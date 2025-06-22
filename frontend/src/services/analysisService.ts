@@ -161,11 +161,17 @@ export class AnalysisService {
 
       // Handle connection open
       eventSource.onopen = () => {
-        if (this.isCancelled) {
-          cleanup();
-          reject(new Error('Analysis cancelled'));
-          return;
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔗 SSE Connection established, readyState:', eventSource.readyState);
         }
+        // Log keep-alive events for debugging
+        eventSource.addEventListener('keep-alive', (evt) => {
+          console.log('🛡️ SSE keep-alive event:', evt.data);
+        });
+        // Log any generic messages
+        eventSource.onmessage = (evt) => {
+          console.log('📨 SSE message received:', evt.data);
+        };
         retryCount = 0;
       };
 
@@ -232,7 +238,9 @@ export class AnalysisService {
           reject(new Error('Failed to parse analysis result'));
         }
       });      // Handle error events
-      eventSource.addEventListener('error', () => {
+      eventSource.addEventListener('error', (event) => {
+        console.error('EventSource error event:', event);
+        
         if (this.isCancelled) {
           cleanup();
           reject(new Error('Analysis cancelled'));
@@ -240,16 +248,26 @@ export class AnalysisService {
         }
 
         if (eventSource.readyState === EventSource.CLOSED) {
+          console.warn(`EventSource connection closed, retry attempt ${retryCount + 1}/${maxRetries}`);
+          
           if (retryCount < maxRetries) {
             retryCount++;
             retryTimeout = setTimeout(() => {
+              console.log(`Retrying EventSource connection (attempt ${retryCount})`);
               const newEventSource = new EventSource(eventSourceUrl);
               Object.assign(eventSource, newEventSource);
             }, Math.pow(2, retryCount) * 1000);
           } else {
             cleanup();
-            reject(new Error('Connection failed after maximum retries'));
+            reject(new Error('Connection failed after maximum retries. This could be due to network issues or server timeout.'));
           }
+        } else if (eventSource.readyState === EventSource.CONNECTING) {
+          console.log('EventSource is connecting...');
+          // Let it continue trying to connect
+        } else {
+          console.error('EventSource encountered an unexpected error');
+          cleanup();
+          reject(new Error('EventSource connection error occurred'));
         }
       });
 
@@ -325,14 +343,17 @@ export class AnalysisService {
       let retryCount = 0;
       const maxRetries = 3;      // Handle connection open
       eventSource.onopen = () => {
-        if (this.isCancelled) {
-          cleanup();
-          reject(new Error('Analysis cancelled'));
-          return;
-        }
         if (process.env.NODE_ENV === 'development') {
           console.log('🔗 SSE Connection established, readyState:', eventSource.readyState);
         }
+        // Log keep-alive events for debugging
+        eventSource.addEventListener('keep-alive', (evt) => {
+          console.log('🛡️ SSE keep-alive event:', evt.data);
+        });
+        // Log any generic messages
+        eventSource.onmessage = (evt) => {
+          console.log('📨 SSE message received:', evt.data);
+        };
         retryCount = 0;
       };      // Handle explicit 'progress' events
       eventSource.addEventListener('progress', (event) => {
