@@ -129,17 +129,44 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
         const diagramId = `arch-diag-${uniqueId.replace(/:/g, '-')}`;
         
         let finalDiagram = cleanDiagram;
-        // Ensure the diagram starts with 'graph TD' for a vertical layout if it's a flowchart
-        // Check if it's a flowchart and doesn't already specify a direction or is empty
-        if (finalDiagram.startsWith('graph')) {
-            const firstLine = finalDiagram.split('\n')[0];
-            if (!firstLine.includes('TD') && !firstLine.includes('LR') && !firstLine.includes('BT') && !firstLine.includes('RL')) {
-                // If it's a graph but no direction specified, default to TD
-                finalDiagram = `graph TD\n${finalDiagram.substring(firstLine.length).trim()}`;
+        // Cluster nodes by layer for large diagrams
+        if (Object.keys(fileInfo).length > 50) {
+            const frontendNodes = Object.values(fileInfo).filter(f => f.layer === 'frontend');
+            const backendNodes = Object.values(fileInfo).filter(f => f.layer === 'backend');
+            const otherNodes = Object.values(fileInfo).filter(f => f.layer !== 'frontend' && f.layer !== 'backend');
+
+            let clusteredDiagram = 'graph TD\n';
+            if (frontendNodes.length > 0) {
+                clusteredDiagram += 'subgraph Frontend\n';
+                frontendNodes.forEach(n => {
+                    clusteredDiagram += `    ${n.path.replace(/\//g, '_')}[${n.name}]\n`;
+                });
+                clusteredDiagram += 'end\n';
             }
-        } else if (!finalDiagram.startsWith('sequenceDiagram') && !finalDiagram.startsWith('gantt') && !finalDiagram.startsWith('classDiagram')) {
-            // If it's not explicitly a graph or another diagram type, assume flowchart and prepend graph TD
-            finalDiagram = `graph TD\n${finalDiagram}`;
+            if (backendNodes.length > 0) {
+                clusteredDiagram += 'subgraph Backend\n';
+                backendNodes.forEach(n => {
+                    clusteredDiagram += `    ${n.path.replace(/\//g, '_')}[${n.name}]\n`;
+                });
+                clusteredDiagram += 'end\n';
+            }
+            otherNodes.forEach(n => {
+                clusteredDiagram += `    ${n.path.replace(/\//g, '_')}[${n.name}]\n`;
+            });
+            finalDiagram = clusteredDiagram;
+        } else {
+            // Ensure the diagram starts with 'graph TD' for a vertical layout if it's a flowchart
+            // Check if it's a flowchart and doesn't already specify a direction or is empty
+            if (finalDiagram.startsWith('graph')) {
+                const firstLine = finalDiagram.split('\n')[0];
+                if (!firstLine.includes('TD') && !firstLine.includes('LR') && !firstLine.includes('BT') && !firstLine.includes('RL')) {
+                    // If it's a graph but no direction specified, default to TD
+                    finalDiagram = `graph TD\n${finalDiagram.substring(firstLine.length).trim()}`;
+                }
+            } else if (!finalDiagram.startsWith('sequenceDiagram') && !finalDiagram.startsWith('gantt') && !finalDiagram.startsWith('classDiagram')) {
+                // If it's not explicitly a graph or another diagram type, assume flowchart and prepend graph TD
+                finalDiagram = `graph TD\n${finalDiagram}`;
+            }
         }
 
         if (detailedViewActive) {
@@ -334,6 +361,7 @@ const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <DetailItem label="Path" value={selectedNodeInfo.path} />
             <DetailItem label="Type" value={selectedNodeInfo.type || 'N/A'} />
+            <DetailItem label="Layer" value={selectedNodeInfo.layer || 'N/A'} />
             <DetailItem label="Size" value={`${selectedNodeInfo.size.toLocaleString()} bytes`} />
             <DetailItem label="Complexity" value={`${selectedNodeInfo.complexity || 'N/A'}%`} />
             {selectedNodeInfo.lastModified && <DetailItem label="Last Modified" value={new Date(selectedNodeInfo.lastModified).toLocaleDateString()} />}

@@ -20,17 +20,21 @@ interface AnalysisMethodInfoProps {
 export const AnalysisMethodInfo: React.FC<AnalysisMethodInfoProps> = ({ analysisResult }) => {
   const files = analysisResult.files || [];
   const sourceFiles = files.filter(f => f.content && f.language && f.language !== 'text');
-  const actualMethod = analysisResult.analysisMethod || 'unknown';
+  const actualMethod = analysisResult.analysisMethod || 'archive';
   
   // Calculate the estimated API calls that would have been needed with individual file method
   const estimatedIndividualCalls = Math.min(sourceFiles.length, 800); // Typical limit for individual calls
   const actualArchiveCalls = actualMethod === 'archive' ? 1 : estimatedIndividualCalls;
   const apiCallsSaved = estimatedIndividualCalls - actualArchiveCalls;
   
-  // Calculate performance metrics
-  const totalLOC = sourceFiles.reduce((sum, f) => sum + (f.content?.split('\n').length || 0), 0);
+  // Enhanced performance metrics
+  const totalLOC = analysisResult.metrics?.linesOfCode || 0;
   const avgFileSize = sourceFiles.length > 0 ? 
     sourceFiles.reduce((sum, f) => sum + f.size, 0) / sourceFiles.length : 0;
+  const languageCount = analysisResult.metrics?.languageDistribution ? 
+    Object.keys(analysisResult.metrics.languageDistribution).length :
+    Object.keys(analysisResult.languages || {}).length;
+  const complexityFiles = analysisResult.metrics?.filesWithComplexity || 0;
   
   const benefits = [
     {
@@ -38,14 +42,14 @@ export const AnalysisMethodInfo: React.FC<AnalysisMethodInfoProps> = ({ analysis
       title: 'Single API Call',
       description: 'Downloaded entire repository in one request',
       value: '1 call',
-      comparison: `vs ${estimatedIndividualCalls} individual calls`,
+      comparison: `vs ${estimatedIndividualCalls.toLocaleString()} individual calls`,
     },
     {
       icon: <CheckCircle className="w-5 h-5 text-green-500" />,
       title: 'Complete Coverage',
       description: 'Analyzed all repository files without pagination',
-      value: `${files.length} files`,
-      comparison: `${sourceFiles.length} source files processed`,
+      value: `${files.length.toLocaleString()} files`,
+      comparison: `${sourceFiles.length.toLocaleString()} source files processed`,
     },
     {
       icon: <Clock className="w-5 h-5 text-blue-500" />,
@@ -149,37 +153,42 @@ export const AnalysisMethodInfo: React.FC<AnalysisMethodInfoProps> = ({ analysis
             </div>
           ))}
         </div>
-      </div>
-
-      {/* Analysis Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      </div>      {/* Analysis Statistics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
           <div className="flex items-center mb-2">
             <Database className="w-5 h-5 text-blue-500" />
-            <span className="ml-2 font-semibold text-blue-900">Data Processed</span>
+            <span className="ml-2 font-semibold text-blue-900">Lines of Code</span>
           </div>
           <div className="text-2xl font-bold text-blue-800">{totalLOC.toLocaleString()}</div>
-          <div className="text-sm text-blue-600">Lines of code analyzed</div>
+          <div className="text-sm text-blue-600">Analyzed from repository archive</div>
         </div>
         
         <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
           <div className="flex items-center mb-2">
             <FileText className="w-5 h-5 text-purple-500" />
-            <span className="ml-2 font-semibold text-purple-900">File Coverage</span>
+            <span className="ml-2 font-semibold text-purple-900">Source Files</span>
           </div>
-          <div className="text-2xl font-bold text-purple-800">{sourceFiles.length}</div>
-          <div className="text-sm text-purple-600">Source files analyzed</div>
+          <div className="text-2xl font-bold text-purple-800">{sourceFiles.length.toLocaleString()}</div>
+          <div className="text-sm text-purple-600">Files with complexity analysis</div>
         </div>
         
         <div className="bg-green-50 rounded-lg p-4 border border-green-200">
           <div className="flex items-center mb-2">
             <Activity className="w-5 h-5 text-green-500" />
-            <span className="ml-2 font-semibold text-green-900">Avg File Size</span>
+            <span className="ml-2 font-semibold text-green-900">Languages</span>
           </div>
-          <div className="text-2xl font-bold text-green-800">
-            {(avgFileSize / 1024).toFixed(1)}KB
+          <div className="text-2xl font-bold text-green-800">{languageCount}</div>
+          <div className="text-sm text-green-600">Programming languages detected</div>
+        </div>
+        
+        <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+          <div className="flex items-center mb-2">
+            <TrendingUp className="w-5 h-5 text-orange-500" />
+            <span className="ml-2 font-semibold text-orange-900">Complexity</span>
           </div>
-          <div className="text-sm text-green-600">Per source file</div>
+          <div className="text-2xl font-bold text-orange-800">{complexityFiles}</div>
+          <div className="text-sm text-orange-600">Files with complexity metrics</div>
         </div>
       </div>
 

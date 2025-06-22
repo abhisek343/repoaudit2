@@ -38,16 +38,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GitHubService = void 0;
 const axios_1 = __importDefault(require("axios"));
-const js_base64_1 = require("js-base64");
 const jszip_1 = __importDefault(require("jszip"));
 const path = __importStar(require("path"));
+const githubGraphQLService_1 = require("./githubGraphQLService");
 class GitHubService {
     baseURL = 'https://api.github.com';
     token;
     owner = '';
     repo = '';
+    graphqlService;
     constructor(token) {
         this.token = token;
+        this.graphqlService = new githubGraphQLService_1.GitHubGraphQLService(token);
     }
     getHeaders() {
         const headers = {
@@ -138,6 +140,24 @@ class GitHubService {
             throw error;
         }
     }
+    /**
+     * Get batched repository data using GraphQL API as primary method
+     * Falls back to individual REST API calls if GraphQL fails
+     */ async getBatchedRepositoryData(owner, repo, branch) {
+        this.owner = owner;
+        this.repo = repo;
+        console.log(`[GitHubService] Attempting batched fetch for ${owner}/${repo} using GraphQL API`);
+        try {
+            // Try GraphQL API first for efficient batched data fetching
+            const result = await this.graphqlService.getBatchedRepositoryData(owner, repo, branch);
+            console.log(`[GitHubService] GraphQL batched fetch successful: repository + ${result.files.length} files`);
+            return result;
+        }
+        catch (graphqlError) {
+            console.error(`[GitHubService] GraphQL batched fetch failed: ${graphqlError}`);
+            throw graphqlError;
+        }
+    }
     async getRepository(owner, repo) {
         this.owner = owner;
         this.repo = repo;
@@ -166,7 +186,15 @@ class GitHubService {
             };
         }
         catch (error) {
-            this.handleGitHubError(error, 'fetching repository information');
+            // Try GraphQL fallback if REST API fails
+            try {
+                console.warn(`[GitHubService] REST API failed for repository info, trying GraphQL fallback`);
+                return await this.graphqlService.getRepository(owner, repo);
+            }
+            catch (graphqlError) {
+                console.error(`[GitHubService] Both REST and GraphQL failed for repository info`);
+                this.handleGitHubError(error, 'fetching repository information');
+            }
         }
     }
     async getContributors(owner, repo) {
@@ -202,7 +230,15 @@ class GitHubService {
             return allContributors;
         }
         catch (error) {
-            this.handleGitHubError(error, 'fetching contributors');
+            // Try GraphQL fallback if REST API fails
+            try {
+                console.warn(`[GitHubService] REST API failed for contributors, trying GraphQL fallback`);
+                return await this.graphqlService.getContributors(owner, repo);
+            }
+            catch (graphqlError) {
+                console.error(`[GitHubService] Both REST and GraphQL failed for contributors`);
+                this.handleGitHubError(error, 'fetching contributors');
+            }
         }
     }
     async getCommits(owner, repo, branchOrSha, limit = 2000, sendProgress) {
@@ -242,6 +278,7 @@ class GitHubService {
                             email: c.commit.author?.email || 'N/A',
                             date: c.commit.author?.date || new Date().toISOString()
                         },
+                        date: c.commit.author?.date || new Date().toISOString(),
                     }));
                     allCommits = allCommits.concat(commitsOnPage);
                     commitsFetched += commitsOnPage.length;
@@ -277,6 +314,16 @@ class GitHubService {
             return allCommits;
         }
         catch (error) {
+            // For commits, only try GraphQL fallback if it's a simple request (not with complex pagination)
+            if (limit <= 100) {
+                try {
+                    console.warn(`[GitHubService] REST API failed for commits, trying GraphQL fallback`);
+                    return await this.graphqlService.getCommits(owner, repo, branchOrSha, limit);
+                }
+                catch (graphqlError) {
+                    console.error(`[GitHubService] Both REST and GraphQL failed for commits`);
+                }
+            }
             this.handleGitHubError(error, 'fetching commits');
         }
     }
@@ -294,6 +341,7 @@ class GitHubService {
                     email: data.commit.author?.email || 'N/A',
                     date: data.commit.author?.date || new Date().toISOString(),
                 },
+                date: data.commit.author?.date || new Date().toISOString(),
                 stats: data.stats,
                 files: data.files?.map((file) => ({
                     filename: file.filename,
@@ -321,71 +369,22 @@ class GitHubService {
             return {};
         }
     }
-    async getFileContent(owner, repo, filePath) {
-        this.owner = owner;
-        this.repo = repo;
-        if (filePath.match(/\.(png|jpg|gif|svg|pdf|zip|tar|gz)$/i))
-            return '';
-        try {
-            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/contents/${filePath}`, { headers: this.getHeaders(), timeout: 30000 });
-            if (response.data && typeof response.data.content === 'string') {
-                return js_base64_1.Base64.decode(response.data.content);
-            }
-            return '';
-        }
-        catch (error) {
-            throw this.handleGitHubError(error, `fetch file content for ${owner}/${repo}/${filePath}`);
-        }
-    }
     async getRepoTree(owner, repo, branch) {
         this.owner = owner;
         this.repo = repo;
-        console.log(`[GitHubService] Fetching repository tree with content for ${owner}/${repo}@${branch}`);
+        console.log(`[GitHubService] Fetching repository tree with content for ${owner}/${repo}@${branch} using archive method`);
         try {
             // Use archive download method for better performance and complete file content
             const files = await this.downloadRepositoryArchive(owner, repo, branch);
             if (files.length === 0) {
-                console.warn(`[GitHubService] Archive download failed, falling back to tree API`);
-                // Fallback to tree API without content
-                const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, { headers: this.getHeaders(), timeout: 60000 });
-                return response.data.tree
-                    .filter(item => item.type === 'blob')
-                    .map(item => ({
-                    name: item.path.split('/').pop() || item.path,
-                    path: item.path,
-                    size: item.size || 0,
-                    type: 'file',
-                    content: undefined // No content in fallback mode
-                }));
+                throw new Error(`Archive download failed and no fallback is configured`);
             }
-            console.log(`[GitHubService] Successfully fetched ${files.length} files with content`);
+            console.log(`[GitHubService] Successfully fetched ${files.length} files with content using archive method`);
             return files;
         }
         catch (error) {
-            console.error(`[GitHubService] Failed to fetch repository tree: ${error}`);
+            console.error(`[GitHubService] Failed to fetch repository tree via archive download: ${error}`);
             this.handleGitHubError(error, `fetch repository tree for ${owner}/${repo}`);
-            return [];
-        }
-    }
-    async getDirectoryContents(owner, repo, path = '') {
-        this.owner = owner;
-        this.repo = repo;
-        try {
-            const response = await axios_1.default.get(`${this.baseURL}/repos/${owner}/${repo}/contents/${path}`, { headers: this.getHeaders() });
-            if (Array.isArray(response.data)) {
-                return response.data
-                    .filter(item => item.type === 'file' || item.type === 'dir')
-                    .map(item => ({
-                    name: item.name,
-                    path: item.path,
-                    size: item.size || 0,
-                    type: item.type
-                }));
-            }
-            return [];
-        }
-        catch (error) {
-            console.warn(`Warning: Could not fetch directory contents for ${path} in ${owner}/${repo}: ${error instanceof Error ? error.message : String(error)}`);
             return [];
         }
     }
@@ -491,14 +490,14 @@ class GitHubService {
                 if (!cleanPath) {
                     // Skip if path becomes empty
                     continue;
-                }
-                // Create the file info object
+                } // Create the file info object
                 const fileInfo = {
                     name: path.basename(cleanPath),
                     path: cleanPath,
                     size: 0, // We'll estimate this from content length
                     type: 'file',
-                    content: undefined // Will be populated below for text files
+                    content: undefined, // Will be populated below for text files
+                    language: this.getLanguageFromExtension(cleanPath) // Add language detection
                 }; // Only extract content for text files under a reasonable size limit
                 if (this.isTextFile(cleanPath)) {
                     const contentPromise = zipObject.async('text').then((content) => {
@@ -538,6 +537,88 @@ class GitHubService {
             this.handleGitHubError(error, `download repository archive for ${owner}/${repo}`);
             return [];
         }
+    }
+    /**
+     * Get programming language from file extension
+     */
+    getLanguageFromExtension(filePath) {
+        const extensionLanguageMap = {
+            '.ts': 'typescript',
+            '.tsx': 'typescript',
+            '.js': 'javascript',
+            '.jsx': 'javascript',
+            '.mjs': 'javascript',
+            '.cjs': 'javascript',
+            '.py': 'python',
+            '.pyw': 'python',
+            '.pyi': 'python',
+            '.java': 'java',
+            '.kt': 'kotlin',
+            '.scala': 'scala',
+            '.groovy': 'groovy',
+            '.c': 'c',
+            '.cpp': 'cpp',
+            '.cxx': 'cpp',
+            '.cc': 'cpp',
+            '.h': 'c',
+            '.hpp': 'cpp',
+            '.hxx': 'cpp',
+            '.cs': 'csharp',
+            '.vb': 'vb',
+            '.fs': 'fsharp',
+            '.php': 'php',
+            '.rb': 'ruby',
+            '.go': 'go',
+            '.rs': 'rust',
+            '.swift': 'swift',
+            '.dart': 'dart',
+            '.lua': 'lua',
+            '.hs': 'haskell',
+            '.elm': 'elm',
+            '.clj': 'clojure',
+            '.cljs': 'clojure',
+            '.ml': 'ocaml',
+            '.ex': 'elixir',
+            '.exs': 'elixir',
+            '.sh': 'shell',
+            '.bash': 'shell',
+            '.zsh': 'shell',
+            '.fish': 'shell',
+            '.ps1': 'powershell',
+            '.bat': 'batch',
+            '.cmd': 'batch',
+            '.sql': 'sql',
+            '.plsql': 'sql',
+            '.psql': 'sql',
+            '.json': 'json',
+            '.yaml': 'yaml',
+            '.yml': 'yaml',
+            '.toml': 'toml',
+            '.xml': 'xml',
+            '.html': 'html',
+            '.htm': 'html',
+            '.css': 'css',
+            '.scss': 'scss',
+            '.sass': 'sass',
+            '.less': 'less',
+            '.md': 'markdown',
+            '.mdx': 'markdown',
+            '.tex': 'latex',
+            '.tf': 'terraform',
+            '.hcl': 'hcl',
+            '.dockerfile': 'dockerfile'
+        };
+        const ext = path.extname(filePath).toLowerCase();
+        const fileName = path.basename(filePath).toLowerCase();
+        // Check by extension
+        if (extensionLanguageMap[ext]) {
+            return extensionLanguageMap[ext];
+        }
+        // Check specific filenames without extensions
+        if (fileName === 'dockerfile' || fileName === 'makefile' || fileName === 'rakefile' || fileName === 'gemfile') {
+            return fileName;
+        }
+        return undefined;
     }
     /**
      * Determine if a file is likely a text file based on extension

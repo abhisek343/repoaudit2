@@ -45,10 +45,32 @@ class RedisCacheService {
             const fullKey = this.prefix ? `${this.prefix}:${key}` : key;
             const value = JSON.stringify(data);
             const ttl = ttlSeconds ?? this.defaultTTL;
-            await this.client.set(fullKey, value, 'EX', ttl);
+            const pipeline = this.client.pipeline();
+            pipeline.set(fullKey, value, 'EX', ttl);
+            pipeline.zadd('report_access_log', Date.now(), fullKey);
+            await pipeline.exec();
+            await this.trimCache();
         }
         catch (e) {
             console.error(`[RedisCacheService] SET error for key ${key}:`, e);
+        }
+    }
+    async trimCache(maxCacheSize = 10) {
+        try {
+            const count = await this.client.zcard('report_access_log');
+            if (count > maxCacheSize) {
+                const toRemove = await this.client.zrange('report_access_log', 0, count - maxCacheSize - 1);
+                if (toRemove.length > 0) {
+                    const pipeline = this.client.pipeline();
+                    pipeline.del(...toRemove);
+                    pipeline.zrem('report_access_log', ...toRemove);
+                    await pipeline.exec();
+                    console.log(`[RedisCacheService] Trimmed ${toRemove.length} old cache entries.`);
+                }
+            }
+        }
+        catch (e) {
+            console.error('[RedisCacheService] TRIM error:', e);
         }
     }
     async delete(key) {

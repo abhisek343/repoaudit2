@@ -49,6 +49,7 @@ export interface Commit {
     email: string;
     date: string;
   };
+  date: string;
   stats?: {
     additions: number;
     deletions: number;
@@ -176,7 +177,7 @@ export interface DependencyInfo {
 }
 
 export interface ArchitectureData {
-    nodes: Array<{ id: string; name: string; type: string; path: string }>;
+    nodes: Array<{ id: string; name: string; type: string; path: string; layer: string; }>;
     links: Array<{ source: string; target: string }>;
 }
 
@@ -226,6 +227,7 @@ export interface APIEndpoint {
   path: string;
   file: string;
   handlerFunction: string;
+  description?: string;
   parameters?: Array<{ name: string; type: string; in: string }>;
   responses?: Array<{ statusCode: string; description: string; schema?: any }>;
   documentation?: string;
@@ -388,8 +390,7 @@ export interface AnalysisResult {
   aiSummary?: string;
   architectureAnalysis?: string;
   systemArchitecture?: SystemArchitecture; // System architecture analysis with Mermaid diagram
-  analysisMethod?: 'archive' | 'individual'; // Method used for file analysis
-  // Summary metrics
+  analysisMethod?: 'archive' | 'individual'; // Method used for file analysis  // Summary metrics
   metrics: {
     totalCommits: number;
     totalContributors: number;
@@ -414,6 +415,8 @@ export interface AnalysisResult {
     avgCommitsPerWeek: number; // Average commits per week
     avgComplexity?: number; // New: Average file complexity
     filesWithComplexity?: number; // New: Count of files with complexity analysis
+    repositorySize?: number; // New: Repository size in bytes
+    languageDistribution?: Record<string, number>; // New: Language distribution by size
   };
   analysisWarnings?: AnalysisWarning[];
   

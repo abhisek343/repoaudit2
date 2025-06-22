@@ -1,6 +1,6 @@
 import { AnalysisResult } from '../../types';
 import ExecutiveSummary from '../ExecutiveSummary';
-import MetricsGrid from '../MetricsGrid';
+import ComprehensiveMetricsPanel from '../ComprehensiveMetricsPanel';
 import FileAnalysisOverview from '../FileAnalysisOverview';
 import AnalysisMethodInfo from '../AnalysisMethodInfo';
 import PerformanceMetrics from '../PerformanceMetrics';
@@ -22,11 +22,8 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
     { name: 'High Vulnerabilities', value: metrics.highVulnerabilities, icon: '🔶' },
   ];  return (
     <div className="space-y-6">
-      {/* Enhanced Metrics Grid with comprehensive archive data */}
-      <MetricsGrid 
-        metrics={analysisResult.metrics} 
-        analysisResult={analysisResult} 
-      />
+      {/* Enhanced Comprehensive Metrics Panel with accurate data */}
+      <ComprehensiveMetricsPanel analysisResult={analysisResult} />
 
       {/* Performance Metrics for Large Repositories */}
       <PerformanceMetrics analysisResult={analysisResult} />

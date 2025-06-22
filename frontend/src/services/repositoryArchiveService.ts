@@ -36,7 +36,7 @@ export const initializeArchiveStorage = async () => {
 };
 
 export class RepositoryArchiveService {
-  private static readonly MAX_ARCHIVES = 5; // Keep only the last 5 repositories
+  private static readonly MAX_ARCHIVES = 10; // Keep only the last 10 repositories
   private static readonly MAX_AGE_HOURS = 24; // Cache for 24 hours
 
   /**

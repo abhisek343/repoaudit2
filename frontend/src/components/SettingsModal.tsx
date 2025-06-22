@@ -272,11 +272,20 @@ const getModelOptions = (provider: string) => {
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   GitHub Personal Access Token
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
+                </h3>                <p className="text-sm text-gray-600 mb-4">
                   <strong>Highly Recommended:</strong> Without a GitHub token, you're limited to 60 API requests per hour, 
                   which may cause analysis failures. With a token, you get 5,000 requests per hour.
                 </p>
+                
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <div className="flex items-start space-x-2">
+                    <Zap className="w-4 h-4 text-blue-500 mt-0.5" />
+                    <div className="text-xs text-blue-700">
+                      <div className="font-medium mb-1">🚀 Enhanced Performance with GraphQL</div>
+                      <div>Now includes GraphQL API fallback for more efficient data fetching. This reduces the number of API calls needed and improves analysis speed, especially beneficial when rate limits are approaching.</div>
+                    </div>
+                  </div>
+                </div>
                 
                 <div className="grid md:grid-cols-2 gap-4 mb-4 text-sm">
                   <div className="flex items-center space-x-2">

@@ -1,7 +1,8 @@
 import { SystemArchitecture } from '../types';
-import { LLMConfig, AnalysisResult, Contributor, FileInfo } from '../types';
+import { LLMConfig, AnalysisResult, Contributor, FileInfo, SavedReport } from '../types';
 import { StorageService } from './storageService';
 import { RepositoryArchiveService } from './repositoryArchiveService';
+import { saveReportToDB } from './reportService';
 
 export class AnalysisService {
   private githubToken: string | undefined;
@@ -386,8 +387,12 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
           }
           
           // Persist to storage (IndexedDB) with error handling
-          StorageService.storeAnalysisResult(finalResult).then(() => {
-            console.log('Analysis result successfully stored to IndexedDB');
+          Promise.all([
+            StorageService.storeAnalysisResult(finalResult),
+            this.saveAsReport(finalResult)
+          ]).then(() => {
+            console.log('Analysis result and report successfully stored');
+            window.dispatchEvent(new CustomEvent('analysisComplete'));
             
             // Log any warnings from the backend
             if (finalResult.analysisWarnings && finalResult.analysisWarnings.length > 0) {
@@ -396,10 +401,10 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
                 console.warn(`[${warning.step}]: ${warning.message}`, warning.error || '');
               });
             }
-
+            
             resolve(finalResult);
           }).catch(e => {
-            console.error('Failed to store analysis result:', e);
+            console.error('Failed to store analysis result or report:', e);
             // Still resolve with the result even if storage fails
             console.warn('Continuing with analysis result despite storage failure');
             resolve(finalResult);
@@ -507,6 +512,27 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
     } catch (error) {
       console.error('Error validating analysis result:', error);
       return false;
+    }
+  }
+private async saveAsReport(result: AnalysisResult): Promise<void> {
+    try {
+      const report: Omit<SavedReport, 'id'> = {
+        repositoryName: result.repository?.full_name || 'Unknown Repo',
+        repositoryUrl: result.repositoryUrl,
+        summary: result.aiSummary || 'No summary available.',
+        category: 'comprehensive',
+        tags: result.basicInfo.language ? [result.basicInfo.language] : [],
+        createdAt: result.createdAt,
+        lastAccessed: new Date().toISOString(),
+        isPublic: false,
+        userId: 'local',
+      };
+      
+      await saveReportToDB(report);
+      console.log('Analysis saved as a report');
+    } catch (error) {
+      console.error('Failed to save analysis as report:', error);
+      // Do not re-throw, as this is a non-critical background task
     }
   }
 

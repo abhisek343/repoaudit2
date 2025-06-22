@@ -10,14 +10,24 @@ interface PerformanceMetricsProps {
 export const PerformanceMetrics: React.FC<PerformanceMetricsProps> = ({ analysisResult }) => {
   const optimizations = shouldOptimize(analysisResult);
   const fileCount = analysisResult.files?.length || 0;
+  const sourceFileCount = analysisResult.metrics?.analyzableFileCount || 0;
   const dependencyCount = analysisResult.dependencyGraph?.nodes?.length || 0;
   const commitCount = analysisResult.commits?.length || 0;
+  const linesOfCode = analysisResult.metrics?.linesOfCode || 0;
   
-  // Calculate repository scale
+  // Calculate repository scale based on multiple factors
   const getRepositoryScale = () => {
-    if (fileCount > 10000) return { scale: 'Massive', color: 'red', description: 'Enterprise-level repository' };
-    if (fileCount > 1000) return { scale: 'Large', color: 'orange', description: 'Large-scale project' };
-    if (fileCount > 100) return { scale: 'Medium', color: 'yellow', description: 'Medium-sized project' };
+    const score = (fileCount * 0.4) + (linesOfCode / 1000 * 0.4) + (commitCount * 0.2);
+    
+    if (score > 50000 || fileCount > 10000 || linesOfCode > 1000000) {
+      return { scale: 'Massive', color: 'red', description: 'Enterprise-level repository' };
+    }
+    if (score > 10000 || fileCount > 1000 || linesOfCode > 100000) {
+      return { scale: 'Large', color: 'orange', description: 'Large-scale project' };
+    }
+    if (score > 1000 || fileCount > 100 || linesOfCode > 10000) {
+      return { scale: 'Medium', color: 'yellow', description: 'Medium-sized project' };
+    }
     return { scale: 'Small', color: 'green', description: 'Small project' };
   };
 
@@ -30,6 +40,7 @@ export const PerformanceMetrics: React.FC<PerformanceMetricsProps> = ({ analysis
       value: formatLargeNumber(fileCount),
       optimized: optimizations.files,
       threshold: PERFORMANCE_LIMITS.MAX_FILE_LIST_DISPLAY,
+      subtitle: `${formatLargeNumber(sourceFileCount)} source files`,
     },
     {
       icon: <Zap className="w-5 h-5" />,
@@ -37,6 +48,7 @@ export const PerformanceMetrics: React.FC<PerformanceMetricsProps> = ({ analysis
       value: formatLargeNumber(dependencyCount),
       optimized: optimizations.dependencies,
       threshold: PERFORMANCE_LIMITS.MAX_DEPENDENCY_NODES,
+      subtitle: 'Package dependencies',
     },
     {
       icon: <Clock className="w-5 h-5" />,
@@ -44,6 +56,7 @@ export const PerformanceMetrics: React.FC<PerformanceMetricsProps> = ({ analysis
       value: formatLargeNumber(commitCount),
       optimized: optimizations.commits,
       threshold: PERFORMANCE_LIMITS.MAX_COMMITS_DISPLAY,
+      subtitle: 'Repository commits',
     },
   ];
 
@@ -88,8 +101,10 @@ export const PerformanceMetrics: React.FC<PerformanceMetricsProps> = ({ analysis
                   Optimized
                 </div>
               )}
+            </div>            <div className="text-2xl font-bold text-gray-900 mb-1">{metric.value}</div>
+            <div className="text-xs text-gray-500 mb-1">
+              {metric.subtitle}
             </div>
-            <div className="text-2xl font-bold text-gray-900 mb-1">{metric.value}</div>
             <div className="text-xs text-gray-500">
               {metric.optimized 
                 ? `Showing optimized view (>${formatLargeNumber(metric.threshold)})` 

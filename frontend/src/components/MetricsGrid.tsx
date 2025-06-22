@@ -16,85 +16,96 @@ const MetricsGrid = ({ metrics, analysisResult }: MetricsGridProps) => {
     f.language && f.language !== 'text' && f.content
   ).length || 0;
   
-  const avgComplexity = analysisResult?.files?.length ? 
-    analysisResult.files
-      .filter(f => f.complexity && f.complexity > 0)
-      .reduce((sum, f) => sum + (f.complexity || 0), 0) / 
-    Math.max(1, analysisResult.files.filter(f => f.complexity && f.complexity > 0).length) : 0;
+  const avgComplexity = metrics.avgComplexity || 0;
+  
+  // Enhanced language count from actual analysis
+  const languageCount = metrics.languageDistribution ? 
+    Object.keys(metrics.languageDistribution).length : 
+    Object.keys(analysisResult?.languages || {}).length;
+  
+  // More accurate repository size calculation
+  const repositorySize = metrics.repositorySize || 
+    (analysisResult?.basicInfo?.size ? analysisResult.basicInfo.size * 1024 : 0); // GitHub API returns KB
+  
+  const formatSize = (bytes: number): string => {
+    if (bytes === 0) return 'N/A';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+  };
 
   const metricCards = [
     {
       icon: <Code className="w-6 h-6 text-purple-500" />,
       label: 'Lines of Code',
       value: metrics.linesOfCode > 0 ? 
-        `${(metrics.linesOfCode / 1000).toFixed(1)}K` : 'N/A',
-      subtitle: `Across ${sourceFiles} source files`,
+        `${(metrics.linesOfCode / 1000).toFixed(1)}K` : '0',
+      subtitle: `Across ${sourceFiles.toLocaleString()} source files`,
     },
     {
       icon: <FileText className="w-6 h-6 text-blue-500" />,
       label: 'Total Files',
       value: totalFiles.toLocaleString(),
-      subtitle: `${sourceFiles} analyzable source files`,
+      subtitle: `${sourceFiles.toLocaleString()} analyzable source files`,
     },
     {
       icon: <GitCommit className="w-6 h-6 text-green-500" />,
       label: 'Total Commits',
-      value: metrics.totalCommits?.toLocaleString() || 'N/A',
+      value: metrics.totalCommits?.toLocaleString() || '0',
       subtitle: 'Repository history',
     },
     {
       icon: <Users className="w-6 h-6 text-orange-500" />,
       label: 'Contributors',
-      value: metrics.totalContributors?.toLocaleString() || 'N/A',
+      value: metrics.totalContributors?.toLocaleString() || '0',
       subtitle: 'Active developers',
     },
     {
       icon: <TrendingUp className="w-6 h-6 text-indigo-500" />,
       label: 'Avg Complexity',
-      value: avgComplexity > 0 ? avgComplexity.toFixed(1) : 'N/A',
+      value: avgComplexity > 0 ? avgComplexity.toFixed(1) : '0.0',
       subtitle: 'Per file complexity score',
     },
     {
       icon: <Package className="w-6 h-6 text-cyan-500" />,
       label: 'Languages',
-      value: Object.keys(analysisResult?.languages || {}).length.toString(),
+      value: languageCount.toString(),
       subtitle: 'Programming languages used',
     },
     {
       icon: <CheckSquare className="w-6 h-6 text-teal-500" />,
       label: 'Test Coverage',
-      value: `${metrics.testCoverage?.toFixed(1) || 'N/A'}%`,
+      value: `${(metrics.testCoverage || 0).toFixed(1)}%`,
       subtitle: 'Code coverage percentage',
     },
     {
       icon: <Star className="w-6 h-6 text-yellow-500" />,
       label: 'Quality Score',
-      value: `${metrics.codeQuality?.toFixed(1) || 'N/A'}/10`,
+      value: `${(metrics.codeQuality || 0).toFixed(1)}/10`,
       subtitle: 'Overall code quality',
     },
     {
       icon: <Shield className="w-6 h-6 text-red-500" />,
       label: 'Security Score',
-      value: `${metrics.securityScore?.toFixed(1) || 'N/A'}/10`,
-      subtitle: `${metrics.criticalVulnerabilities + metrics.highVulnerabilities} critical/high issues`,
+      value: `${(metrics.securityScore || 0).toFixed(1)}/10`,
+      subtitle: `${(metrics.criticalVulnerabilities || 0) + (metrics.highVulnerabilities || 0)} critical/high issues`,
     },
     {
       icon: <AlertTriangle className="w-6 h-6 text-amber-500" />,
       label: 'Bus Factor',
-      value: metrics.busFactor?.toString() || 'N/A',
+      value: (metrics.busFactor || 0).toString(),
       subtitle: 'Knowledge concentration risk',
     },
     {
       icon: <Activity className="w-6 h-6 text-pink-500" />,
       label: 'Technical Debt',
-      value: metrics.technicalDebtScore?.toString() || 'N/A',
+      value: (metrics.technicalDebtScore || 0).toString(),
       subtitle: 'Maintenance burden score',
     },
     {
       icon: <Database className="w-6 h-6 text-emerald-500" />,
       label: 'Repository Size',
-      value: analysisResult?.basicInfo?.size ? 
-        `${(analysisResult.basicInfo.size / 1024).toFixed(1)}MB` : 'N/A',
+      value: formatSize(repositorySize),
       subtitle: 'Total repository size',
     },
   ];

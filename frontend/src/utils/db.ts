@@ -34,7 +34,9 @@ export const openDB = (): Promise<IDBDatabase> => {
 };
 
 // Save a report to IndexedDB
-export const saveReport = async (report: any): Promise<void> => {
+import { SavedReport } from '../types';
+
+export const saveReport = async (report: SavedReport): Promise<void> => {
   try {
     const db = await openDB();
     const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -44,7 +46,7 @@ export const saveReport = async (report: any): Promise<void> => {
     store.put({
       ...report,
       lastAccessed: new Date().toISOString(),
-    });
+    }, report.id);
 
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -60,7 +62,7 @@ export const saveReport = async (report: any): Promise<void> => {
 };
 
 // Get all reports from IndexedDB
-export const getAllReports = async (): Promise<any[]> => {
+export const getAllReports = async (): Promise<SavedReport[]> => {
   try {
     const db = await openDB();
     const transaction = db.transaction(STORE_NAME, 'readonly');

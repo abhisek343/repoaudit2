@@ -83,6 +83,19 @@ const DashboardPage = () => {
     loadReports();
     loadCacheStats();
   }, [loadReports, loadCacheStats]);
+
+  useEffect(() => {
+    const handleAnalysisComplete = () => {
+      console.log('Analysis complete event received, reloading reports');
+      loadReports();
+    };
+
+    window.addEventListener('analysisComplete', handleAnalysisComplete);
+
+    return () => {
+      window.removeEventListener('analysisComplete', handleAnalysisComplete);
+    };
+  }, [loadReports]);
   
   // Handle report deletion
   const handleDeleteReport = async (id: string, event: React.MouseEvent) => {

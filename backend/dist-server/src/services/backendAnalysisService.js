@@ -176,12 +176,16 @@ class BackendAnalysisService {
             return this.createEnhancedFallbackArchitecture(filesInput);
         }
         console.log(`[Architecture Analysis] Starting analysis of ${filesInput.length} files`);
-        const nodes = filesInput.map(file => ({
-            id: file.path,
-            name: path.basename(file.path),
-            type: this.inferModuleType(file.path),
-            path: file.path,
-        }));
+        const nodes = filesInput.map(file => {
+            const moduleType = this.inferModuleType(file.path);
+            return {
+                id: file.path,
+                name: path.basename(file.path),
+                type: moduleType,
+                path: file.path,
+                layer: this.inferLayer(file.path, moduleType),
+            };
+        });
         const links = [];
         const sourceFiles = filesInput.filter(file => this.isSourceFile(file.path));
         const filesWithContent = [];
@@ -310,12 +314,16 @@ class BackendAnalysisService {
         // Take more files for analysis, focusing on source files
         const sourceFiles = filesInput.filter(f => this.isSourceFile(f.path));
         const relevantFiles = sourceFiles.slice(0, 50); // Increased from 10
-        const nodes = relevantFiles.map(f => ({
-            id: f.path,
-            name: path.basename(f.path),
-            type: this.inferModuleType(f.path),
-            path: f.path,
-        }));
+        const nodes = relevantFiles.map(f => {
+            const moduleType = this.inferModuleType(f.path);
+            return {
+                id: f.path,
+                name: path.basename(f.path),
+                type: moduleType,
+                path: f.path,
+                layer: this.inferLayer(f.path, moduleType),
+            };
+        });
         const links = this.createFallbackLinks(nodes);
         console.log(`[Architecture Analysis] Enhanced fallback: ${nodes.length} nodes, ${links.length} links`);
         return { nodes, links };
@@ -478,137 +486,115 @@ class BackendAnalysisService {
         if (pathParts.some(part => BackendAnalysisService.EXCLUDED_DIRECTORIES.has(part))) {
             return false;
         }
-        // Stricter extension check for JS/TS files
-        const supportedExtensions = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'];
-        if (!supportedExtensions.includes(ext)) {
+        // Stricter check for JS/TS files that can be parsed
+        const jsExts = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
+        if (!jsExts.includes(ext)) {
             return false;
         }
-        // Reuse filename exclusion logic
-        const excludedFilePatterns = [
-            /^\./,
-            /vite-env\.d\.ts$/,
-            /\.config\.(js|ts|mjs|cjs)$/,
-            /eslint\.config\.(js|ts|mjs|cjs)$/,
-            /\.min\.js$/,
-            /\.bundle\.js$/,
-            /\.chunk\.js$/,
-            /\.test\.(js|ts|jsx|tsx)$/,
-            /\.spec\.(js|ts|jsx|tsx)$/,
-            /\.d\.ts$/,
-        ];
-        if (excludedFilePatterns.some(pattern => pattern.test(fileName))) {
+        // Exclude config files from complex parsing
+        if (fileName.endsWith('.config.js') || fileName.endsWith('.config.ts')) {
             return false;
+        }
+        // Exclude test files from complex parsing if needed
+        if (fileName.includes('.test.') || fileName.includes('.spec.')) {
+            return true; // Or false if you want to exclude them
         }
         return true;
     }
     inferModuleType(filePath) {
-        const lowerPath = filePath.toLowerCase();
-        if (lowerPath.includes('component'))
-            return 'component';
-        if (lowerPath.includes('service'))
+        const fileName = path.basename(filePath).toLowerCase();
+        if (fileName.includes('service'))
             return 'service';
-        if (lowerPath.includes('api'))
-            return 'api';
-        if (lowerPath.includes('page'))
+        if (fileName.includes('controller'))
+            return 'controller';
+        if (fileName.includes('component') || filePath.includes('/components/'))
+            return 'component';
+        if (fileName.includes('page') || filePath.includes('/pages/'))
             return 'page';
-        if (lowerPath.includes('hook'))
+        if (fileName.includes('hook') || filePath.includes('/hooks/'))
             return 'hook';
-        if (lowerPath.includes('util'))
+        if (fileName.includes('util') || filePath.includes('/utils/'))
             return 'utility';
+        if (fileName.includes('config'))
+            return 'config';
+        if (fileName.includes('test') || fileName.includes('spec'))
+            return 'test';
         return 'module';
     }
     parseImports(fileContent) {
-        // Enhanced regex patterns to catch more import patterns
-        const importPatterns = [
-            // ES6 imports: import ... from '...'
-            /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g,
-            // CommonJS require: require('...')
-            /require\(['"]([^'"]+)['"]\)/g,
-            // Dynamic imports: import('...')
-            /import\(['"]([^'"]+)['"]\)/g,
-            // Type imports: import type ... from '...'
-            /import\s+type\s+(?:\{[^}]*\}|\w+)\s+from\s+['"]([^'"]+)['"]/g,
-            // Re-exports: export ... from '...'
-            /export\s+(?:(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?)\s+from\s+)?['"]([^'"]+)['"]/g
-        ];
-        const imports = new Set();
-        const allMatches = [];
-        for (const pattern of importPatterns) {
-            let match;
-            pattern.lastIndex = 0; // Reset regex state
-            while ((match = pattern.exec(fileContent)) !== null) {
-                const importPath = match[1];
-                if (importPath) {
-                    allMatches.push(importPath);
-                    imports.add(importPath);
+        const imports = [];
+        try {
+            const ast = parser.parse(fileContent, {
+                sourceType: 'module',
+                plugins: ['jsx', 'typescript'],
+                errorRecovery: true,
+            });
+            for (const node of ast.program.body) {
+                if (node.type === 'ImportDeclaration' && node.source.value) {
+                    imports.push(node.source.value);
                 }
-                // Prevent infinite loop on global regex
-                if (!pattern.global)
-                    break;
+                else if (node.type === 'ExportNamedDeclaration' && node.source?.value) {
+                    imports.push(node.source.value);
+                }
+                else if (node.type === 'ExportAllDeclaration' && node.source?.value) {
+                    imports.push(node.source.value);
+                }
+                else if (node.type === 'VariableDeclaration' &&
+                    node.declarations.some(d => d.init?.type === 'CallExpression' &&
+                        d.init.callee.type === 'Identifier' &&
+                        d.init.callee.name === 'require' &&
+                        d.init.arguments[0]?.type === 'StringLiteral')) {
+                    const requireArg = node.declarations[0].init.arguments[0].value;
+                    imports.push(requireArg);
+                }
             }
         }
-        const importsArray = Array.from(imports);
-        // Only log if there are imports to avoid spam
-        if (importsArray.length > 0) {
-            console.log(`[Import Parser] Found ${importsArray.length} unique imports (${allMatches.length} total): ${importsArray.slice(0, 5).join(', ')}${importsArray.length > 5 ? '...' : ''}`);
-            // Log relative imports specifically
-            const relativeImports = importsArray.filter(imp => imp.startsWith('.'));
-            if (relativeImports.length > 0) {
-                console.log(`[Import Parser] Relative imports (${relativeImports.length}): ${relativeImports.join(', ')}`);
+        catch (e) {
+            // This can happen with non-standard syntax or parse errors
+            // Fallback to regex for a best-effort attempt
+            const regex = /from\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)/g;
+            let match;
+            while ((match = regex.exec(fileContent)) !== null) {
+                imports.push(match[1] || match[2]);
             }
         }
-        return importsArray;
+        return imports;
     }
     findNodeByPath(nodes, importedPath, currentFilePath) {
-        // Only process relative imports (internal dependencies)
-        if (!importedPath.startsWith('.')) {
-            return undefined;
-        }
-        const currentFileDir = path.dirname(currentFilePath);
-        // Try to resolve the path with various extensions
-        const potentialExtensions = ['.ts', '.tsx', '.js', '.jsx', '.json', '.mjs', '.cjs'];
-        let resolvedPath;
-        // Case 1: Direct path with extension
-        let tempPath = path.resolve(currentFileDir, importedPath);
-        if (nodes.some(n => n.path === tempPath)) {
-            resolvedPath = tempPath;
-        }
-        // Case 2: Path without extension
-        if (!resolvedPath) {
-            for (const ext of potentialExtensions) {
-                tempPath = path.resolve(currentFileDir, `${importedPath}${ext}`);
-                if (nodes.some(n => n.path === tempPath)) {
-                    resolvedPath = tempPath;
-                    break;
-                }
+        // 1. Try to resolve relative paths
+        if (importedPath.startsWith('.')) {
+            const currentFileDir = path.dirname(currentFilePath);
+            const absolutePath = path.resolve(currentFileDir, importedPath);
+            // Try to find a direct match or with common extensions
+            const extensions = ['.js', '.ts', '.jsx', '.tsx', '.json', ''];
+            for (const ext of extensions) {
+                const potentialPath = absolutePath + ext;
+                const foundNode = nodes.find(n => path.resolve(n.path) === potentialPath);
+                if (foundNode)
+                    return foundNode;
+                // Also check for index files in directories
+                const indexPath = path.join(potentialPath, 'index' + ext);
+                const foundIndexNode = nodes.find(n => path.resolve(n.path) === indexPath);
+                if (foundIndexNode)
+                    return foundIndexNode;
             }
         }
-        // Case 3: Index file in a directory
-        if (!resolvedPath) {
-            for (const ext of potentialExtensions) {
-                tempPath = path.resolve(currentFileDir, importedPath, `index${ext}`);
-                if (nodes.some(n => n.path === tempPath)) {
-                    resolvedPath = tempPath;
-                    break;
-                }
-            }
-        }
-        // Normalize path separators for consistent matching
-        if (resolvedPath) {
-            resolvedPath = resolvedPath.replace(/\\/g, '/');
-            const targetNode = nodes.find(n => n.path.replace(/\\/g, '/') === resolvedPath);
-            if (targetNode) {
-                return targetNode;
-            }
-        }
-        // Fallback for partial matches if direct resolution fails
+        // 2. Try to find by module name (for non-relative paths)
+        const foundNode = nodes.find(n => n.path.includes(importedPath));
+        if (foundNode)
+            return foundNode;
+        // 3. Fallback for partial matches (e.g. 'components/Button' matching 'src/components/Button.tsx')
         const partialMatches = nodes.filter(n => {
             const normalizedNodePath = n.path.replace(/\\/g, '/');
-            const normalizedImport = importedPath.replace(/\\/g, '/');
-            return normalizedNodePath.endsWith(normalizedImport) || normalizedNodePath.endsWith(`${normalizedImport}.js`) || normalizedNodePath.endsWith(`${normalizedImport}.ts`);
+            const normalizedImportPath = importedPath.replace(/\\/g, '/');
+            return normalizedNodePath.endsWith(normalizedImportPath) ||
+                normalizedNodePath.endsWith(normalizedImportPath + '.js') ||
+                normalizedNodePath.endsWith(normalizedImportPath + '.ts') ||
+                normalizedNodePath.endsWith(normalizedImportPath + '.jsx') ||
+                normalizedNodePath.endsWith(normalizedImportPath + '.tsx');
         });
         if (partialMatches.length > 0) {
-            // Prefer the shortest match as it's likely more specific
+            // Prefer shorter path difference
             partialMatches.sort((a, b) => a.path.length - b.path.length);
             return partialMatches[0];
         }
@@ -657,18 +643,18 @@ class BackendAnalysisService {
             throw new Error('Invalid GitHub repository URL');
         }
         const branch = options.branch || 'main'; // Default to main if not provided
-        sendProgress('repoInfo', 'Fetching repository metadata', 50);
-        // Step 1: Fetch repository metadata
-        const repoData = await this.githubService.getRepository(owner, repo);
-        const basicInfo = this.transformRepoData(repoData);
-        console.log(`[Backend Analysis] DONE: Fetched basic repo info for ${basicInfo.fullName}`);
+        sendProgress('repoInfo', 'Fetching repository metadata', 25);
+        // Use batched GraphQL API for better efficiency
+        console.log(`[Backend Analysis] START: Attempting batched fetch using GraphQL API`);
+        const batchedData = await this.githubService.getBatchedRepositoryData(owner, repo, branch);
+        const repoData = batchedData.repository;
+        const files = batchedData.files;
+        console.log(`[Backend Analysis] SUCCESS: Batched fetch completed - repo info + ${files.length} files`);
         sendProgress('repoInfo', 'Fetched repository metadata', 100);
-        sendProgress('files', 'Fetching repository tree', 0);
-        // Step 2: Fetch repository file tree
-        console.log(`[Backend Analysis] START: Fetching repo tree for branch: ${branch}`);
-        const files = await this.githubService.getRepoTree(owner, repo, branch);
-        console.log(`[Backend Analysis] DONE: Fetched ${files.length} files from the repository tree`);
-        sendProgress('files', 'Fetched repository tree', 10);
+        sendProgress('files', 'Fetched repository tree via GraphQL', 100);
+        const basicInfo = this.transformRepoData(repoData);
+        console.log(`[Backend Analysis] DONE: Processed repo info for ${basicInfo.fullName}`);
+        sendProgress('files', 'Processing repository files', 10);
         // Step 3: Fetch commits
         console.log(`[Backend Analysis] START: Fetching commit history`);
         sendProgress('commits', 'Fetching commit history', 0);
@@ -719,131 +705,100 @@ class BackendAnalysisService {
             console.log(`[Backend Analysis] DONE: Calculated quality metrics for ${Object.keys(quality).length} files`);
             sendProgress('quality', 'Calculated quality metrics', 100);
         }
-        // Step 8: Generate hotspots
-        let hotspots = [];
-        if (options.hotspots) {
-            hotspots = this.generateHotspots(files, commits);
-            console.log(`[Backend Analysis] Generated ${hotspots.length} hotspots`);
-            sendProgress('finalizing', 'Generated hotspots', 5);
-        }
-        // Step 9: Generate key functions
-        let keyFunctions = [];
-        if (options.keyFunctions) {
-            keyFunctions = this.generateKeyFunctions(files);
-            console.log(`[Backend Analysis] Generated ${keyFunctions.length} key functions`);
-            sendProgress('finalizing', 'Generated key functions', 10);
-        }
-        // Step 10: Generate security issues (fallback)
-        let securityIssues = [];
-        if (options.security) {
-            securityIssues = this.generateFallbackSecurityIssues(files);
-            console.log(`[Backend Analysis] Generated ${securityIssues.length} fallback security issues`);
-            sendProgress('finalizing', 'Generated security issues', 15);
-        }
-        // Step 11: Generate technical debt (fallback)
-        let technicalDebt = [];
-        if (options.technicalDebt) {
-            technicalDebt = this.generateFallbackTechnicalDebt(files, quality);
-            console.log(`[Backend Analysis] Generated ${technicalDebt.length} fallback technical debt items`);
-            sendProgress('finalizing', 'Generated technical debt', 20);
-        }
-        // Step 12: Generate performance metrics (fallback)
-        let performanceMetrics = [];
-        if (options.performance) {
-            performanceMetrics = this.generateFallbackPerformanceMetrics(files);
-            console.log(`[Backend Analysis] Generated ${performanceMetrics.length} fallback performance metrics`);
-            sendProgress('finalizing', 'Generated performance metrics', 25);
-        }
-        // Step 13: Generate API endpoints (fallback)
-        const apiEndpoints = this.generateFallbackAPIEndpoints(files);
-        console.log(`[Backend Analysis] Generated ${apiEndpoints.length} fallback API endpoints`);
-        sendProgress('finalizing', 'Generated API endpoints', 30);
-        // Step 14: Generate AI Summary
+        // Steps 8-19: Perform final analysis steps in parallel
+        sendProgress('finalizing', 'Generating analysis data', 5);
+        const analysisPromises = {};
+        if (options.hotspots)
+            analysisPromises.hotspots = Promise.resolve(this.generateHotspots(files, commits));
+        if (options.keyFunctions)
+            analysisPromises.keyFunctions = Promise.resolve(this.generateKeyFunctions(files));
+        if (options.security)
+            analysisPromises.securityIssues = Promise.resolve(this.generateFallbackSecurityIssues(files));
+        if (options.technicalDebt)
+            analysisPromises.technicalDebt = Promise.resolve(this.generateFallbackTechnicalDebt(files, quality));
+        if (options.performance)
+            analysisPromises.performanceMetrics = Promise.resolve(this.generateFallbackPerformanceMetrics(files));
+        if (options.apiEndpoints)
+            analysisPromises.apiEndpoints = Promise.resolve(this.generateFallbackAPIEndpoints(files));
+        if (options.prAnalysis)
+            analysisPromises.prData = this.githubService.getPullRequests(owner, repo);
+        if (options.temporalCoupling)
+            analysisPromises.temporalCouplingData = Promise.resolve(this.generateTemporalCouplings(commits, files));
+        if (options.dataTransformation)
+            analysisPromises.dataTransformationData = Promise.resolve(this.generateDataTransformationFlow(files, commits));
+        if (options.gitGraph)
+            analysisPromises.gitGraphData = Promise.resolve(this.generateGitGraphData(commits, contributors));
+        const analysisResults = await Promise.all(Object.values(analysisPromises).map(p => p.catch(e => e)));
+        const results = {};
+        Object.keys(analysisPromises).forEach((key, index) => {
+            results[key] = analysisResults[index];
+        });
+        const { hotspots = [], keyFunctions = [], securityIssues = [], technicalDebt = [], performanceMetrics = [], apiEndpoints = [], prData = [], temporalCouplingData = [], dataTransformationData = { nodes: [], links: [] }, gitGraphData = { nodes: [], links: [] }, } = results;
+        console.log(`[Backend Analysis] Generated analysis results`);
+        sendProgress('finalizing', 'Generated analysis data', 30);
+        // AI-powered analysis
         let aiSummary;
-        if (options.aiSummary && this.llmService.isConfigured()) {
-            try {
-                aiSummary = await this.generateAISummary(repoData, files);
+        let aiArchitecture;
+        if (this.llmService.isConfigured() && (options.aiSummary || options.aiArchitecture)) {
+            const aiPromises = [];
+            if (options.aiSummary) {
+                aiPromises.push(this.generateAISummary(repoData, files));
+            }
+            else {
+                aiPromises.push(Promise.resolve(undefined));
+            }
+            if (options.aiArchitecture) {
+                aiPromises.push(this.generateAIArchitectureDescription(repoData, files, architecture));
+            }
+            else {
+                aiPromises.push(Promise.resolve(undefined));
+            }
+            const [summaryResult, architectureResult] = await Promise.all(aiPromises.map(p => p.catch(e => e)));
+            if (options.aiSummary) {
+                if (summaryResult instanceof Error) {
+                    this.addWarning('AI Summary', 'Failed to generate AI summary', summaryResult);
+                }
+                else {
+                    aiSummary = summaryResult;
+                }
                 console.log('[Backend Analysis] Generated AI summary');
                 sendProgress('finalizing', 'Generated AI summary', 50);
             }
-            catch (e) {
-                this.addWarning('AI Summary', 'Failed to generate AI summary', e);
-            }
-        }
-        // Step 15: Generate AI Architecture Description
-        let aiArchitecture;
-        if (options.aiArchitecture && this.llmService.isConfigured()) {
-            try {
-                aiArchitecture = await this.generateAIArchitectureDescription(repoData, files, architecture);
+            if (options.aiArchitecture) {
+                if (architectureResult instanceof Error) {
+                    this.addWarning('AI Architecture', 'Failed to generate AI architecture description', architectureResult);
+                }
+                else {
+                    aiArchitecture = architectureResult;
+                }
                 console.log('[Backend Analysis] Generated AI architecture description');
                 sendProgress('finalizing', 'Generated AI architecture description', 70);
-            }
-            catch (e) {
-                this.addWarning('AI Architecture', 'Failed to generate AI architecture description', e);
-            }
-        }
-        // Step 16: Temporal Coupling Analysis
-        let temporalCouplingData = [];
-        if (options.temporalCoupling) {
-            try {
-                temporalCouplingData = this.generateTemporalCouplings(commits, files);
-                console.log(`[Backend Analysis] Generated ${temporalCouplingData.length} temporal coupling pairs`);
-                sendProgress('finalizing', 'Generated temporal coupling data', 75);
-            }
-            catch (e) {
-                this.addWarning('Temporal Coupling', 'Failed to generate temporal coupling data', e);
-            }
-        }
-        // Step 17: Data Transformation Flow
-        let dataTransformationData = { nodes: [], links: [] };
-        if (options.dataTransformation) {
-            try {
-                dataTransformationData = this.generateDataTransformationFlow(files, commits);
-                console.log(`[Backend Analysis] Generated data transformation flow with ${dataTransformationData.nodes.length} nodes and ${dataTransformationData.links.length} links`);
-                sendProgress('finalizing', 'Generated data transformation flow', 80);
-            }
-            catch (e) {
-                this.addWarning('Data Transformation', 'Failed to generate data transformation flow', e);
-            }
-        }
-        // Step 18: Pull Request Analysis
-        let prData = [];
-        if (options.prAnalysis) {
-            try {
-                sendProgress('pr', 'Analyzing pull requests', 0);
-                prData = await this.githubService.getPullRequests(owner, repo);
-                console.log(`[Backend Analysis] Fetched ${prData.length} pull requests`);
-                sendProgress('pr', 'Fetched pull requests', 100);
-            }
-            catch (e) {
-                this.addWarning('Pull Request Analysis', 'Failed to fetch pull request data', e);
-            }
-        }
-        // Step 19: Git Graph Data
-        let gitGraphData = { nodes: [], links: [] };
-        if (options.gitGraph) {
-            try {
-                gitGraphData = this.generateGitGraphData(commits, contributors);
-                console.log(`[Backend Analysis] Generated git graph with ${gitGraphData.nodes.length} nodes and ${gitGraphData.links.length} links`);
-                sendProgress('finalizing', 'Generated git graph data', 85);
-            }
-            catch (e) {
-                this.addWarning('Git Graph', 'Failed to generate git graph data', e);
             }
         }
         sendProgress('finalizing', 'Finalizing report', 99);
         console.log('[Backend Analysis] Analysis complete.');
         // Calculate metrics for AnalysisResult
         const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+        console.log(`[Backend Analysis] Processing ${files.length} total files, ${sourceFiles.length} source files for metrics`);
         const now = new Date();
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         const recentCommits = commits.filter(commit => new Date(commit.date) > thirtyDaysAgo).length;
         const avgComplexity = Object.values(quality).length > 0
             ? Object.values(quality).reduce((sum, q) => sum + q.complexity, 0) / Object.values(quality).length
             : 0;
+        console.log(`[Backend Analysis] Quality analysis complete: ${Object.keys(quality).length} files analyzed, avg complexity: ${avgComplexity.toFixed(2)}`);
         const avgMaintainability = Object.values(quality).length > 0
             ? Object.values(quality).reduce((sum, q) => sum + q.maintainability, 0) / Object.values(quality).length
             : 0;
+        // Enhanced metric calculations
+        const testCoverage = this.calculateTestCoverage(files);
+        const languageDistribution = this.detectLanguages(files);
+        const languageCount = Object.keys(languageDistribution).length;
+        console.log(`[Backend Analysis] Detected ${languageCount} languages, test coverage: ${testCoverage.toFixed(1)}%`);
+        const busFactor = this.calculateBusFactor(contributors, commits);
+        const securityScore = Math.max(0, 100 - securityIssues.length * 5);
+        const technicalDebtScore = Math.max(0, 100 - technicalDebt.length * 2);
+        const qualityScore = this.calculateQualityScore(avgMaintainability, avgComplexity, testCoverage, securityScore, technicalDebtScore);
         sendProgress('finalizing', 'Analysis complete', 100);
         return {
             id: `${repoData.fullName.replace(/\//g, '-')}-${Date.now()}`,
@@ -854,7 +809,7 @@ class BackendAnalysisService {
             commits,
             contributors,
             files,
-            languages: await this.githubService.getLanguages(owner, repo),
+            languages: languageDistribution,
             dependencies,
             dependencyGraph: architecture,
             qualityMetrics: quality,
@@ -875,29 +830,36 @@ class BackendAnalysisService {
                 totalContributors: contributors.length,
                 fileCount: files.length,
                 analyzableFileCount: sourceFiles.length,
-                linesOfCode: sourceFiles.reduce((sum, f) => {
-                    if (quality[f.path])
-                        return sum + quality[f.path].linesOfCode;
-                    return sum + (f.content?.split('\n').length || 0);
-                }, 0),
-                codeQuality: avgMaintainability,
-                testCoverage: 0, // Default value - would need actual test analysis
-                busFactor: Math.min(contributors.length, 5),
-                securityScore: Math.max(0, 100 - securityIssues.length * 5),
-                technicalDebtScore: Math.max(0, 100 - technicalDebt.length * 2),
+                linesOfCode: (() => {
+                    const totalLOC = sourceFiles.reduce((sum, f) => {
+                        if (quality[f.path])
+                            return sum + quality[f.path].linesOfCode;
+                        const linesFromContent = f.content?.split('\n').length || 0;
+                        return sum + linesFromContent;
+                    }, 0);
+                    console.log(`[Backend Analysis] Calculated ${totalLOC} total lines of code from ${sourceFiles.length} source files`);
+                    return totalLOC;
+                })(),
+                codeQuality: qualityScore,
+                testCoverage: testCoverage,
+                busFactor: busFactor,
+                securityScore: securityScore,
+                technicalDebtScore: technicalDebtScore,
                 performanceScore: Math.max(0, 100 - performanceMetrics.length * 3),
-                criticalVulnerabilities: securityIssues.filter(s => s.severity === 'critical').length,
-                highVulnerabilities: securityIssues.filter(s => s.severity === 'high').length,
-                mediumVulnerabilities: securityIssues.filter(s => s.severity === 'medium').length,
-                lowVulnerabilities: securityIssues.filter(s => s.severity === 'low').length,
+                criticalVulnerabilities: securityIssues.filter((s) => s.severity === 'critical').length,
+                highVulnerabilities: securityIssues.filter((s) => s.severity === 'high').length,
+                mediumVulnerabilities: securityIssues.filter((s) => s.severity === 'medium').length,
+                lowVulnerabilities: securityIssues.filter((s) => s.severity === 'low').length,
                 totalPRs: prData.length,
-                mergedPRs: prData.filter(pr => pr.mergedAt).length,
-                prMergeRate: prData.length > 0 ? prData.filter(pr => pr.mergedAt).length / prData.length * 100 : 0,
+                mergedPRs: prData.filter((pr) => pr.mergedAt).length,
+                prMergeRate: prData.length > 0 ? prData.filter((pr) => pr.mergedAt).length / prData.length * 100 : 0,
                 avgPRMergeTime: 0, // Would need actual PR analysis
                 recentActivity: recentCommits,
                 avgCommitsPerWeek: commits.length > 0 ? commits.length / Math.max(1, Math.ceil((new Date().getTime() - new Date(commits[commits.length - 1].date).getTime()) / (7 * 24 * 60 * 60 * 1000))) : 0,
                 avgComplexity,
                 filesWithComplexity: Object.keys(quality).length,
+                repositorySize: this.calculateRepositorySize(files),
+                languageDistribution: languageDistribution,
             },
             analysisWarnings: this.analysisWarnings,
         };
@@ -910,286 +872,270 @@ class BackendAnalysisService {
         '.jsx': 'javascript',
         '.mjs': 'javascript',
         '.cjs': 'javascript',
-        // Python
-        '.py': 'python',
-        '.pyw': 'python',
-        '.pyi': 'python',
-        // Java ecosystem
-        '.java': 'java',
-        '.kt': 'kotlin',
-        '.kts': 'kotlin',
-        '.scala': 'scala',
-        '.groovy': 'groovy',
-        // C/C++
-        '.c': 'c',
-        '.cpp': 'cpp',
-        '.cxx': 'cpp',
-        '.cc': 'cpp',
-        '.h': 'c',
-        '.hpp': 'cpp',
-        '.hxx': 'cpp',
-        // C#/.NET
-        '.cs': 'csharp',
-        '.vb': 'vbnet',
-        '.fs': 'fsharp',
-        // Web languages
-        '.php': 'php',
-        '.rb': 'ruby',
-        '.go': 'go',
-        '.rs': 'rust',
-        '.swift': 'swift',
-        '.dart': 'dart',
-        '.lua': 'lua',
-        '.r': 'r',
-        '.m': 'objectivec',
-        '.mm': 'objectivec',
-        // Functional languages
-        '.hs': 'haskell',
-        '.elm': 'elm',
-        '.clj': 'clojure',
-        '.cljs': 'clojure',
-        '.ml': 'ocaml',
-        '.ex': 'elixir',
-        '.exs': 'elixir',
-        // Shell scripting
-        '.sh': 'bash',
-        '.bash': 'bash',
-        '.zsh': 'zsh',
-        '.fish': 'fish',
-        '.ps1': 'powershell',
-        '.bat': 'batch',
-        '.cmd': 'batch',
-        // Database
-        '.sql': 'sql',
-        '.plsql': 'plsql',
-        '.psql': 'postgresql',
-        // Configuration/Data
-        '.json': 'json',
-        '.yaml': 'yaml',
-        '.yml': 'yaml',
-        '.toml': 'toml',
-        '.xml': 'xml',
-        '.ini': 'ini',
-        '.cfg': 'ini',
-        '.conf': 'conf',
-        // Markup/Styling
+        // HTML/CSS
         '.html': 'html',
         '.htm': 'html',
         '.css': 'css',
         '.scss': 'scss',
         '.sass': 'sass',
         '.less': 'less',
+        '.styl': 'stylus',
+        // Python
+        '.py': 'python',
+        '.pyw': 'python',
+        '.pyc': 'python',
+        '.pyd': 'python',
+        '.pyo': 'python',
+        // Java
+        '.java': 'java',
+        '.jar': 'java',
+        '.class': 'java',
+        // C#
+        '.cs': 'csharp',
+        // C/C++
+        '.c': 'c',
+        '.h': 'c',
+        '.cpp': 'cpp',
+        '.hpp': 'cpp',
+        '.cc': 'cpp',
+        // Ruby
+        '.rb': 'ruby',
+        // PHP
+        '.php': 'php',
+        // Go
+        '.go': 'go',
+        // Rust
+        '.rs': 'rust',
+        // Swift
+        '.swift': 'swift',
+        // Kotlin
+        '.kt': 'kotlin',
+        '.kts': 'kotlin',
+        // Shell
+        '.sh': 'shell',
+        '.bash': 'shell',
+        '.zsh': 'shell',
+        // Other
+        '.json': 'json',
+        '.xml': 'xml',
         '.md': 'markdown',
-        '.mdx': 'mdx',
-        '.tex': 'latex',
-        // Mobile
-        // Note: .java and .kt already defined above for general use
-        // .swift already defined above
-        // .dart already defined above
-        // Infrastructure
-        '.tf': 'terraform',
-        '.hcl': 'hcl',
+        '.yml': 'yaml',
+        '.yaml': 'yaml',
+        '.toml': 'toml',
         '.dockerfile': 'dockerfile',
-        '.dockerignore': 'dockerignore',
-        '.k8s': 'kubernetes',
-        // Note: .yaml already defined above
+        'Dockerfile': 'dockerfile',
     };
-    // Comprehensive exclusion list for non-source files
     static EXCLUDED_EXTENSIONS = new Set([
-        // Images
-        '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff',
-        // Media files
-        '.mp3', '.wav', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.ogg', '.webm',
-        // Fonts
-        '.ttf', '.woff', '.woff2', '.eot', '.otf',
-        // Documents
-        '.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls',
-        // Build artifacts & minified files
-        '.map', '.min.js', '.min.css', '.bundle.js', '.chunk.js',
-        // Type declarations & test files
-        '.d.ts', '.test.js', '.test.ts', '.test.jsx', '.test.tsx',
-        '.spec.js', '.spec.ts', '.spec.jsx', '.spec.tsx',
-        // Logs, temp, lock files
-        '.log', '.tmp', '.temp', '.bak', '.swp', '.swo', '.lock',
-        // Binaries & archives
-        '.exe', '.dll', '.so', '.dylib', '.bin', '.obj', '.o',
-        '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz',
-        // IDE & system files
-        '.DS_Store', '.thumbs.db', '.gitkeep', '.gitignore',
-        // Package manager files
-        'package-lock.json', 'yarn.lock', 'composer.lock', 'Pipfile.lock',
+        '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp',
+        '.woff', '.woff2', '.eot', '.ttf', '.otf',
+        '.mp4', '.webm', '.ogg', '.mp3', '.wav',
+        '.zip', '.gz', '.tar', '.rar',
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.lock',
+        '.log',
+        '.csv',
+        '.d.ts',
+        '.min.js',
+        '.min.css',
     ]);
-    // Excluded directory patterns
     static EXCLUDED_DIRECTORIES = new Set([
-        'node_modules', '.git', '.svn', '.hg',
-        'dist', 'build', 'out', 'target', 'bin',
-        'coverage', '.nyc_output', '.coverage',
-        '.cache', '.temp', '.tmp',
-        '__pycache__', '.pytest_cache',
-        '.idea', '.vscode', '.vs',
-        'vendor', 'third_party',
+        'node_modules',
+        '.git',
+        'dist',
+        'build',
+        'coverage',
+        'public',
+        'assets',
+        'vendor',
+        '.vscode',
+        '.idea',
     ]);
-    // detectLanguage method removed - was unused
     generateHotspots(files, commits) {
-        const fileChangeCounts = new Map();
+        const fileChangeCounts = {};
         commits.forEach(commit => {
-            commit.files.forEach((file) => {
-                fileChangeCounts.set(file.filename, (fileChangeCounts.get(file.filename) || 0) + 1);
-            });
+            if (commit.files) {
+                commit.files.forEach((file) => {
+                    if (file.filename) {
+                        fileChangeCounts[file.filename] = (fileChangeCounts[file.filename] || 0) + 1;
+                    }
+                });
+            }
         });
-        return files
+        const hotspots = files
+            .filter(f => fileChangeCounts[f.path] > 0 && f.complexity && f.complexity > 10)
             .map(f => ({
-            file: f.path,
+            file: f.name,
             path: f.path,
-            complexity: 0, // Placeholder
-            changes: fileChangeCounts.get(f.path) || 0,
-            riskLevel: 'low', // Placeholder
+            complexity: f.complexity || 0,
+            changes: fileChangeCounts[f.path],
+            riskLevel: 'high',
         }))
-            .filter(h => h.changes > 0)
-            .sort((a, b) => b.changes - a.changes)
+            .sort((a, b) => b.changes * b.complexity - a.changes * a.complexity)
             .slice(0, 20);
+        return hotspots;
     }
     generateKeyFunctions(files) {
         const keyFunctions = [];
-        const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+        const sourceFiles = files.filter(f => this.isJavaScriptFile(f.path));
         for (const file of sourceFiles) {
             if (!file.content)
                 continue;
-            const lines = file.content.split('\n');
-            // Simple function detection (can be improved with AST)
-            const functionRegex = /(function\s+\w+|\w+\s*=\s*function|\w+\s*=\s*\(.*\)\s*=>)/g;
-            for (let i = 0; i < lines.length; i++) {
-                if (functionRegex.test(lines[i])) {
-                    keyFunctions.push({
-                        name: lines[i].trim().substring(0, 50), // Basic name extraction
-                        file: file.path,
-                        complexity: 0, // Placeholder
-                        explanation: 'Function identified by simple regex.',
-                        startLine: i + 1,
-                        endLine: i + 1,
-                    });
-                }
+            try {
+                const ast = parser.parse(file.content, {
+                    sourceType: 'module',
+                    plugins: ['jsx', 'typescript', 'estree', 'doExpressions', 'objectRestSpread', 'classProperties', 'exportDefaultFrom', 'exportNamespaceFrom', 'asyncGenerators', 'dynamicImport', 'optionalChaining', 'nullishCoalescingOperator'],
+                    errorRecovery: true,
+                });
+                const visitor = (p) => {
+                    if (p.node.type === 'FunctionDeclaration' || p.node.type === 'FunctionExpression' || p.node.type === 'ArrowFunctionExpression') {
+                        const functionName = p.node.id?.name || (p.parent.type === 'VariableDeclarator' && p.parent.id.type === 'Identifier' ? p.parent.id.name : 'anonymous');
+                        const complexity = this.calculateComplexity(p.node);
+                        if (complexity > 5) { // Threshold for "key" function
+                            keyFunctions.push({
+                                name: functionName,
+                                file: file.path,
+                                complexity: complexity,
+                                explanation: `A function with complexity ${complexity}.`,
+                                linesOfCode: p.node.loc.end.line - p.node.loc.start.line,
+                                startLine: p.node.loc.start.line,
+                                endLine: p.node.loc.end.line,
+                            });
+                        }
+                    }
+                    p.traverse(visitor);
+                };
+                // The traversal logic needs to be adapted for babel's new API if this doesn't work
+                // This is a simplified stand-in for a proper traversal
+                JSON.stringify(ast, (_key, value) => {
+                    if (value && (value.type === 'FunctionDeclaration' || value.type === 'FunctionExpression' || value.type === 'ArrowFunctionExpression')) {
+                        const functionName = value.id?.name || 'anonymous';
+                        const complexity = this.calculateComplexity(value);
+                        if (complexity > 5) {
+                            keyFunctions.push({
+                                name: functionName,
+                                file: file.path,
+                                complexity: complexity,
+                                explanation: `A function with complexity ${complexity}.`,
+                                linesOfCode: value.loc.end.line - value.loc.start.line,
+                                startLine: value.loc.start.line,
+                                endLine: value.loc.end.line,
+                            });
+                        }
+                    }
+                    return value;
+                });
+            }
+            catch (e) {
+                this.addWarning('Key Function Analysis', `Failed to parse ${file.path}`, e);
             }
         }
-        // Sort by file and line number
         keyFunctions.sort((a, b) => {
-            if (a.file < b.file)
-                return -1;
-            if (a.file > b.file)
-                return 1;
-            return (a.startLine || 0) - (b.startLine || 0);
+            if (b.complexity !== a.complexity) {
+                return b.complexity - a.complexity;
+            }
+            return (b.linesOfCode || 0) - (a.linesOfCode || 0);
         });
-        return keyFunctions.slice(0, 50); // Limit to a reasonable number
+        return keyFunctions.slice(0, 20);
     }
-    // calculateMetrics method removed - was unused
     generateFallbackAPIEndpoints(files) {
         const endpoints = [];
-        const apiFiles = files.filter(f => this.isSourceFile(f.path) &&
-            (f.path.includes('controller') || f.path.includes('route') || f.path.includes('api')));
+        const apiFiles = files.filter(f => f.path.includes('controller') ||
+            f.path.includes('route') ||
+            f.path.includes('/api/'));
+        const patterns = [
+            // Express-style: app.get('/path', handler)
+            /(app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`](.+)['"`]\s*,\s*([a-zA-Z0-9_]+)/g,
+            // NestJS-style: @Get('path')
+            /@(Get|Post|Put|Delete|Patch)\s*\(\s*['"`](.*?)['"`]\s*\)/g,
+        ];
+        const resourcePatterns = [
+            /new\s+Resource\(['"](.+?)['"]\)/g
+        ];
         apiFiles.forEach(file => {
             if (!file.content)
                 return;
             const lines = file.content.split('\n');
-            // Pattern for decorators like @Get("/users")
-            const patterns = [
-                { regex: /@(Get|Post|Put|Delete|Patch)\("([^"]+)"\)/, methodIndex: 1, pathIndex: 2 },
-                { regex: /(app|router)\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/, methodIndex: 2, pathIndex: 3 }
-            ];
-            lines.forEach((line) => {
+            lines.forEach((line, index) => {
                 patterns.forEach(pattern => {
-                    const match = line.match(pattern.regex);
-                    if (match) {
+                    let match;
+                    while ((match = pattern.exec(line)) !== null) {
                         endpoints.push({
-                            path: match[pattern.pathIndex],
-                            method: match[pattern.methodIndex].toUpperCase(),
+                            method: match[2].toUpperCase(),
+                            path: match[3],
                             file: file.path,
-                            handlerFunction: 'unknown',
+                            handlerFunction: match[4] || `line ${index + 1}`,
+                            description: `Endpoint discovered in ${file.path}`,
                         });
                     }
                 });
             });
-            // Pattern for resource-based routes (e.g., users.controller.ts)
-            const resourcePatterns = [
-                /(\w+)\.controller\./,
-                /(\w+)\.routes\./,
-                /routes\/(\w+)\.js/
-            ];
-            resourcePatterns.forEach(resource => {
-                const match = file.path.match(resource);
-                if (match) {
-                    const resourceName = match[1];
-                    if (!endpoints.some(e => e.path.includes(resourceName))) {
-                        endpoints.push({
-                            path: `/${resourceName}`,
-                            method: 'GET',
-                            file: file.path,
-                            handlerFunction: 'unknown',
-                        });
-                    }
-                }
-            });
+            // Add logic for resource patterns if needed
+            let match;
+            while ((match = resourcePatterns[0].exec(file.content)) !== null) {
+                endpoints.push({
+                    method: 'RESOURCE',
+                    path: match[1],
+                    file: file.path,
+                    handlerFunction: 'N/A',
+                    description: `Resource discovered in ${file.path}`,
+                });
+            }
         });
         return endpoints.slice(0, 50); // Limit results
     }
-    // inferArchitecturePattern method removed - was unused
-    // generateDependencyWheelData method removed - was unused
-    // generateFileSystemTree method removed - was unused
-    // generateChurnSunburstData method removed - was unused
-    // generateContributorStreamData method removed - was unused
     async generateAISummary(repoData, files) {
         if (!this.llmService.isConfigured()) {
-            this.addWarning('AI Summary', 'LLM service not configured, skipping AI summary.');
-            return "AI summary not available.";
+            return "LLM service not configured.";
         }
+        const prompt = `
+      Analyze the following repository and provide a concise executive summary.
+      Repository: ${repoData.fullName}
+      Description: ${repoData.description}
+      Language: ${repoData.language}
+      Key Files:
+      ${files.slice(0, 10).map(f => `- ${f.path} (size: ${f.size} bytes)`).join('\n')}
+
+      Based on this information, what is the primary purpose of this repository? 
+      What are the key technologies used?
+      What might be the main value proposition or functionality?
+      Provide a summary in 3-4 sentences.
+    `;
         try {
-            const prompt = `
-        Analyze the following repository and provide a concise executive summary.
-        Repository: ${repoData.fullName}
-        Description: ${repoData.description}
-        Language: ${repoData.language}
-        
-        Key files:
-        ${files.slice(0, 5).map(f => `- ${f.path} (${f.size} bytes)`).join('\n')}
-        
-        Focus on the project's purpose, main technologies, and overall structure.
-      `;
             const summary = await this.llmService.generateText(prompt);
             return summary;
         }
         catch (error) {
-            this.addWarning('AI Summary', 'Failed to generate AI summary', error);
-            return "Error generating AI summary.";
+            this.addWarning('AI Summary', 'Failed to generate AI summary via LLM.', error);
+            return 'Could not generate AI summary.';
         }
     }
     async generateAIArchitectureDescription(repoData, files, dependencyGraph) {
         if (!this.llmService.isConfigured()) {
-            this.addWarning('AI Architecture', 'LLM service not configured, skipping AI architecture description.');
-            return "AI architecture description not available.";
+            return "LLM service not configured.";
         }
+        const prompt = `
+      Analyze the architecture of the repository "${repoData.fullName}".
+      Description: ${repoData.description}
+      Language: ${repoData.language}
+      
+      File structure includes:
+      ${files.slice(0, 10).map(f => `- ${f.path}`).join('\n')}
+      
+      Dependency graph shows ${dependencyGraph.nodes.length} nodes and ${dependencyGraph.links.length} links.
+      Key nodes:
+      ${dependencyGraph.nodes.slice(0, 5).map(node => `- ${node.name} (${node.type})`).join('\n')}
+
+      Based on this, describe the likely architecture (e.g., Monolith, Microservices, MVC, Client-Server).
+      What are the main components and their likely interactions?
+      Provide a description in 4-5 sentences.
+    `;
         try {
-            const prompt = `
-        Analyze the architecture of the repository "${repoData.fullName}".
-        
-        Description: ${repoData.description}
-        Primary Language: ${repoData.language}
-        
-        File structure overview:
-        ${files.slice(0, 10).map(f => `- ${f.path}`).join('\n')}
-        
-        Dependency Graph (top 5 nodes and their connections):
-        ${dependencyGraph.nodes.slice(0, 5).map(node => {
-                const connections = dependencyGraph.links.filter(l => l.source === node.id).map(l => l.target).join(', ');
-                return `- ${node.name}: connects to [${connections || 'none'}]`;
-            }).join('\n')}
-        
-        Based on this information, describe the likely software architecture pattern (e.g., Monolith, Microservices, MVC, Layered, etc.) and explain your reasoning. Identify key components and their interactions.
-      `;
             const description = await this.llmService.generateText(prompt);
             return description;
         }
         catch (error) {
-            this.addWarning('AI Architecture', 'Failed to generate AI architecture description', error);
-            return "Error generating AI architecture description.";
+            this.addWarning('AI Architecture', 'Failed to generate AI architecture description via LLM.', error);
+            return 'Could not generate AI architecture description.';
         }
     }
     async analyzeDependencyVulnerabilities(dependencies) {
@@ -1197,34 +1143,38 @@ class BackendAnalysisService {
         const totalDeps = Object.keys(allDeps).length;
         if (totalDeps === 0) {
             return {
-                vulnerabilityScore: 100,
-                vulnerabilityData: {},
+                totalDependencies: 0,
+                vulnerablePackages: 0,
+                vulnerabilities: {},
+                dependencyScore: 100,
                 dependencyGraph: { nodes: [], links: [] },
-                vulnerabilityDistribution: {},
+                vulnerabilityDistribution: [],
             };
         }
-        // In a real scenario, you would call an API like Snyk, NPM audit, etc.
-        // For this example, we'll simulate the analysis.
+        // This is a simulation. In a real scenario, you would use a service like Snyk, NPM audit, etc.
         const vulnerabilityData = this.simulateVulnerabilityAnalysis(allDeps);
-        const vulnerabilityScore = this.calculateDependencyScore(vulnerabilityData, totalDeps);
+        const vulnerablePackages = Object.keys(vulnerabilityData).length;
+        const dependencyScore = this.calculateDependencyScore(vulnerabilityData, totalDeps);
         const dependencyGraph = this.generateDependencyGraph(allDeps);
         const vulnerabilityDistribution = this.generateVulnerabilityDistribution(vulnerabilityData);
         return {
-            vulnerabilityScore,
-            vulnerabilityData,
+            totalDependencies: totalDeps,
+            vulnerablePackages,
+            vulnerabilities: vulnerabilityData,
+            dependencyScore,
             dependencyGraph,
             vulnerabilityDistribution,
         };
     }
     simulateVulnerabilityAnalysis(dependencies) {
         const vulnerabilities = {};
-        const severities = ['low', 'medium', 'high', 'critical'];
+        const commonVulnerablePackages = ['express', 'lodash', 'request', 'react-scripts', 'axios'];
         Object.keys(dependencies).forEach(dep => {
-            if (Math.random() < 0.2) { // 20% chance of having a vulnerability
+            if (commonVulnerablePackages.includes(dep) && Math.random() < 0.3) {
                 vulnerabilities[dep] = {
-                    severity: severities[Math.floor(Math.random() * severities.length)],
+                    severity: ['low', 'medium', 'high', 'critical'][Math.floor(Math.random() * 4)],
                     summary: `Simulated vulnerability in ${dep}`,
-                    vulnerableVersions: `< ${dependencies[dep]}`,
+                    version: dependencies[dep],
                 };
             }
         });
@@ -1232,83 +1182,76 @@ class BackendAnalysisService {
     }
     calculateDependencyScore(vulnerabilityData, totalDeps) {
         const vulnerableCount = Object.keys(vulnerabilityData).length;
-        const score = Math.max(0, 100 - (vulnerableCount / totalDeps) * 100);
-        return Math.round(score);
+        return Math.round(Math.max(0, (1 - (vulnerableCount / totalDeps)) * 100));
     }
     generateDependencyGraph(dependencies) {
         const nodes = Object.keys(dependencies).map(name => ({
             id: name,
-            label: name,
-            value: 1, // Can be adjusted based on usage, etc.
+            name,
+            version: dependencies[name],
         }));
-        // In a real scenario, you'd parse package-lock.json or similar for inter-dependencies
-        // For now, we'll create some random links for visualization
+        // This is a simplified graph; a real one would show inter-dependencies
         const links = Object.keys(dependencies).map(name => ({
             source: name,
-            target: Object.keys(dependencies)[Math.floor(Math.random() * Object.keys(dependencies).length)],
-        })).filter(link => link.source !== link.target);
+            target: 'root', // Assuming a single root for simplicity
+        }));
         return { nodes, links };
     }
     /**
      * Generates a distribution of vulnerabilities by severity.
-     */ generateVulnerabilityDistribution(vulnerabilityData) {
+     * @param vulnerabilityData - The vulnerability data.
+     * @returns An array of objects with severity, count, and color.
+     */
+    generateVulnerabilityDistribution(vulnerabilityData) {
         const distribution = { low: 0, medium: 0, high: 0, critical: 0 };
         Object.values(vulnerabilityData).forEach((vuln) => {
-            const severity = vuln.severity;
-            if (distribution[severity] !== undefined) {
-                distribution[severity]++;
+            if (distribution[vuln.severity] !== undefined) {
+                distribution[vuln.severity]++;
             }
         });
-        return distribution;
+        return Object.entries(distribution).map(([severity, count]) => ({ severity, count, color: 'red' }));
     }
     generateTemporalCouplings(commits, files) {
-        const commitBasedCouplings = this.generateCommitBasedCouplings(commits);
-        let structureBasedCouplings = [];
-        if (files) {
-            structureBasedCouplings = this.generateEnhancedStructureCouplings(files);
+        // If there are many files, use a more efficient structure-based coupling as a fallback
+        if (files && files.length > 500) {
+            return this.generateEnhancedStructureCouplings(files);
         }
-        // Merge and weigh the results
-        const allCouplings = [...commitBasedCouplings, ...structureBasedCouplings];
-        return this.mergeCouplingResults(allCouplings);
+        return this.generateCommitBasedCouplings(commits);
     }
     generateCommitBasedCouplings(commits) {
         const filePairs = new Map();
-        const fileCommitCounts = new Map();
-        // Limit to recent commits for performance and relevance
-        const recentCommits = commits.slice(0, 500);
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const recentCommits = commits.filter(c => new Date(c.date) > thirtyDaysAgo);
         recentCommits.forEach(commit => {
-            const files = commit.files.map((f) => f.filename).sort();
-            if (files.length > 1 && files.length < 20) { // Ignore very large commits
-                for (let i = 0; i < files.length; i++) {
-                    fileCommitCounts.set(files[i], (fileCommitCounts.get(files[i]) || 0) + 1);
-                    for (let j = i + 1; j < files.length; j++) {
-                        const key = `${files[i]}|||${files[j]}`;
-                        const pairData = filePairs.get(key) || { count: 0, dates: [] };
-                        pairData.count++;
-                        pairData.dates.push(new Date(commit.date));
-                        filePairs.set(key, pairData);
+            const changedFiles = (commit.files || [])
+                .map((f) => f.filename)
+                .filter(Boolean)
+                .sort();
+            if (changedFiles.length > 1 && changedFiles.length < 15) { // Ignore large commits
+                for (let i = 0; i < changedFiles.length; i++) {
+                    for (let j = i + 1; j < changedFiles.length; j++) {
+                        const key = `${changedFiles[i]}--${changedFiles[j]}`;
+                        if (!filePairs.has(key)) {
+                            filePairs.set(key, { files: new Set([changedFiles[i], changedFiles[j]]), count: 0 });
+                        }
+                        filePairs.get(key).count++;
                     }
                 }
             }
         });
         const couplings = [];
-        // Could track recent changes: const ninetyDaysAgo = new Date(new Date().setDate(new Date().getDate() - 90));
         filePairs.forEach((data, key) => {
-            const [file1, file2] = key.split('|||');
-            const totalCommits1 = fileCommitCounts.get(file1) || 1;
-            const totalCommits2 = fileCommitCounts.get(file2) || 1;
-            // Jaccard index style metric
-            const strength = data.count / (totalCommits1 + totalCommits2 - data.count);
-            if (strength > 0.1) { // Threshold to reduce noise
-                // Could track recent changes for instability: const recentChanges = data.dates.filter(date => date > ninetyDaysAgo).length;
+            if (data.count > 2) { // Threshold for coupling
+                const [source, target] = key.split('--');
                 couplings.push({
-                    source: file1,
-                    target: file2,
-                    weight: Math.round(strength * 100) / 100,
+                    source,
+                    target,
+                    weight: data.count,
                 });
             }
         });
-        return couplings.sort((a, b) => b.weight - a.weight).slice(0, 100); // Limit results
+        return couplings.sort((a, b) => b.weight - a.weight).slice(0, 50); // Limit results
     }
     generateEnhancedStructureCouplings(files) {
         const couplings = [];
@@ -1317,9 +1260,8 @@ class BackendAnalysisService {
         const dirGroups = new Map();
         sourceFiles.forEach(file => {
             const dir = path.dirname(file.path);
-            if (!dirGroups.has(dir)) {
+            if (!dirGroups.has(dir))
                 dirGroups.set(dir, []);
-            }
             dirGroups.get(dir).push(file);
         });
         dirGroups.forEach((filesInDir, _dir) => {
@@ -1329,14 +1271,14 @@ class BackendAnalysisService {
                         couplings.push({
                             source: filesInDir[i].path,
                             target: filesInDir[j].path,
-                            weight: 0.3, // Base strength for directory coupling
+                            weight: 2, // Structural weight
                         });
                     }
                 }
             }
         });
         // 2. Component-based coupling (e.g., Button.tsx, Button.css, Button.test.tsx)
-        const componentMap = this.buildComponentMap(sourceFiles);
+        const componentMap = this.buildComponentMap(files);
         componentMap.forEach((relatedFiles, _componentName) => {
             if (relatedFiles.length > 1) {
                 for (let i = 0; i < relatedFiles.length; i++) {
@@ -1344,47 +1286,50 @@ class BackendAnalysisService {
                         couplings.push({
                             source: relatedFiles[i].path,
                             target: relatedFiles[j].path,
-                            weight: 0.5, // Higher strength for component coupling
+                            weight: 5, // Stronger structural weight
                         });
                     }
                 }
             }
         });
-        // 3. Index file coupling (e.g., index.ts imports and exports from siblings)
-        const indexFiles = sourceFiles.filter(f => path.basename(f.path).match(/index\.(js|ts|jsx|tsx)$/));
+        // 3. Index file coupling (e.g., index.ts exports from other files in the same dir)
+        const indexFiles = sourceFiles.filter(f => path.basename(f.path).startsWith('index.'));
         indexFiles.forEach(indexFile => {
             const dir = path.dirname(indexFile.path);
-            const siblingFiles = sourceFiles.filter(f => path.dirname(f.path) === dir && f.path !== indexFile.path);
-            siblingFiles.forEach(sibling => {
-                if (indexFile.content && indexFile.content.includes(path.basename(sibling.path, path.extname(sibling.path)))) {
-                    couplings.push({
-                        source: indexFile.path,
-                        target: sibling.path,
-                        weight: 0.6,
-                    });
-                }
-            });
+            const siblingFiles = sourceFiles.filter(f => path.dirname(f.path) === dir && f !== indexFile);
+            if (indexFile.content) {
+                siblingFiles.forEach(sibling => {
+                    const siblingName = path.basename(sibling.path, path.extname(sibling.path));
+                    if (indexFile.content.includes(`./${siblingName}`)) {
+                        couplings.push({
+                            source: indexFile.path,
+                            target: sibling.path,
+                            weight: 8, // Very strong coupling
+                        });
+                    }
+                });
+            }
         });
-        return couplings;
+        return this.mergeCouplingResults(couplings).slice(0, 100);
     }
     mergeCouplingResults(allCouplings) {
         const merged = new Map();
         allCouplings.forEach(coupling => {
-            const key = [coupling.source, coupling.target].sort().join('|||');
-            const existing = merged.get(key);
-            if (existing) {
-                existing.weight = Math.min(1, existing.weight + coupling.weight);
-            }
-            else {
-                merged.set(key, { ...coupling });
-            }
+            const key = [coupling.source, coupling.target].sort().join('--');
+            const currentWeight = merged.get(key) || 0;
+            merged.set(key, currentWeight + coupling.weight);
         });
-        return Array.from(merged.values()).sort((a, b) => b.weight - a.weight).slice(0, 150);
+        const finalCouplings = [];
+        merged.forEach((weight, key) => {
+            const [source, target] = key.split('--');
+            finalCouplings.push({ source, target, weight });
+        });
+        return finalCouplings.sort((a, b) => b.weight - a.weight);
     }
     buildComponentMap(files) {
         const componentMap = new Map();
         files.forEach(file => {
-            const componentName = this.extractComponentName(file.path);
+            const componentName = this.extractComponentName(file.name);
             if (componentName) {
                 if (!componentMap.has(componentName)) {
                     componentMap.set(componentName, []);
@@ -1395,43 +1340,41 @@ class BackendAnalysisService {
         return componentMap;
     }
     extractComponentName(fileName) {
-        const baseName = path.basename(fileName, path.extname(fileName));
-        // Handles cases like Button.stories.tsx, Button.test.tsx
-        const match = baseName.match(/^([A-Z][a-zA-Z0-9]+)/);
+        const match = fileName.match(/^([A-Z][a-zA-Z0-9]+)/);
         return match ? match[1] : null;
     }
-    // haveSimilarNames and areTestAndSource methods removed - were unused
     generateDataTransformationFlow(files, _commits) {
         const nodes = [];
         const links = [];
-        const dataKeywords = ['api', 'service', 'store', 'database', 'repository', 'client'];
-        const dataFiles = files.filter(f => this.isSourceFile(f.path) &&
-            (dataKeywords.some(kw => f.path.includes(kw)) || f.path.endsWith('.sql')));
-        if (dataFiles.length < 2) {
-            return { nodes: [], links: [] };
-        }
-        // Create nodes
-        dataFiles.slice(0, 15).forEach(file => {
-            nodes.push({ id: file.path });
-        });
-        // Create links based on import analysis (simplified)
+        const nodeSet = new Set();
+        const addNode = (id) => {
+            if (!nodeSet.has(id)) {
+                nodeSet.add(id);
+                nodes.push({ id });
+            }
+        };
+        const dataFiles = files.filter(f => this.isJavaScriptFile(f.path) &&
+            (f.path.includes('util') || f.path.includes('service') || f.path.includes('api') || f.path.includes('data')));
         dataFiles.slice(0, 15).forEach((file, idx) => {
+            addNode(file.path);
             if (file.content) {
                 const imports = this.parseImports(file.content);
                 imports.forEach(importedPath => {
-                    const targetNode = this.findNodeByPath(nodes.map(n => ({ ...n, path: n.id })), importedPath, file.path);
-                    if (targetNode && targetNode.id !== file.path) {
+                    const targetNode = this.findNodeByPath(dataFiles.map(f => ({ id: f.path, path: f.path })), importedPath, file.path);
+                    if (targetNode) {
+                        addNode(targetNode.path);
                         links.push({
                             source: file.path,
-                            target: targetNode.id,
-                            value: 10 // Default value
+                            target: targetNode.path,
+                            value: 1, // Simplified value
                         });
                     }
                 });
             }
-            // Create a fallback link to the next file if no imports found
-            if (idx > 0 && !links.some(l => l.source === file.path || l.target === file.path)) {
-                links.push({ source: dataFiles[idx - 1].path, target: file.path, value: 5 });
+            // Create some outgoing links for demonstration
+            if (idx < dataFiles.length - 1) {
+                addNode(dataFiles[idx + 1].path);
+                links.push({ source: file.path, target: dataFiles[idx + 1].path, value: 1 });
             }
         });
         return { nodes, links };
@@ -1439,15 +1382,13 @@ class BackendAnalysisService {
     generateGitGraphData(commits, _contributors) {
         const nodes = [];
         const links = [];
-        // Future: could track branch heads: const branchHeads = new Map<string, string>();
-        // Simplified: assume linear history for now
         commits.slice(0, 20).forEach((commit, idx) => {
             nodes.push({
                 id: commit.sha,
-                message: commit.message.split('\n')[0].substring(0, 30),
+                message: commit.message,
                 author: commit.author,
                 date: commit.date,
-                parents: idx > 0 ? [commits[idx - 1].sha] : [],
+                parents: [], // This would need to be parsed from the commit data if available
             });
             if (idx > 0) {
                 links.push({
@@ -1461,11 +1402,12 @@ class BackendAnalysisService {
     generateFallbackSecurityIssues(files) {
         const issues = [];
         const patterns = [
-            { pattern: /dangerouslySetInnerHTML/g, severity: 'high', description: 'Potential XSS vulnerability via dangerouslySetInnerHTML.' },
-            { pattern: /eval\(/g, severity: 'high', description: 'Use of eval can lead to arbitrary code execution.' },
-            { pattern: /new Buffer/g, severity: 'medium', description: 'new Buffer() is deprecated and can be insecure.' },
-            { pattern: /process.env\./g, severity: 'low', description: 'Direct access to environment variables can expose sensitive data.' },
-            { pattern: /<a target="_blank"/g, severity: 'medium', description: 'Missing rel="noopener noreferrer" on target="_blank" links.' },
+            { regex: /AWS_ACCESS_KEY_ID/g, type: 'secret', severity: 'critical', cwe: 'CWE-798' },
+            { regex: /private_key/g, type: 'secret', severity: 'critical', cwe: 'CWE-798' },
+            { regex: /dangerouslySetInnerHTML/g, type: 'vulnerability', severity: 'high', cwe: 'CWE-79' },
+            { regex: /eval\(/g, type: 'vulnerability', severity: 'high', cwe: 'CWE-95' },
+            { regex: /password\s*=\s*['"`][^'"`]+['"`]/gi, type: 'secret', severity: 'high', cwe: 'CWE-259' },
+            { regex: /TODO:|FIXME:/g, type: 'configuration', severity: 'low', cwe: 'CWE-546' },
         ];
         const sourceFiles = files.filter(f => this.isSourceFile(f.path));
         sourceFiles.forEach(file => {
@@ -1474,28 +1416,30 @@ class BackendAnalysisService {
             const lines = file.content.split('\n');
             lines.forEach((line, index) => {
                 patterns.forEach(pattern => {
-                    if (pattern.pattern.test(line)) {
+                    if (pattern.regex.test(line)) {
                         issues.push({
-                            type: 'vulnerability',
+                            type: pattern.type,
                             severity: pattern.severity,
                             file: file.path,
                             line: index + 1,
-                            description: pattern.description,
-                            recommendation: 'Review and fix security issue',
+                            description: `Potential ${pattern.type} found: ${line.trim()}`,
+                            recommendation: 'Review and remove sensitive information or insecure patterns.',
+                            cwe: pattern.cwe,
+                            codeSnippet: line,
                         });
                     }
                 });
             });
         });
-        return issues.slice(0, 100); // Limit results
+        return issues;
     }
     generateFallbackTechnicalDebt(files, _quality) {
         const debt = [];
         const patterns = [
-            { pattern: /\/\/\s*TODO/gi, effort: '2', type: 'documentation', description: 'TODO comment found.' },
-            { pattern: /\/\/\s*FIXME/gi, effort: '3', type: 'smell', description: 'FIXME comment found.' },
-            { pattern: /\/\/\s*HACK/gi, effort: '5', type: 'smell', description: 'HACK comment found.' },
-            { pattern: /console\.log/g, effort: '1', type: 'smell', description: 'console.log statement found.' },
+            { regex: /console\.log/g, type: 'smell', severity: 'low', effort: 'low' },
+            { regex: /\/\/\s*@ts-ignore/g, type: 'smell', severity: 'medium', effort: 'medium' },
+            { regex: /any/g, type: 'smell', severity: 'medium', effort: 'high' },
+            { regex: /function\s*\w*\s*\([^)]*?\)\s*\{[\s\S]{500,}/g, type: 'complexity', severity: 'high', effort: 'high' }, // Long function
         ];
         const sourceFiles = files.filter(f => this.isSourceFile(f.path));
         sourceFiles.forEach(file => {
@@ -1504,82 +1448,255 @@ class BackendAnalysisService {
             const lines = file.content.split('\n');
             lines.forEach((line, index) => {
                 patterns.forEach(pattern => {
-                    if (pattern.pattern.test(line)) {
+                    if (pattern.regex.test(line)) {
                         debt.push({
+                            type: pattern.type,
+                            severity: pattern.severity,
                             file: file.path,
                             line: index + 1,
-                            type: pattern.type,
-                            severity: 'medium',
+                            description: `Code smell detected: ${line.trim()}`,
                             effort: pattern.effort,
-                            impact: 'Low',
-                            description: pattern.description,
+                            impact: 'low',
                         });
                     }
                 });
             });
         });
-        // Debt from duplicated code (simple check)
+        // Check for duplicated code blocks (simple version)
         const codeBlocks = new Map();
         files.forEach(file => {
             if (!file.content)
                 return;
             const lines = file.content.split('\n');
-            lines.forEach((line, index) => {
-                if (line.trim().length > 20) { // Only check substantial lines
-                    const trimmed = line.trim();
-                    if (!codeBlocks.has(trimmed)) {
-                        codeBlocks.set(trimmed, []);
-                    }
-                    codeBlocks.get(trimmed).push({ file: file.path, line: index + 1 });
+            for (let i = 0; i < lines.length - 5; i++) {
+                const block = lines.slice(i, i + 5).join('\n');
+                if (block.trim().length > 50) { // Ignore small blocks
+                    if (!codeBlocks.has(block))
+                        codeBlocks.set(block, []);
+                    codeBlocks.get(block).push({ file: file.path, line: i + 1 });
                 }
-            });
+            }
         });
         codeBlocks.forEach((locations) => {
             if (locations.length > 1) {
-                locations.forEach(loc => {
-                    debt.push({
-                        file: loc.file,
-                        line: loc.line,
-                        type: 'duplication',
-                        severity: 'medium',
-                        effort: '3',
-                        impact: 'Medium',
-                        description: `Duplicate code found in ${locations.length} locations`,
-                    });
+                debt.push({
+                    type: 'duplication',
+                    severity: 'medium',
+                    file: locations[0].file,
+                    line: locations[0].line,
+                    description: `Duplicated code block found in ${locations.length} locations.`,
+                    effort: 'medium',
+                    impact: 'medium',
+                    recommendation: `Refactor duplicated code into a shared function. Other locations: ${locations.slice(1).map(l => `${l.file}:${l.line}`).join(', ')}`,
                 });
             }
         });
-        return debt.slice(0, 100);
+        return debt;
     }
     generateFallbackPerformanceMetrics(files) {
         const metrics = [];
         const patterns = [
-            { pattern: /for\s*\(.*\.length/g, fileTypes: ['.js', '.ts'], suggestion: 'Cache array length' },
-            { pattern: /document\.getElementById/g, fileTypes: ['.js', '.ts'], suggestion: 'Consider caching DOM elements' },
-            { pattern: /\+\s*["']/g, fileTypes: ['.js', '.ts'], suggestion: 'Use template literals instead of string concatenation' },
-            { pattern: /new\s+Date\(\)/g, fileTypes: ['.js', '.ts'], suggestion: 'Consider using Date.now() for timestamps' },
+            { regex: /\.forEach\s*\(/, recommendation: 'Consider using for...of loops for better performance on large arrays.' },
+            { regex: /useEffect\(\s*async/, recommendation: 'useEffect should not be async directly. Use an async function inside.' },
+            { regex: /useMemo\(\s*\(\)\s*=>\s*\[\]/, recommendation: 'useMemo with an empty dependency array may not be necessary.' },
+            { regex: /JSON\.parse\(JSON\.stringify\(/, recommendation: 'Deep cloning with JSON methods can be slow for large objects.' },
         ];
-        const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+        const sourceFiles = files.filter(f => this.isJavaScriptFile(f.path));
         sourceFiles.forEach(file => {
-            const ext = path.extname(file.path);
             if (!file.content)
                 return;
             const lines = file.content.split('\n');
             lines.forEach((line) => {
                 patterns.forEach(p => {
-                    if (p.fileTypes.includes(ext) && p.pattern.test(line)) {
+                    if (p.regex.test(line)) {
                         metrics.push({
+                            function: 'N/A',
                             file: file.path,
-                            function: 'unknown',
                             complexity: 'N/A',
                             estimatedRuntime: 'N/A',
-                            recommendation: p.suggestion,
+                            recommendation: p.recommendation,
                         });
                     }
                 });
             });
         });
-        return metrics.slice(0, 100);
+        return metrics;
+    }
+    inferLayer(filePath, moduleType) {
+        const pathLower = filePath.toLowerCase();
+        // Backend layers
+        if (pathLower.includes('controller') || pathLower.includes('api') || pathLower.includes('route')) {
+            return 'presentation';
+        }
+        if (pathLower.includes('service') || pathLower.includes('business') || pathLower.includes('logic')) {
+            return 'business';
+        }
+        if (pathLower.includes('repository') || pathLower.includes('dao') || pathLower.includes('database') || pathLower.includes('model')) {
+            return 'data';
+        }
+        // Frontend layers
+        if (pathLower.includes('page') || pathLower.includes('view') || pathLower.includes('screen')) {
+            return 'presentation';
+        }
+        if (pathLower.includes('component') || pathLower.includes('ui'))
+            return 'presentation';
+        if (pathLower.includes('hook') || pathLower.includes('store') || pathLower.includes('context')) {
+            return 'business';
+        }
+        // Common layers
+        if (pathLower.includes('util') || pathLower.includes('helper') || pathLower.includes('lib')) {
+            return 'utility';
+        }
+        if (pathLower.includes('config') || pathLower.includes('constant') || pathLower.includes('env')) {
+            return 'infrastructure';
+        }
+        if (pathLower.includes('test') || pathLower.includes('spec') || pathLower.includes('__test__')) {
+            return 'test';
+        }
+        if (pathLower.includes('middleware') || pathLower.includes('guard') || pathLower.includes('filter')) {
+            return 'infrastructure';
+        }
+        // Fallback based on module type
+        switch (moduleType) {
+            case 'controller':
+            case 'page':
+            case 'component':
+                return 'presentation';
+            case 'service':
+            case 'hook':
+                return 'business';
+            case 'utility':
+                return 'utility';
+            case 'config':
+                return 'infrastructure';
+            case 'test':
+                return 'test';
+            default:
+                return 'business'; // Default layer
+        }
+    }
+    /**
+     * Calculate more accurate test coverage by analyzing test files and testing patterns
+     */
+    calculateTestCoverage(files) {
+        const sourceFiles = files.filter(f => this.isSourceFile(f.path) && !this.isTestFile(f.path));
+        const testFiles = files.filter(f => this.isTestFile(f.path));
+        if (sourceFiles.length === 0)
+            return 0;
+        if (testFiles.length === 0)
+            return 0;
+        // Calculate based on test files vs source files ratio
+        const testRatio = testFiles.length / sourceFiles.length;
+        // Analyze test patterns in test files
+        let testPatterns = 0;
+        testFiles.forEach(file => {
+            if (file.content) {
+                // Count test functions/methods
+                const testPatternRegex = /\b(test|it|describe|should|expect|assert)\s*\(/gi;
+                const matches = file.content.match(testPatternRegex);
+                testPatterns += matches ? matches.length : 0;
+            }
+        });
+        // Estimate coverage based on test patterns and file ratio
+        const estimatedCoverage = Math.min(90, (testRatio * 50) + (testPatterns / sourceFiles.length * 40));
+        return Math.round(estimatedCoverage * 10) / 10; // Round to 1 decimal
+    }
+    /**
+     * Check if a file is a test file
+     */
+    isTestFile(filePath) {
+        const testPatterns = [
+            /\.test\.(js|ts|jsx|tsx)$/i,
+            /\.spec\.(js|ts|jsx|tsx)$/i,
+            //__tests__\//i,
+            /\/tests?\//i,
+            /\.test\.py$/i,
+            /\.spec\.py$/i,
+            /test_.*\.py$/i,
+            /.*_test\.py$/i,
+            /Test\.java$/i,
+            /.*Test\.java$/i,
+            /.*Tests\.java$/i,
+            /.*_test\.go$/i,
+            /.*\.test\.cs$/i
+        ];
+        return testPatterns.some(pattern => pattern.test(filePath));
+    }
+    /**
+     * Calculate more accurate repository size from files
+     */
+    calculateRepositorySize(files) {
+        return files.reduce((total, file) => {
+            if (file.size)
+                return total + file.size;
+            if (file.content)
+                return total + Buffer.byteLength(file.content, 'utf8');
+            return total;
+        }, 0);
+    }
+    /**
+     * Detect programming languages more accurately
+     */
+    detectLanguages(files) {
+        const languages = {};
+        files.forEach(file => {
+            const lang = this.getLanguageFromPath(file.path);
+            if (lang && lang !== 'text') {
+                const size = file.size || (file.content ? Buffer.byteLength(file.content, 'utf8') : 0);
+                languages[lang] = (languages[lang] || 0) + size;
+            }
+        });
+        return languages;
+    }
+    /**
+     * Get language from file path using extension mapping
+     */
+    getLanguageFromPath(filePath) {
+        const extension = '.' + filePath.split('.').pop()?.toLowerCase();
+        return BackendAnalysisService.EXTENSION_LANGUAGE_MAP[extension] || null;
+    }
+    /**
+     * Calculate bus factor more accurately based on contributor distribution
+     */
+    calculateBusFactor(contributors, _commits) {
+        if (contributors.length === 0)
+            return 0;
+        // Sort contributors by contribution count
+        const sortedContributors = contributors.sort((a, b) => b.contributions - a.contributions);
+        // Calculate cumulative contribution percentage
+        const totalContributions = contributors.reduce((sum, c) => sum + c.contributions, 0);
+        let cumulativePercentage = 0;
+        let busFactor = 0;
+        for (const contributor of sortedContributors) {
+            cumulativePercentage += (contributor.contributions / totalContributions) * 100;
+            busFactor++;
+            // If top contributors account for 50% or more, bus factor is the count
+            if (cumulativePercentage >= 50)
+                break;
+            // Cap at reasonable maximum
+            if (busFactor >= 10)
+                break;
+        }
+        return Math.min(busFactor, contributors.length);
+    }
+    /**
+     * Enhanced quality score calculation
+     */
+    calculateQualityScore(avgMaintainability, avgComplexity, testCoverage, securityScore, technicalDebtScore) {
+        // Weight different factors
+        const maintainabilityWeight = 0.3;
+        const complexityWeight = 0.25;
+        const testCoverageWeight = 0.2;
+        const securityWeight = 0.15;
+        const debtWeight = 0.1;
+        // Normalize complexity (lower is better)
+        const normalizedComplexity = Math.max(0, 100 - (avgComplexity * 5));
+        const qualityScore = (avgMaintainability * maintainabilityWeight +
+            normalizedComplexity * complexityWeight +
+            testCoverage * testCoverageWeight +
+            securityScore * securityWeight +
+            technicalDebtScore * debtWeight) / 10; // Convert to 0-10 scale
+        return Math.round(qualityScore * 10) / 10;
     }
 }
 exports.BackendAnalysisService = BackendAnalysisService;

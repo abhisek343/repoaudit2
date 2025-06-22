@@ -93,6 +93,7 @@ export interface FileInfo {
   name: string;
   type: 'file' | 'dir'; // Example, adjust as needed
   size: number;
+  layer?: 'frontend' | 'backend' | 'shared' | 'docs' | 'build' | 'other';
   content?: string;
   language?: string;
   dependencies?: string[];
@@ -148,6 +149,7 @@ export interface DependencyNode {
   name: string;
   type?: string;
   path?: string;
+  layer?: 'frontend' | 'backend' | 'shared' | 'docs' | 'build' | 'other';
   // Add other relevant fields
 }
 
@@ -299,6 +301,14 @@ export interface AnalysisResult {
     lowVulnerabilities: number;
     avgComplexity?: number; // New: Average file complexity
     filesWithComplexity?: number; // New: Count of files with complexity analysis
+    repositorySize?: number; // New: Repository size in bytes
+    languageDistribution?: Record<string, number>; // New: Language distribution by size
+    totalPRs?: number;
+    mergedPRs?: number;
+    prMergeRate?: number;
+    avgPRMergeTime?: number;
+    recentActivity?: number;
+    avgCommitsPerWeek?: number;
   };
   aiSummary?: string;
   advancedAnalysis?: AdvancedAnalysisResult; // Use the imported type

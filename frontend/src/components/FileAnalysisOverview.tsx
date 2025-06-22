@@ -15,20 +15,19 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
   // Check if optimizations should be applied
   const optimizations = shouldOptimize(analysisResult);
   
-  // Calculate comprehensive file statistics
+  // Use enhanced metrics from analysis
   const sourceFiles = files.filter(f => f.content && f.language && f.language !== 'text');
-  const totalLinesOfCode = sourceFiles.reduce((sum, f) => {
-    return sum + (f.content ? f.content.split('\n').length : 0);
-  }, 0);
+  const totalLinesOfCode = analysisResult.metrics?.linesOfCode || 0;
+  const avgComplexity = analysisResult.metrics?.avgComplexity || 0;
+  const filesWithComplexity = analysisResult.metrics?.filesWithComplexity || 0;
   
-  const filesWithComplexity = sourceFiles.filter(f => f.complexity && f.complexity > 0);
-  const avgComplexity = filesWithComplexity.length > 0 
-    ? filesWithComplexity.reduce((sum, f) => sum + (f.complexity || 0), 0) / filesWithComplexity.length
-    : 0;
+  const highComplexityFiles = sourceFiles.filter(f => (f.complexity || 0) > 10);
   
-  const highComplexityFiles = filesWithComplexity.filter(f => (f.complexity || 0) > 10);
+  // Use language distribution from enhanced metrics
+  const languageDistribution = analysisResult.metrics?.languageDistribution || analysisResult.languages || {};
+  const languageCount = Object.keys(languageDistribution).length;
   
-  // Group by language
+  // Convert size-based language data to count-based for display
   const rawLanguageStats = sourceFiles.reduce((acc, file) => {
     const lang = file.language || 'Unknown';
     if (!acc[lang]) {
@@ -46,15 +45,17 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
   const { stats: languageStats, isOptimized: languageOptimized } = optimizeLanguageStats(rawLanguageStats);
   
   // Top complex files
-  const topComplexFiles = filesWithComplexity
+  const topComplexFiles = sourceFiles
+    .filter(f => f.complexity && f.complexity > 0)
     .sort((a, b) => (b.complexity || 0) - (a.complexity || 0))
     .slice(0, 5);
 
-  const fileStats = [    {
+  const fileStats = [
+    {
       icon: <FileText className="w-6 h-6 text-blue-500" />,
       label: 'Total Files Analyzed',
       value: formatLargeNumber(files.length),
-      subtitle: `${sourceFiles.length} source files`,
+      subtitle: `${sourceFiles.length.toLocaleString()} source files`,
     },
     {
       icon: <Code className="w-6 h-6 text-green-500" />,
@@ -73,7 +74,7 @@ export const FileAnalysisOverview: React.FC<FileAnalysisOverviewProps> = ({ anal
     {
       icon: <Layers className="w-6 h-6 text-indigo-500" />,
       label: 'Programming Languages',
-      value: Object.keys(languageStats).length.toString(),
+      value: languageCount.toString(),
       subtitle: 'Detected languages',
     },
   ];
