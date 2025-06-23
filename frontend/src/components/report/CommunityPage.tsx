@@ -9,20 +9,25 @@ import {
   UserPlus,
   BarChart // For contributor trends
 } from 'lucide-react'; // Removed TrendingUp, Calendar, GitCommit
-import { AnalysisResult, ProcessedContributor, Repository } from '../../types';
+import { AnalysisResult, Contributor, RepositoryData } from '../../types';
 import { BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'; // Aliased BarChart, Removed Cell, Added Legend
 
 
-interface CommunityPageProps {
-  reportData: AnalysisResult;
+interface CommunityPageMetrics {
+  busFactor: number;
+  avgPRMergeTime?: number;
 }
 
-const CommunityPage = ({ reportData }: CommunityPageProps) => {
+interface CommunityPageProps {
+  analysisResult: AnalysisResult;
+}
+
+const CommunityPage = ({ analysisResult: reportData }: CommunityPageProps) => {
   const { 
     contributors = [], 
     commits = [], 
-    metrics = {} as any, 
-    repository = {} as Repository, // ← Use repository field
+    metrics = {} as CommunityPageMetrics,
+    repository = {} as RepositoryData, // ← Use repository field
     files = [] // ← Add files for community files check
   } = reportData;
 
@@ -54,7 +59,7 @@ const CommunityPage = ({ reportData }: CommunityPageProps) => {
     readme: files.some(f => f.name.toLowerCase() === 'readme.md'),
     contributing: files.some(f => f.name.toLowerCase().includes('contributing')),
     codeOfConduct: files.some(f => f.name.toLowerCase().includes('code_of_conduct')),
-    license: !!repository.license,
+    license: !!repository,
     changelog: files.some(f => f.name.toLowerCase().includes('changelog')),
     security: files.some(f => f.name.toLowerCase() === 'security.md'),
   };
@@ -110,12 +115,12 @@ const CommunityPage = ({ reportData }: CommunityPageProps) => {
 
   const { trends: contributorTrends } = generateContributorTrends(); 
   
-  const topReviewers = (reportData.contributors || []).filter(c => ((c as any).reviewCount || 0) > 0)
-    .sort((a, b) => ((b as any).reviewCount || 0) - ((a as any).reviewCount || 0))
+  const topReviewers = (reportData.contributors || []).filter(c => (c.contributions || 0) > 0)
+    .sort((a, b) => (b.contributions || 0) - (a.contributions || 0))
     .slice(0, 5).map(contributor => ({
     ...contributor,
-    reviews: (contributor as any).reviewCount || 0, 
-    avgReviewTime: metrics.avgReviewTime || 0 
+    reviews: contributor.contributions || 0,
+    avgReviewTime: metrics.avgPRMergeTime || 0
   })).filter(r => r.reviews > 0);
 
 
@@ -123,7 +128,7 @@ const CommunityPage = ({ reportData }: CommunityPageProps) => {
     <div className="space-y-8">
       <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard icon={<Users />} label="Total Contributors" value={(contributors || []).length.toString()} trendText={`${activeContributors.filter(c => c.isActiveInLast30Days).length} active`} />
-        <StatCard icon={<AlertTriangle />} label="Bus Factor" value={metrics.busFactor.toString()} trendText={metrics.busFactor <= 2 ? 'Risk' : 'Healthy'} trendColor={metrics.busFactor <= 2 ? 'text-red-600' : 'text-green-600'} />
+        <StatCard icon={<AlertTriangle />} label="Bus Factor" value={(metrics.busFactor || 0).toString()} trendText={(metrics.busFactor || 0) <= 2 ? 'Risk' : 'Healthy'} trendColor={(metrics.busFactor || 0) <= 2 ? 'text-red-600' : 'text-green-600'} />
         <StatCard icon={<UserPlus />} label="Active (30d)" value={activeContributors.filter(c => c.isActiveInLast30Days).length.toString()} trendText="Recent Activity" />
         <StatCard icon={<Award />} label="Top Contributor" value={(contributors && contributors[0]?.contributions.toLocaleString()) || 'N/A'} trendText={`${Math.round(topContributorShare * 100)}% of total`} trendColor="text-purple-600" />
       </div>
@@ -150,14 +155,14 @@ const CommunityPage = ({ reportData }: CommunityPageProps) => {
               Bus Factor Analysis
             </h4>
             <div className="text-center mb-4">
-              <div className="text-4xl font-bold text-orange-600 mb-2">{metrics.busFactor}</div>
+              <div className="text-4xl font-bold text-orange-600 mb-2">{metrics.busFactor || 0}</div>
               <p className="text-sm text-gray-700">
                 Key contributors whose absence might impact development.
               </p>
             </div>
             <div className="space-y-2 text-sm">
               <InfoPill color="blue">Top Contributor Share: {Math.round(topContributorShare * 100)}%</InfoPill>
-              {metrics.busFactor <= 2 && <InfoPill color="red">Risk: High dependency on few contributors.</InfoPill>}
+              {(metrics.busFactor || 0) <= 2 && <InfoPill color="red">Risk: High dependency on few contributors.</InfoPill>}
               <InfoPill color="green">Active Top Contributors: {activeContributors.filter(c => c.isActiveInLast30Days && c.impactScore && c.impactScore > 0.05).length}</InfoPill>
             </div>
           </div>
@@ -254,7 +259,7 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: string; 
 );
 
 interface ContributorCardProps {
-  contributor: ProcessedContributor & { isActiveInLast30Days?: boolean; recentCommitsCount?: number; impactScore?: number };
+  contributor: Contributor & { isActiveInLast30Days?: boolean; recentCommitsCount?: number; impactScore?: number };
   rank: number;
   topContribution: number;
 }
@@ -277,7 +282,7 @@ const ContributorCard: React.FC<ContributorCardProps> = ({ contributor, rank, to
             <div>
                 <h4 className="font-semibold text-gray-800 text-sm md:text-base">{contributor.login}</h4>
                 <p className="text-xs text-gray-500">{contributor.contributions.toLocaleString()} contributions</p>
-                {(contributor as any).type === 'Bot' && <span className="text-xs text-blue-500"> (Bot)</span>}
+                {contributor.login.includes('[bot]') && <span className="text-xs text-blue-500"> (Bot)</span>}
             </div>
             </div>
             <div className="text-right">
@@ -313,7 +318,7 @@ const InfoPill: React.FC<{ children: React.ReactNode; color: 'blue' | 'green' | 
 };
 
 interface ReviewerCardProps {
-    reviewer: ProcessedContributor & { reviews?: number; avgReviewTime?: number };
+    reviewer: Contributor & { reviews?: number; avgReviewTime?: number };
     maxReviews: number;
 }
 const ReviewerCard: React.FC<ReviewerCardProps> = ({ reviewer, maxReviews }) => (

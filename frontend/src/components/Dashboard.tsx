@@ -1,128 +1,47 @@
-import React, { useState } from 'react';
-import { toast } from 'react-hot-toast';
-import { persistReport } from '../utils/persist';
-import { CodeQualityMetricsDisplay } from './CodeQualityMetrics';
-import { SecurityMetricsDisplay } from './SecurityMetrics';
-import { DependencyMetricsDisplay } from './DependencyMetrics';
-import { defaultSecurityConfig } from '../config/security.config';
-import { defaultDependencyConfig } from '../config/dependencies.config';
-import { AnalysisResult, SecurityIssue, Repository, Contributor, Commit, FileInfo } from '../types';
+/**
+ * @file Provides the main dashboard for viewing and managing analysis reports.
+ *
+ * This component orchestrates data fetching, state management, and rendering for the dashboard UI.
+ * It follows best practices for handling asynchronous operations and state updates in React.
+ */
+import React from 'react';
+import {
+  InteractiveArchitectureVisualizations,
+  SystemArchitecture,
+  VulnerabilityDistribution,
+  ComplexityScatterPlot,
+} from './Visualizations';
 
+/**
+ * The main dashboard component for displaying and managing reports.
+ */
 export const Dashboard: React.FC = () => {
-  const [codeMetrics] = useState({
-    averageComplexity: 0,
-    testCoveragePercentage: 0,
-    duplicationPercentage: 0,
-    maintainabilityIndex: 0,
-    issuesCount: {
-      blocker: 0,
-      critical: 0,
-      major: 0,
-      minor: 0,
-      info: 0,
-    }
-  });
-  
-  const [simulatedSecurityData] = useState<{
-    securityScore: number;
-    securityIssues: SecurityIssue[];
-    activeConnections: number;
-    blockedRequests: number;
-    totalRequests: number;
-    averageResponseTime: number;
-    lastSecurityScan: Date;
-  }>({
-    securityScore: 0,
-    securityIssues: [],
-    activeConnections: 0, 
-    blockedRequests: 0,
-    totalRequests: 0,
-    averageResponseTime: 0,
-    lastSecurityScan: new Date()
-  });
-  
-  const [dependencyMetrics] = useState({
-    totalDependencies: 0,
-    devDependencies: 0,
-    outdatedPackages: 0,
-    vulnerablePackages: 0,
-    criticalVulnerabilities: 0,
-    highVulnerabilities: 0,
-    lastScan: new Date().toISOString(),
-    dependencyScore: 0
-  });
-
-  const saveAnalysis = async (report: Partial<AnalysisResult>) => {
-    const key = `report_${Date.now()}`;
-    try {
-      await persistReport(key, report);
-    } catch (err) {
-      console.error('Could not persist report', err);
-      toast.error('Failed to save the report; it will be available for this session only.');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         <header className="bg-white p-6 rounded-lg shadow-md">
-          <h1 className="text-2xl font-bold text-gray-800">Project Metrics Dashboard</h1>
-          <p className="text-gray-600 mt-2">Real-time monitoring of code quality, security, and dependency metrics</p>
+          <h1 className="text-2xl font-bold text-gray-800">Analysis Dashboard</h1>
+          <p className="text-gray-600 mt-2">Advanced Software Visualizations</p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <CodeQualityMetricsDisplay metrics={codeMetrics} />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="bg-white p-4 rounded-lg shadow-md col-span-1 md:col-span-2 lg:col-span-3">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">Interactive Architecture</h2>
+            <InteractiveArchitectureVisualizations />
           </div>
-          <div>
-            <SecurityMetricsDisplay 
-              config={defaultSecurityConfig}
-              reportData={
-                {
-                  metrics: {
-                    securityScore: simulatedSecurityData.securityScore,
-                    codeQuality: 0,
-                    testCoverage: 0,
-                    busFactor: 0,
-                    linesOfCode: 0,
-                    totalCommits: 0,
-                    totalContributors: 0,
-                    technicalDebtScore: 0,
-                    performanceScore: 0,
-                    criticalVulnerabilities: 0,
-                    highVulnerabilities: 0,
-                    mediumVulnerabilities: 0,
-                    lowVulnerabilities: 0,
-                  },
-                  securityIssues: simulatedSecurityData.securityIssues,
-                  repository: {} as Repository,
-                  contributors: [] as Contributor[],
-                  commits: [] as Commit[],
-                  files: [] as FileInfo[],
-                  languages: {},
-                  aiSummary: '',
-                  hotspots: [],
-                  keyFunctions: [],
-                  securityAnalysis: '',
-                  technicalDebt: [],
-                  apiEndpoints: [],
-                  performanceMetrics: [],
-                  codeQualityMetrics: undefined,
-                } as unknown as AnalysisResult
-              }
-            />
+          <div className="bg-white p-4 rounded-lg shadow-md">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">System Architecture</h2>
+            <SystemArchitecture />
           </div>
-          <div className="lg:col-span-2">
-            <DependencyMetricsDisplay
-              config={defaultDependencyConfig}
-              currentMetrics={dependencyMetrics}
-            />
+          <div className="bg-white p-4 rounded-lg shadow-md">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">Vulnerability Distribution</h2>
+            <VulnerabilityDistribution />
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow-md">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">Complexity Scatter Plot</h2>
+            <ComplexityScatterPlot />
           </div>
         </div>
-
-        <footer className="bg-white p-4 rounded-lg shadow-md text-center text-gray-600">
-          <p>Last updated: {new Date().toLocaleString()}</p>
-        </footer>
       </div>
     </div>
   );

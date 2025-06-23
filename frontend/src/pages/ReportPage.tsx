@@ -114,7 +114,7 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
 
   // Add a new useEffect to log reportData changes
   useEffect(() => {
-    console.log('[ReportPage] reportData state changed:', reportData);
+    console.log('[ReportPage] reportData state changed:', JSON.stringify(reportData, null, 2));
     if (reportData) {
       console.log('[ReportPage] reportData.id:', reportData.id);
       console.log('[ReportPage] reportData.repositoryUrl:', reportData.repositoryUrl);
@@ -326,7 +326,7 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
       <div className="pt-[150px]">
         <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
           <VisualizationErrorBoundary>
-            <CurrentPageComponent analysisResult={reportData} reportData={reportData} />
+            <CurrentPageComponent analysisResult={reportData} />
           </VisualizationErrorBoundary>
         </main>
 

@@ -470,6 +470,25 @@ Provide a detailed technical analysis (400-500 words) covering:
 Provide a comprehensive and detailed analysis in plain English without markdown or bullet points. Aim for 400-500 words. Return only the analysis text.`;
     return this.generateText(prompt, 800);
   }
+
+  async generateMermaidDiagram(files: FileInfo[], languages: Record<string, number>): Promise<string> {
+    if (!this.isConfigured()) return "LLM not configured. Mermaid diagram generation unavailable.";
+    const filePaths = files.slice(0, 100).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
+    const languageSummary = Object.entries(languages || {}).map(([lang, bytes]) => `${lang}: ${bytes} bytes`).join(', ');
+    const prompt = `
+Analyze the architecture of this codebase and generate a Mermaid diagram.
+Languages used: ${languageSummary}
+Key files and directories:
+${filePaths}
+Generate a complete and detailed Mermaid diagram that represents the system architecture.
+The diagram should include:
+- All major components and their relationships.
+- Data flow between components.
+- Key dependencies.
+Return ONLY the Mermaid diagram code. Do not include any explanations or surrounding text.
+`;
+    return this.generateText(prompt, 1500);
+  }
   
   async generateSecurityAnalysis(files: FileInfo[], repoName: string): Promise<string> {
     if (!this.isConfigured()) return "LLM not configured. Security analysis unavailable.";

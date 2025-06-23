@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   Code, FileText, GitCommit, Users, TrendingUp, Package, CheckSquare, 
-  Star, Shield, AlertTriangle, Activity, Database, Clock, Zap 
+  Star, Shield, AlertTriangle, Activity, Database
 } from 'lucide-react';
 import { AnalysisResult } from '../types';
 
@@ -38,7 +38,7 @@ export const ComprehensiveMetricsPanel: React.FC<ComprehensiveMetricsPanelProps>
     {
       icon: <Code className="w-6 h-6 text-purple-500" />,
       label: 'Lines of Code',
-      value: formatNumber(metrics.linesOfCode),
+      value: formatNumber(metrics.linesOfCode || 0),
       subtitle: `Across ${sourceFiles.toLocaleString()} source files`,
       color: 'purple',
       accurate: true,
@@ -46,7 +46,7 @@ export const ComprehensiveMetricsPanel: React.FC<ComprehensiveMetricsPanelProps>
     {
       icon: <FileText className="w-6 h-6 text-blue-500" />,
       label: 'Total Files',
-      value: files.length.toLocaleString(),
+      value: (metrics.fileCount || 0).toLocaleString(),
       subtitle: `${sourceFiles.toLocaleString()} analyzable source files`,
       color: 'blue',
       accurate: true,
@@ -133,22 +133,6 @@ export const ComprehensiveMetricsPanel: React.FC<ComprehensiveMetricsPanelProps>
     },
   ];
 
-  // Performance indicators
-  const performanceMetrics = [
-    {
-      icon: <Zap className="w-5 h-5 text-blue-500" />,
-      label: 'Large Repository',
-      value: files.length > 1000 ? 'Yes' : 'No',
-      description: files.length > 1000 ? 'Large-scale project' : 'Standard project size',
-    },
-    {
-      icon: <Clock className="w-5 h-5 text-green-500" />,
-      label: 'Analysis Method',
-      value: 'Archive-based',
-      description: 'Archive-based download for optimal performance',
-    },
-  ];
-
   return (
     <div className="space-y-6">
       {/* Main Metrics Grid */}
@@ -175,46 +159,6 @@ export const ComprehensiveMetricsPanel: React.FC<ComprehensiveMetricsPanelProps>
               <div className="text-sm text-gray-500">{card.subtitle}</div>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* Performance Section */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h3 className="text-xl font-bold text-gray-900 mb-4">Performance Metrics</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {performanceMetrics.map((metric, index) => (
-            <div key={index} className="flex items-center p-4 bg-gray-50 rounded-lg">
-              {metric.icon}
-              <div className="ml-3">
-                <div className="text-sm font-medium text-gray-900">{metric.label}</div>
-                <div className="text-lg font-bold text-gray-700">{metric.value}</div>
-                <div className="text-xs text-gray-500">{metric.description}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Analysis Benefits */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-200">
-        <h3 className="text-lg font-bold text-blue-900 mb-3">Archive-Based Analysis Benefits</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="flex items-center">
-            <Zap className="w-5 h-5 text-blue-500 mr-2" />
-            <span className="text-sm text-blue-800">🚀 Performance: Up to 10x faster than file-by-file fetching</span>
-          </div>
-          <div className="flex items-center">
-            <Clock className="w-5 h-5 text-blue-500 mr-2" />
-            <span className="text-sm text-blue-800">🔄 Reliability: No GitHub API rate limit issues</span>
-          </div>
-          <div className="flex items-center">
-            <TrendingUp className="w-5 h-5 text-blue-500 mr-2" />
-            <span className="text-sm text-blue-800">📈 Scalability: Handles repositories with 10,000+ files</span>
-          </div>
-          <div className="flex items-center">
-            <Shield className="w-5 h-5 text-blue-500 mr-2" />
-            <span className="text-sm text-blue-800">🛡️ Consistency: All files from same commit/branch</span>
-          </div>
         </div>
       </div>
     </div>

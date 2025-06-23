@@ -1,9 +1,6 @@
 import { AnalysisResult } from '../../types';
 import ExecutiveSummary from '../ExecutiveSummary';
 import ComprehensiveMetricsPanel from '../ComprehensiveMetricsPanel';
-import FileAnalysisOverview from '../FileAnalysisOverview';
-import AnalysisMethodInfo from '../AnalysisMethodInfo';
-import PerformanceMetrics from '../PerformanceMetrics';
 
 interface OverviewPageProps {
   analysisResult: AnalysisResult;
@@ -24,9 +21,6 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
     <div className="space-y-6">
       {/* Enhanced Comprehensive Metrics Panel with accurate data */}
       <ComprehensiveMetricsPanel analysisResult={analysisResult} />
-
-      {/* Performance Metrics for Large Repositories */}
-      <PerformanceMetrics analysisResult={analysisResult} />
 
       {/* Repository Overview */}
       <div className="bg-white rounded-lg shadow p-6">
@@ -54,13 +48,7 @@ export function OverviewPage({ analysisResult }: OverviewPageProps) {
                 })}
             </div>
           </div>        )}
-      </div>      {/* File Analysis Overview - showcasing archive method benefits */}
-      <FileAnalysisOverview analysisResult={analysisResult} />
-
-      {/* Analysis Method Performance Info */}
-      <AnalysisMethodInfo analysisResult={analysisResult} />
-
-      {/* Vitals */}
+      </div>      {/* Vitals */}
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-xl font-bold mb-3">Vitals</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

@@ -1,9 +1,19 @@
+/**
+ * @file IndexedDB utility for storing and managing analysis reports.
+ *
+ * This implementation follows best practices for database versioning and transaction management.
+ * By centralizing database logic, we ensure consistent and reliable data handling across the application.
+ */
+
 // Database configuration
 const DB_NAME = 'RepoAuditDB';
-const DB_VERSION = 1;
+const DB_VERSION = 1; // Increment this to trigger onupgradeneeded
 const STORE_NAME = 'reports';
 
-// Open or create the database
+/**
+ * Opens and initializes the IndexedDB database.
+ * @returns A promise that resolves with the database instance.
+ */
 export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -21,21 +31,23 @@ export const openDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       
-      // Create object store if it doesn't exist
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        // Create indexes for querying
+        // Indexes for efficient querying
+        store.createIndex('repositoryName', 'repositoryName', { unique: false });
         store.createIndex('createdAt', 'createdAt', { unique: false });
         store.createIndex('category', 'category', { unique: false });
-        store.createIndex('repositoryName', 'repositoryName', { unique: false });
       }
     };
   });
 };
 
-// Save a report to IndexedDB
 import { SavedReport } from '../types';
 
+/**
+ * Saves or updates a report in IndexedDB.
+ * @param report The report to save.
+ */
 export const saveReport = async (report: SavedReport): Promise<void> => {
   try {
     const db = await openDB();
@@ -61,7 +73,10 @@ export const saveReport = async (report: SavedReport): Promise<void> => {
   }
 };
 
-// Get all reports from IndexedDB
+/**
+ * Retrieves all reports from IndexedDB, sorted by creation date.
+ * @returns A promise that resolves with an array of saved reports.
+ */
 export const getAllReports = async (): Promise<SavedReport[]> => {
   try {
     const db = await openDB();
@@ -88,8 +103,39 @@ export const getAllReports = async (): Promise<SavedReport[]> => {
     return [];
   }
 };
+/**
+ * Retrieves a report by its repository name.
+ * @param repoName The name of the repository to find.
+ * @returns A promise that resolves with the report, or undefined if not found.
+ */
+export const getReportByRepoName = async (repoName: string): Promise<SavedReport | undefined> => {
+  try {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const index = store.index('repositoryName');
+    const request = index.get(repoName);
 
-// Delete a report from IndexedDB
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      
+      request.onerror = (event) => {
+        console.error(`Error getting report for ${repoName}:`, event);
+        reject(`Error getting report for ${repoName}`);
+      };
+    });
+  } catch (error) {
+    console.error(`Failed to get report for ${repoName}:`, error);
+    return undefined;
+  }
+};
+
+/**
+ * Deletes a report from IndexedDB by its ID.
+ * @param id The ID of the report to delete.
+ */
 export const deleteReport = async (id: string): Promise<void> => {
   try {
     const db = await openDB();
@@ -111,7 +157,9 @@ export const deleteReport = async (id: string): Promise<void> => {
   }
 };
 
-// Clear all reports from IndexedDB
+/**
+ * Clears all reports from the IndexedDB store.
+ */
 export const clearAllReports = async (): Promise<void> => {
   try {
     const db = await openDB();

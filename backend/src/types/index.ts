@@ -179,6 +179,7 @@ export interface DependencyInfo {
 export interface ArchitectureData {
     nodes: Array<{ id: string; name: string; type: string; path: string; layer: string; }>;
     links: Array<{ source: string; target: string }>;
+    mermaidDiagram?: string;
 }
 
 export interface FileMetrics {

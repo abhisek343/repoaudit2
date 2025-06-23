@@ -193,13 +193,23 @@ export class GitHubService {
     console.log(`[GitHubService] Attempting batched fetch for ${owner}/${repo} using GraphQL API`);
     
     try {
-      // Try GraphQL API first for efficient batched data fetching
-      const result = await this.graphqlService.getBatchedRepositoryData(owner, repo, branch);
-      console.log(`[GitHubService] GraphQL batched fetch successful: repository + ${result.files.length} files`);
-      return result;
-    } catch (graphqlError) {
-      console.error(`[GitHubService] GraphQL batched fetch failed: ${graphqlError}`);
-      throw graphqlError;
+      // The primary method is to download the archive, which is more comprehensive
+      const files = await this.downloadRepositoryArchive(owner, repo, branch || 'main');
+      const repository = await this.getRepository(owner, repo);
+      console.log(`[GitHubService] Archive download successful: repository + ${files.length} files`);
+      return { repository, files };
+    } catch (archiveError) {
+      console.warn(`[GitHubService] Archive download failed: ${archiveError}. Falling back to GraphQL.`);
+      try {
+        // Fallback to GraphQL if archive download fails
+        const result = await this.graphqlService.getBatchedRepositoryData(owner, repo, branch);
+        console.log(`[GitHubService] GraphQL fallback successful: repository + ${result.files.length} files`);
+        return result;
+      } catch (graphqlError) {
+        console.error(`[GitHubService] Both archive and GraphQL fetch failed: ${graphqlError}`);
+        // Re-throw the original archive error as it's the primary method failure
+        this.handleGitHubError(archiveError, 'fetching batched repository data');
+      }
     }
   }
   async getRepository(owner: string, repo: string): Promise<Repository> {

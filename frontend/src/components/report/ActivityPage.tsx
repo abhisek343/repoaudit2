@@ -12,7 +12,7 @@ import { AnalysisResult, Repository } from '../../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface ActivityPageProps {
-  reportData: AnalysisResult;
+  analysisResult: AnalysisResult;
 }
 
 interface ExtendedMetrics {
@@ -24,7 +24,7 @@ interface ExtendedMetrics {
   prMergeRate?: number;
 }
 
-const ActivityPage = ({ reportData }: ActivityPageProps) => {
+const ActivityPage = ({ analysisResult: reportData }: ActivityPageProps) => {
   const { 
     commits = [], 
     repository = {} as Repository, // ← Use repository field

@@ -16,13 +16,13 @@ import { AnalysisResult, FileInfo as CoreFileInfo } from '../../types';
 import ArchitectureDiagram from '../diagrams/ArchitectureDiagram'; // For a small architecture preview
 
 interface OnboardingPageProps {
-  reportData: AnalysisResult;
+  analysisResult: AnalysisResult;
 }
 
-const OnboardingPage = ({ reportData }: OnboardingPageProps) => {
-  const { repository, languages, files } = reportData; // Removed apiEndpoints, metrics
+const OnboardingPage = ({ analysisResult: reportData }: OnboardingPageProps) => {
+  const { basicInfo, languages, files } = reportData;
 
-  const primaryLanguage = useMemo(() => repository.language || 'N/A', [repository.language]);
+  const primaryLanguage = useMemo(() => basicInfo.language || 'N/A', [basicInfo.language]);
   
   const languagePercentages = useMemo(() => {
     const totalBytes = Object.values(languages || {}).reduce((sum, bytes) => sum + bytes, 0);
@@ -88,8 +88,8 @@ const OnboardingPage = ({ reportData }: OnboardingPageProps) => {
 
   const gettingStartedSteps = useMemo(() => {
     const steps = [];
-    steps.push({ title: 'Clone Repository', command: `git clone https://github.com/${repository.fullName}.git`, description: 'Get the source code.' });
-    steps.push({ title: 'Navigate to Directory', command: `cd ${repository.name}`, description: 'Enter the project folder.' });
+    steps.push({ title: 'Clone Repository', command: `git clone https://github.com/${basicInfo.fullName}.git`, description: 'Get the source code.' });
+    steps.push({ title: 'Navigate to Directory', command: `cd ${basicInfo.name}`, description: 'Enter the project folder.' });
 
     if (techStack.packageManager === 'NPM') {
       steps.push({ title: 'Install Dependencies', command: 'npm install', description: 'Install Node.js packages.' });
@@ -124,7 +124,7 @@ const OnboardingPage = ({ reportData }: OnboardingPageProps) => {
          steps.push({ title: 'Run Tests', command: 'mvn test', description: 'Execute automated tests.' });
     }
     return steps;
-  }, [repository.fullName, repository.name, techStack, files]);
+  }, [basicInfo.fullName, basicInfo.name, techStack, files]);
 
   const quickWinIdeas = useMemo(() => [ // These remain somewhat generic as they are hard to derive automatically without LLM
     { title: 'Improve Documentation', difficulty: 'Easy', impact: 'Medium', description: 'Clarify README, add comments to complex code sections, or update outdated docs.', files: ['README.md', 'docs/'] },
@@ -163,7 +163,7 @@ const OnboardingPage = ({ reportData }: OnboardingPageProps) => {
       <header className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h3 className="text-3xl font-bold text-gray-900 mb-4 flex items-center">
           <BookOpen className="w-8 h-8 text-indigo-600 mr-4" />
-          Developer Onboarding Guide: {repository.name}
+          Developer Onboarding Guide: {basicInfo.name}
         </h3>
         <p className="text-lg text-gray-600">
           Welcome! This guide helps new contributors understand the project structure and get started quickly.
@@ -295,10 +295,10 @@ const OnboardingPage = ({ reportData }: OnboardingPageProps) => {
           Key Resources
         </h3>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <ResourceLink href={`https://github.com/${repository.fullName}`} title="GitHub Repository" description="Source code, issues, PRs." />
-          <ResourceLink href={`https://github.com/${repository.fullName}/issues`} title="Issue Tracker" description="Report bugs, suggest features." />
-          <ResourceLink href={`https://github.com/${repository.fullName}/pulls`} title="Pull Requests" description="Ongoing development and reviews." />
-          {repository.hasWiki && <ResourceLink href={`https://github.com/${repository.fullName}/wiki`} title="Project Wiki" description="Additional documentation." />}
+          <ResourceLink href={`https://github.com/${basicInfo.fullName}`} title="GitHub Repository" description="Source code, issues, PRs." />
+          <ResourceLink href={`https://github.com/${basicInfo.fullName}/issues`} title="Issue Tracker" description="Report bugs, suggest features." />
+          <ResourceLink href={`https://github.com/${basicInfo.fullName}/pulls`} title="Pull Requests" description="Ongoing development and reviews." />
+          {basicInfo.hasWiki && <ResourceLink href={`https://github.com/${basicInfo.fullName}/wiki`} title="Project Wiki" description="Additional documentation." />}
           {/* Add more links if detectable, e.g., official docs website */}
         </div>
       </div>

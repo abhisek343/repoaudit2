@@ -4,14 +4,12 @@ import {
   BarChart, Bar, Cell, TooltipProps
 } from 'recharts';
 import { 
-  TrendingUp,
   Layers,
   Shield,
   Target,
   Brain, 
   AlertTriangle
 } from 'lucide-react';
-import DependencyGraph, { DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLink } from '../diagrams/DependencyGraph';
 import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
 import SystemArchitectureView from '../SystemArchitectureView';
 import { AnalysisResult, FileInfo } from '../../types'; // Changed ExtendedFileInfo to FileInfo
@@ -37,11 +35,12 @@ interface ArchitecturePageProps {
 }
 
 const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: reportData }) => {
-  const [selectedDiagram, setSelectedDiagram] = useState<string>('architecture'); 
+  const [selectedDiagram, setSelectedDiagram] = useState<string>('architecture');
+  const [diagramPath, setDiagramPath] = useState<string[]>([]);
   const [useLLM, setUseLLM] = useState(true);
   const [llmConfig, setLlmConfig] = useState<import('../../types').LLMConfig | null>(null);
   
-  const { hotspots, architectureAnalysis, metrics, files = [], securityIssues, dependencyMetrics } = reportData;
+  const { hotspots, architectureAnalysis, systemArchitecture, metrics, files = [], securityIssues, dependencyMetrics } = reportData;
   const [isLLMAvailable, setIsLLMAvailable] = useState(true);
 
   // Get LLM config from localStorage
@@ -89,12 +88,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
 
   const diagramsOptions = [ 
     {
-      id: 'dependency',
-      title: 'Dependency Graph',
-      description: 'Module and file dependencies',
-      icon: <TrendingUp />
-    },
-    {
       id: 'architecture',
       title: 'System Architecture',
       description: 'High-level overview of components',
@@ -135,66 +128,51 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
     return info;
   }, [files]);
 
-  const generateMermaidFromFiles = (filesForDiagram: FileInfo[]): string => {
+  const generateMermaidFromFiles = (filesForDiagram: FileInfo[], path: string[]): string => {
     if (!filesForDiagram || filesForDiagram.length === 0) return 'graph TD\n  A["No files to display"];';
     
+    const currentPath = path.join('/');
     let mermaidString = 'graph TD;\n';
-    const MAX_NODES_FOR_MERMAID = 30; 
-    const nodesAdded = new Set<string>();
-
-    const mainDirs = new Set<string>();
-    filesForDiagram.forEach(file => {
-      const parts = file.path.split('/');
-      if (parts.length > 1) {
-        mainDirs.add(parts[0]); 
-        if (parts.length > 2) {
-            mainDirs.add(parts.slice(0, 2).join('/')); 
-        }
-      }
-    });
-
-    Array.from(mainDirs).slice(0, MAX_NODES_FOR_MERMAID / 2).forEach(dir => {
-        const nodeId = dir.replace(/[^a-zA-Z0-9_]/g, '_');
-        if (!nodesAdded.has(nodeId)) {
-            mermaidString += `  ${nodeId}["${dir}"]\n`;
-            nodesAdded.add(nodeId);
-        }
-    });
+    const nodes = new Map<string, { name: string, type: 'file' | 'dir' }>();
     
-    filesForDiagram
-      .sort((a, b) => (b.complexity || 0) + b.size - ((a.complexity || 0) + a.size))
-      .slice(0, MAX_NODES_FOR_MERMAID - nodesAdded.size)
-      .forEach(file => {
-        const nodeId = file.path.replace(/[^a-zA-Z0-9_]/g, '_');
-        if (!nodesAdded.has(nodeId)) {
-            mermaidString += `  ${nodeId}["${file.name}<br/><small>${file.path}</small>"]\n`;
-            nodesAdded.add(nodeId);
-        }
-        const dirParts = file.path.split('/');
-        if (dirParts.length > 1) {
-            const parentDir = dirParts.slice(0, dirParts.length-1 > 1 ? 2 : 1).join('/');
-            const parentNodeId = parentDir.replace(/[^a-zA-Z0-9_]/g, '_');
-            if (nodesAdded.has(parentNodeId) && nodesAdded.has(nodeId)) {
-                mermaidString += `  ${parentNodeId} --> ${nodeId}\n`;
+    if (path.length > 0) {
+        nodes.set('..', { name: `../`, type: 'dir' });
+    }
+
+    filesForDiagram.forEach(file => {
+        if (file.path.startsWith(currentPath)) {
+            const relativePath = file.path.substring(currentPath.length).replace(/^\//, '');
+            const parts = relativePath.split('/');
+            if (parts.length > 0) {
+                const itemName = parts[0];
+                const itemPath = currentPath ? `${currentPath}/${itemName}` : itemName;
+                if (parts.length === 1) { // It's a file
+                    if (!nodes.has(itemPath)) {
+                        nodes.set(itemPath, { name: itemName, type: 'file' });
+                    }
+                } else { // It's a directory
+                    if (!nodes.has(itemPath)) {
+                        nodes.set(itemPath, { name: `${itemName}/`, type: 'dir' });
+                    }
+                }
             }
         }
-      });
-
-    filesForDiagram.slice(0, 10).forEach(file => {
-      const sourceNodeId = file.path.replace(/[^a-zA-Z0-9_]/g, '_');
-      if (nodesAdded.has(sourceNodeId) && file.dependencies) {
-        file.dependencies.slice(0, 2).forEach(depPath => {
-          const targetNodeId = depPath.replace(/[^a-zA-Z0-9_]/g, '_');
-          if (nodesAdded.has(targetNodeId)) {
-            mermaidString += `  ${sourceNodeId} --> ${targetNodeId}\n`;
-          }
-        });
-      }
     });
+
+    for (const [key, value] of nodes.entries()) {
+        const nodeId = key.replace(/[^a-zA-Z0-9_]/g, '_');
+        const nodeLabel = value.name;
+        if (value.type === 'dir') {
+            mermaidString += `  ${nodeId}["<div style='font-weight: bold;'>${nodeLabel}</div>"]\n`;
+        } else {
+            mermaidString += `  ${nodeId}("${nodeLabel}")\n`;
+        }
+    }
+
     return mermaidString;
   };
 
-  const dynamicMermaidDiagram = React.useMemo(() => generateMermaidFromFiles(files || []), [files]);
+  const dynamicMermaidDiagram = React.useMemo(() => generateMermaidFromFiles(files || [], diagramPath), [files, diagramPath]);
 
   const renderDiagram = () => {
     switch (selectedDiagram) {
@@ -221,64 +199,13 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
         );
       }
 
-      case 'dependency': {
-        const visNodes: VisDependencyNode[] = (files || []).map(file => ({
-          id: file.path,
-          name: file.name,
-          type: file.type || 'file',
-          size: file.size,
-          metrics: {
-            complexity: file.complexity ?? 0,
-            dependencies: file.dependencies?.length ?? 0,
-            dependents: 0, 
-            lastModified: file.lastModified ?? new Date().toISOString(),
-            linesOfCode: file.content?.split('\n').length || 0, // Added linesOfCode
-            commitCount: file.commitCount || 0, // Added commitCount
-          },
-        }));
-
-        const nodeMap = new Map(visNodes.map(node => [node.id, node]));
-        
-        const links: VisDependencyLink[] = [];
-        (files || []).forEach(file => {
-          if (file.dependencies) {
-            file.dependencies.forEach(depPath => {
-              const sourceNode = nodeMap.get(file.path);
-              const targetNode = nodeMap.get(depPath); 
-              if (sourceNode && targetNode) {
-                links.push({ 
-                  source: sourceNode,
-                  target: targetNode,
-                  type: 'depends-on',
-                  strength: 1
-                } as VisDependencyLink);
-              }
-            });
-          }
-        });
-
-        return ( 
-          <div className="w-full h-full min-h-[500px]">
-            <h4 className="text-lg font-semibold text-gray-900 mb-4">Dependency Network</h4>
-            <DependencyGraph
-              nodes={visNodes}
-              links={links}
-              // Assuming DependencyGraphProps does not take width/height directly
-              // and style props are part of its internal logic or passed differently.
-              // Refer to DependencyGraph.tsx for correct props.
-              // For now, removing these props to fix TS errors.
-              // colorScheme={defaultDependencyConfig.style.colorScheme} // Example: if this was a direct prop
-            />
-          </div>
-        );
-      }
         case 'architecture':
         return (
           <div className="w-full space-y-6">
             {/* Show system architecture analysis if available */}
-            {reportData.systemArchitecture && (
+            {systemArchitecture && (
               <div className="bg-white rounded-lg border border-gray-200">
-                <SystemArchitectureView systemArchitecture={reportData.systemArchitecture} />
+                <SystemArchitectureView systemArchitecture={systemArchitecture} />
               </div>
             )}
             
@@ -291,7 +218,20 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
                 width={800}
                 height={600}
                 interactive={true}
-                fileInfo={architectureDiagramFileInfo} 
+                fileInfo={architectureDiagramFileInfo}
+                onNodeClick={(nodeId) => {
+                  if (nodeId === '..') {
+                    setDiagramPath(p => p.slice(0, -1));
+                    return;
+                  }
+                  // This is a simplified check. You might need a more robust way
+                  // to differentiate files from directories based on your data.
+                  const isDirectory = Object.values(architectureDiagramFileInfo).some(f => f.path.startsWith(nodeId + '/') && f.path !== nodeId);
+                  
+                  if (isDirectory) {
+                    setDiagramPath(p => [...p, nodeId.split('/').pop()!]);
+                  }
+                }}
                 showDetails={true}
                 useLLM={useLLM}
                 llmConfig={llmConfig as unknown as Record<string, unknown> || undefined}
@@ -373,7 +313,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
           <div className="prose prose-indigo max-w-none">
             <div className="relative bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-500 rounded-2xl p-8 mb-8 shadow-2xl overflow-auto transform transition-all duration-500 hover:scale-[1.01] hover:shadow-3xl max-h-[500px]">
               <div className="absolute inset-0 bg-pattern opacity-10"></div> {/* Subtle pattern overlay */}
-              {architectureAnalysis.includes('LLM service unavailable') || architectureAnalysis.includes('quota exhaustion') || architectureAnalysis.length < 100 ? (
+              {!architectureAnalysis?.summary || architectureAnalysis.summary.includes('LLM service unavailable') || architectureAnalysis.summary.includes('quota exhaustion') || architectureAnalysis.summary.length < 100 ? (
                 <div className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
                   <p>Full AI analysis is currently unavailable or limited due to service constraints. Please try again later for detailed insights.</p>
                   <p>Below is a summary of basic architecture metrics extracted from the analysis data:</p>
@@ -395,12 +335,12 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
                 </div>
               ) : (
                 <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
-                  {architectureAnalysis
+                  {architectureAnalysis.summary
                     .replace(/\*\*/g, '') // Remove bold markdown
                     .split('\n')
-                    .map(line => line.replace(/^\s*(\d+\.|\*|-)\s*/, '').trim()) // Remove list markers
-                    .filter(line => line.length > 0)
-                    .map((line, index) => (
+                    .map((line: string) => line.replace(/^\s*(\d+\.|\*|-)\s*/, '').trim()) // Remove list markers
+                    .filter((line: string) => line.length > 0)
+                    .map((line: string, index: number) => (
                       <li key={index} className="flex items-start">
                         <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
                         <span>{line}</span>
@@ -419,21 +359,42 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
           Interactive Architecture Visualizations
         </h3>
 
-        <div className="flex flex-wrap gap-2 mb-6 border-b pb-4">
-          {diagramsOptions.map((diagram: { id: string; title: string; icon: React.ReactElement }) => (
+        <div className="flex flex-wrap items-center gap-2 mb-6 border-b pb-4">
+          {diagramPath.length > 0 && (
             <button
-              key={diagram.id}
-              onClick={() => setSelectedDiagram(diagram.id)}
-              className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-400 ${
-                selectedDiagram === diagram.id
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+              onClick={() => setDiagramPath([])}
+              className="flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300"
             >
-              {React.cloneElement(diagram.icon as React.ReactElement, { className: "w-4 h-4" })}
-              <span>{diagram.title}</span>
+              Home
             </button>
+          )}
+          {diagramPath.map((part, index) => (
+            <React.Fragment key={index}>
+              <span className="text-gray-500">/</span>
+              <button
+                onClick={() => setDiagramPath(p => p.slice(0, index + 1))}
+                className="flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300"
+              >
+                {part}
+              </button>
+            </React.Fragment>
           ))}
+          <div className="flex flex-wrap gap-2">
+            {diagramsOptions.map((diagram: { id: string; title: string; icon: React.ReactElement }) => (
+              <button
+                key={diagram.id}
+                onClick={() => setSelectedDiagram(diagram.id)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-400 ${
+                  selectedDiagram === diagram.id
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {React.cloneElement(diagram.icon as React.ReactElement, { className: "w-4 h-4" })}
+                <span>{diagram.title}</span>
+              </button>
+            ))}
+          </div>
         </div>
         
         {selectedDiagram === 'architecture' && (

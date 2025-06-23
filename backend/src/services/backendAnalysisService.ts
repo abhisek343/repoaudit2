@@ -224,7 +224,13 @@ export class BackendAnalysisService {
       }
     }
 
-    return { nodes, links };
+    const mermaidDiagram = await this.llmService.generateMermaidDiagram(filesInput, this.detectLanguages(filesInput));
+    return { nodes, links, mermaidDiagram };
+  }
+
+  private async generateArchitectureDiagram(filesInput: FileInfo[]): Promise<string> {
+    const mermaidDiagram = await this.llmService.generateMermaidDiagram(filesInput, this.detectLanguages(filesInput));
+    return mermaidDiagram;
   }
   // Safe wrapper for architecture analysis with timeout and minimal fallback
   private async safeDetectArchitecturePatterns(filesInput: FileInfo[]): Promise<ArchitectureData> {
@@ -251,6 +257,7 @@ export class BackendAnalysisService {
         result.links = this.createFallbackLinks(result.nodes);
       }
       
+      result.mermaidDiagram = await this.generateArchitectureDiagram(filesInput);
       return result;
     } catch (error) {
       console.error('[Architecture Analysis] Failed:', error);
@@ -900,17 +907,8 @@ export class BackendAnalysisService {
       metrics: {
         totalCommits: commits.length,
         totalContributors: contributors.length,
+        linesOfCode: quality ? Object.values(quality).reduce((sum, metric) => sum + (metric.linesOfCode || 0), 0) : 0,
         fileCount: files.length,
-        analyzableFileCount: sourceFiles.length,
-        linesOfCode: (() => {
-          const totalLOC = sourceFiles.reduce((sum, f) => {
-            if (quality[f.path]) return sum + quality[f.path].linesOfCode;
-            const linesFromContent = f.content?.split('\n').length || 0;
-            return sum + linesFromContent;
-          }, 0);
-          console.log(`[Backend Analysis] Calculated ${totalLOC} total lines of code from ${sourceFiles.length} source files`);
-          return totalLOC;
-        })(),
         codeQuality: qualityScore,
         testCoverage: testCoverage,
         busFactor: busFactor,

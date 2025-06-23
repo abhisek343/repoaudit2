@@ -3,6 +3,7 @@ import cors from 'cors';
 import compression from 'compression';
 import { BackendAnalysisService } from './src/services/backendAnalysisService';
 import { ArchitectureController } from './src/controllers/architectureController';
+import { getVisualizations } from './src/controllers/visualizationController';
 import { RedisCacheService } from './src/services/redisCacheService';
 import type { LLMConfig } from './src/types';
 import { safeAsync, errorHandler } from './src/middleware/errorHandler';
@@ -66,6 +67,8 @@ app.get('/api/architecture/config/export', safeAsync((req: Request, res: Respons
   architectureController.exportConfiguration(req, res)));
 app.post('/api/architecture/config/import', safeAsync((req: Request, res: Response) =>
   architectureController.importConfiguration(req, res)));
+
+app.get('/api/visualizations', safeAsync(getVisualizations));
 
 // Endpoint to check LLM availability
 app.post('/api/llm/check', safeAsync(async (req: Request, res: Response) => {

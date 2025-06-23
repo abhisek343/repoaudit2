@@ -15,7 +15,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { AnalysisResult } from '../../types';
-import { optimizeDependencyGraph, shouldOptimize, formatLargeNumber } from '../../utils/performanceOptimization';
+import { optimizeDependencyGraph, formatLargeNumber } from '../../utils/performanceOptimization';
 import { 
   ChurnNode as GlobalChurnNode, 
   FileNode,
@@ -38,12 +38,12 @@ import { DependencyNode as VisDependencyNode, DependencyLink as VisDependencyLin
 // import DependencyGraph3D from '../diagrams/DependencyGraph3D'; // Commented out due to missing module
 
 interface DiagramsPageProps {
-  reportData: AnalysisResult;
+  analysisResult: AnalysisResult;
 }
 
 // All icons are now directly in the diagrams array, so this helper is not needed.
 
-const DiagramsPage = ({ reportData }: DiagramsPageProps) => {
+const DiagramsPage = ({ analysisResult: reportData }: DiagramsPageProps) => {
   const navigate = useNavigate();
   const [selectedDiagram, setSelectedDiagram] = useState('dependency-wheel');
   const [selectedCategory, setSelectedCategory] = useState('All');
