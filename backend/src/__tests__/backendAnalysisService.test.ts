@@ -9,8 +9,8 @@ describe('BackendAnalysisService', () => {
   describe('analyze', () => {
     it('should handle invalid repository URLs gracefully', async () => {
       const invalidUrl = 'not-a-valid-github-url';
-        await expect(
-        service.analyze(invalidUrl, () => {})
+      await expect(
+        service.analyze(invalidUrl, { useCache: false })
       ).rejects.toThrow('Invalid repository URL format');
     });
 

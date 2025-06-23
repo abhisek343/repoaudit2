@@ -16,10 +16,13 @@ import {
   AlertTriangle,
   Key,
   Loader2,
+  Save,
+  Download,
 } from 'lucide-react';
 import SettingsModal from '../components/SettingsModal';
 import ProgressModal from '../components/ProgressModal';
 import { LLMConfig, ReportCategory, AnalysisResult } from '../types/index';
+import { AnalysisService } from '../services/analysisService';
 
 type State = {
   status: 'idle' | 'analyzing' | 'success' | 'error';
@@ -27,6 +30,7 @@ type State = {
   currentStep: string;
   error: string | null;
   analysisResult: AnalysisResult | null;
+  isSaved: boolean;
 };
 
 type Action =
@@ -34,7 +38,8 @@ type Action =
   | { type: 'SET_PROGRESS'; payload: { step: string; progress: number } }
   | { type: 'SET_SUCCESS'; payload: AnalysisResult }
   | { type: 'SET_ERROR'; payload: string }
-  | { type: 'RESET' };
+  | { type: 'RESET' }
+  | { type: 'SET_SAVED' };
 
 const initialState: State = {
   status: 'idle',
@@ -42,6 +47,7 @@ const initialState: State = {
   currentStep: '',
   error: null,
   analysisResult: null,
+  isSaved: false,
 };
 
 function analysisReducer(state: State, action: Action): State {
@@ -56,6 +62,8 @@ function analysisReducer(state: State, action: Action): State {
       return { ...state, status: 'error', error: action.payload };
     case 'RESET':
       return initialState;
+    case 'SET_SAVED':
+      return { ...state, isSaved: true };
     default:
       return state;
   }
@@ -71,16 +79,15 @@ const AnalyzePage = () => {
   const [githubToken, setGithubToken] = useState<string | undefined>();
   const [cancelFunction, setCancelFunction] = useState<(() => void) | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const analysisServiceRef = useRef<AnalysisService | null>(null);
 
-  // Effect for cleaning up the EventSource on component unmount
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
-        console.log("Closing EventSource due to component unmount or re-render.");
         eventSourceRef.current.close();
       }
     };
-  }, []); // Empty dependency array ensures this runs only once on mount and unmount
+  }, []);
 
   const reportCategories: ReportCategory[] = [
     {
@@ -197,7 +204,7 @@ const AnalyzePage = () => {
   useLayoutEffect(() => {
     const originalOverflow = document.body.style.overflow;
     const originalPaddingRight = document.body.style.paddingRight;
-    const isModalOpen = analysisState.status === 'analyzing' || analysisState.status === 'error';
+    const isModalOpen = analysisState.status === 'analyzing' || analysisState.status === 'error' || analysisState.status === 'success';
 
     if (isModalOpen) {
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -238,71 +245,39 @@ const AnalyzePage = () => {
 
     dispatch({ type: 'START_ANALYSIS' });
 
-    const queryParams = new URLSearchParams({
-      repoUrl: githubUrl,
-    });
-
-    if (llmConfig) {
-      queryParams.append('llmConfig', JSON.stringify(llmConfig));
-    }
-    if (githubToken) {
-      queryParams.append('githubToken', githubToken);
-    }
-
-    const eventSource = new EventSource(`/api/analyze?${queryParams.toString()}`);
-    eventSourceRef.current = eventSource; // Track the event source
-
-    let doneReceived = false;
+    analysisServiceRef.current = new AnalysisService(githubToken, llmConfig);
+    const { analysisPromise, cancel } = analysisServiceRef.current.analyzeRepository(
+      githubUrl,
+      (step, progress) => {
+        dispatch({ type: 'SET_PROGRESS', payload: { step, progress } });
+      }
+    );
 
     setCancelFunction(() => () => {
-      eventSource.close();
+      cancel();
       dispatch({ type: 'SET_ERROR', payload: 'Analysis cancelled by user.' });
     });
 
-    eventSource.addEventListener('progress', (event) => {
-      const data = JSON.parse(event.data);
-      dispatch({ type: 'SET_PROGRESS', payload: { step: data.step, progress: data.progress } });
-    });
+    analysisPromise
+      .then(async (result) => {
+        dispatch({ type: 'SET_SUCCESS', payload: result });
 
-    eventSource.addEventListener('result', (event) => {
-      console.log("Received final report data.");
-      const report = JSON.parse(event.data);
-      dispatch({ type: 'SET_SUCCESS', payload: report });
-      navigate(`/report/${report.id}`, { state: { analysisResultFromNavigation: report } });
-    });
-
-    eventSource.addEventListener('done', (event) => {
-      console.log("Server signaled completion:", JSON.parse(event.data).message);
-      doneReceived = true;
-      eventSource.close();
-    });
-
-    eventSource.addEventListener('error-message', (event) => {
-      const data = JSON.parse(event.data);
-      dispatch({ type: 'SET_ERROR', payload: data.error });
-      eventSource.close();
-    });
-
-    eventSource.onerror = (err) => {
-      // If the 'done' event was received, the closing is expected.
-      if (doneReceived) {
-        console.log('Connection closed gracefully after completion.');
-        return;
-      }
-      
-      console.error('EventSource failed:', err);
-      
-      // Avoid showing an error if the connection is already closed or was just closed.
-      if (eventSource.readyState === EventSource.CLOSED) {
-        // Only show error if status is still 'analyzing'
-        if (analysisState.status === 'analyzing') {
-          dispatch({ type: 'SET_ERROR', payload: 'Connection to server was lost unexpectedly.' });
+        // Auto-save the analysis result so ReportPage can load it
+        try {
+          await analysisServiceRef.current?.saveReport(result);
+          console.log('Report auto-saved with ID:', result.id);
+        } catch (e) {
+          console.error('Failed to auto-save report', e);
         }
-      } else {
-        dispatch({ type: 'SET_ERROR', payload: 'A network error occurred during analysis.' });
-      }
-      eventSource.close();
-    };
+
+        // Navigate directly to the report dashboard
+        navigate(`/report/${result.id}`, { replace: true });
+      })
+      .catch((error) => {
+        if (error.message !== 'Analysis cancelled') {
+          dispatch({ type: 'SET_ERROR', payload: error.message });
+        }
+      });
   };
 
   const handleCancelAnalysis = () => {
@@ -316,6 +291,42 @@ const AnalyzePage = () => {
 
   const handleErrorClear = () => {
     dispatch({ type: 'RESET' });
+  };
+
+  const handleSaveReport = async () => {
+    if (analysisState.analysisResult && analysisServiceRef.current) {
+      try {
+        await analysisServiceRef.current.saveReport(analysisState.analysisResult);
+        dispatch({ type: 'SET_SAVED' });
+      } catch (error) {
+        console.error("Failed to save report", error);
+      }
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (analysisState.analysisResult) {
+      try {
+        const response = await fetch('/report-template.html');
+        const template = await response.text();
+        
+        const reportHtml = template.replace('__REPORT_DATA__', JSON.stringify(analysisState.analysisResult));
+        
+        const blob = new Blob([reportHtml], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        
+        const exportFileDefaultName = `${analysisState.analysisResult.basicInfo.name}-report.html`;
+        
+        const linkElement = document.createElement('a');
+        linkElement.setAttribute('href', url);
+        linkElement.setAttribute('download', exportFileDefaultName);
+        linkElement.click();
+        
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error("Failed to download report", error);
+      }
+    }
   };
 
   const getIconComponent = (iconName: string) => {
@@ -498,18 +509,17 @@ const AnalyzePage = () => {
 
           <div className="mt-8 text-center">
             <p className="text-gray-600 mb-4">Or try with popular repositories:</p>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="flex flex-wrap justify-center gap-2">
               {[
-                'https://github.com/vercel/next.js',
-                'https://github.com/stedolan/jq',
+                'https://github.com/facebook/react',
+                'https://github.com/tensorflow/tensorflow',
                 'https://github.com/microsoft/vscode',
-                'https://github.com/vuejs/vue'
+                'https://github.com/vuejs/vue',
               ].map((url, index) => (
                 <button
                   key={index}
                   onClick={() => setGithubUrl(url)}
-                  disabled={analysisState.status === 'analyzing'}
-                  className="px-4 py-2 bg-white/80 hover:bg-white text-gray-700 rounded-lg transition-colors duration-200 text-sm font-medium disabled:opacity-50 border border-gray-300 hover:border-gray-400 shadow-sm"
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
                 >
                   {url.split('/').slice(-2).join('/')}
                 </button>
@@ -528,14 +538,52 @@ const AnalyzePage = () => {
       />
 
       <ProgressModal
-        isOpen={analysisState.status === 'analyzing' || analysisState.status === 'error'}
-        currentStep={analysisState.currentStep}
+        isOpen={analysisState.status === 'analyzing' || analysisState.status === 'success' || analysisState.status === 'error'}
+        status={analysisState.status}
         progress={analysisState.progress}
+        currentStep={analysisState.currentStep}
         error={analysisState.error || undefined}
-        onClose={handleErrorClear}
-        onOpenSettings={() => setShowSettings(true)}
         onCancel={handleCancelAnalysis}
-      />
+        onClose={handleErrorClear}
+      >
+        {analysisState.status === 'success' && analysisState.analysisResult && (
+          <div className="text-center">
+            <h3 className="text-lg font-medium text-gray-900">Analysis Complete!</h3>
+            <p className="text-sm text-gray-500 mt-2 mb-4">
+              Your report for {analysisState.analysisResult.basicInfo.fullName} is ready.
+            </p>
+            <div className="space-y-4">
+              <button
+                onClick={handleSaveReport}
+                disabled={analysisState.isSaved}
+                className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {analysisState.isSaved ? 'Report Saved' : 'Save Report'}
+              </button>
+              <button
+                onClick={handleDownloadReport}
+                className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download Report
+              </button>
+              <button
+                onClick={() => {
+                  if (analysisState.analysisResult) {
+                    navigate(`/report/${analysisState.analysisResult.id}`, {
+                      state: { analysisResultFromNavigation: analysisState.analysisResult }
+                    });
+                  }
+                }}
+                className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+              >
+                View Report
+              </button>
+            </div>
+          </div>
+        )}
+      </ProgressModal>
     </>
   );
 };

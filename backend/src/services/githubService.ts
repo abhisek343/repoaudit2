@@ -2,7 +2,6 @@ import axios, { AxiosResponse } from 'axios';
 import { Repository, Contributor, Commit, FileInfo, PullRequestData } from '../types';
 import JSZip from 'jszip';
 import * as path from 'path';
-import { GitHubGraphQLService } from './githubGraphQLService';
 
 // Define interfaces for raw GitHub API responses to type axios calls
 interface RawGitHubRepository {
@@ -79,11 +78,9 @@ export class GitHubService {
   private token?: string;
   private owner: string = '';
   private repo: string = '';
-  private graphqlService: GitHubGraphQLService;
 
   constructor(token?: string) {
     this.token = token;
-    this.graphqlService = new GitHubGraphQLService(token);
   }
 
   private getHeaders() {
@@ -181,35 +178,36 @@ export class GitHubService {
   }
 
   /**
-   * Get batched repository data using GraphQL API as primary method
-   * Falls back to individual REST API calls if GraphQL fails
-   */  async getBatchedRepositoryData(owner: string, repo: string, branch?: string): Promise<{
+   * Get repository data using the archive download method
+   * No fallback to GraphQL API anymore - archive download only
+   */
+  async getBatchedRepositoryData(owner: string, repo: string, branch?: string): Promise<{
     repository: Repository;
     files: FileInfo[];
   }> {
     this.owner = owner;
     this.repo = repo;
     
-    console.log(`[GitHubService] Attempting batched fetch for ${owner}/${repo} using GraphQL API`);
+    console.log(`[GitHubService] Fetching repository data for ${owner}/${repo} using Archive download`);
     
     try {
-      // The primary method is to download the archive, which is more comprehensive
-      const files = await this.downloadRepositoryArchive(owner, repo, branch || 'main');
+      // Get repository metadata
       const repository = await this.getRepository(owner, repo);
-      console.log(`[GitHubService] Archive download successful: repository + ${files.length} files`);
+      const defaultBranch = branch || repository.defaultBranch;
+      console.log(`[GitHubService] Using branch: ${defaultBranch} for archive download`);
+      
+      // Download and extract the archive
+      const files = await this.downloadRepositoryArchive(owner, repo, defaultBranch);
+      console.log(`[GitHubService] Archive download successful: ${files.length} total files, ${files.filter(f => this.isTextFile(f.path) && f.content).length} analyzable files`);
+      
+      // Log language stats to debug language issues
+      this.logLanguageStats(files);
+      
       return { repository, files };
-    } catch (archiveError) {
-      console.warn(`[GitHubService] Archive download failed: ${archiveError}. Falling back to GraphQL.`);
-      try {
-        // Fallback to GraphQL if archive download fails
-        const result = await this.graphqlService.getBatchedRepositoryData(owner, repo, branch);
-        console.log(`[GitHubService] GraphQL fallback successful: repository + ${result.files.length} files`);
-        return result;
-      } catch (graphqlError) {
-        console.error(`[GitHubService] Both archive and GraphQL fetch failed: ${graphqlError}`);
-        // Re-throw the original archive error as it's the primary method failure
-        this.handleGitHubError(archiveError, 'fetching batched repository data');
-      }
+    } catch (error) {
+      console.error(`[GitHubService] Archive download failed: ${error}`);
+      this.handleGitHubError(error, 'fetching repository data');
+      throw error; // This will never be reached due to handleGitHubError, but TypeScript needs it
     }
   }
   async getRepository(owner: string, repo: string): Promise<Repository> {
@@ -242,14 +240,8 @@ export class GitHubService {
         } : undefined
       };
     } catch (error) {
-      // Try GraphQL fallback if REST API fails
-      try {
-        console.warn(`[GitHubService] REST API failed for repository info, trying GraphQL fallback`);
-        return await this.graphqlService.getRepository(owner, repo);
-      } catch (graphqlError) {
-        console.error(`[GitHubService] Both REST and GraphQL failed for repository info`);
-        this.handleGitHubError(error, 'fetching repository information');
-      }
+      this.handleGitHubError(error, 'fetching repository information');
+      throw error; // This will never be reached due to handleGitHubError, but TypeScript needs it
     }
   }
 
@@ -291,17 +283,12 @@ export class GitHubService {
           url = nextLink ? (nextLink.match(/<(.*?)>/) || [])[1] : undefined;
         } else {
           url = undefined;
-        }      }
+        }
+      }
       return allContributors;
     } catch (error) {
-      // Try GraphQL fallback if REST API fails
-      try {
-        console.warn(`[GitHubService] REST API failed for contributors, trying GraphQL fallback`);
-        return await this.graphqlService.getContributors(owner, repo);
-      } catch (graphqlError) {
-        console.error(`[GitHubService] Both REST and GraphQL failed for contributors`);
-        this.handleGitHubError(error, 'fetching contributors');
-      }
+      this.handleGitHubError(error, 'fetching contributors');
+      throw error; // This will never be reached due to handleGitHubError, but TypeScript needs it
     }
   }
 
@@ -384,19 +371,12 @@ export class GitHubService {
           } else {
             throw error; // Max retries reached, re-throw the error
           }
-        }      }
-      return allCommits;
-    } catch (error) {
-      // For commits, only try GraphQL fallback if it's a simple request (not with complex pagination)
-      if (limit <= 100) {
-        try {
-          console.warn(`[GitHubService] REST API failed for commits, trying GraphQL fallback`);
-          return await this.graphqlService.getCommits(owner, repo, branchOrSha, limit);
-        } catch (graphqlError) {
-          console.error(`[GitHubService] Both REST and GraphQL failed for commits`);
         }
       }
+      return allCommits;
+    } catch (error) {
       this.handleGitHubError(error, 'fetching commits');
+      throw error; // This will never be reached due to handleGitHubError, but TypeScript needs it
     }
   }
 
@@ -443,27 +423,29 @@ export class GitHubService {
       console.warn(`Warning: Could not fetch languages for ${owner}/${repo}: ${error instanceof Error ? error.message : String(error)}`);
       return {}; 
     }
-  }  async getRepoTree(owner: string, repo: string, branch: string): Promise<FileInfo[]> {
+  } 
+  async getRepoTree(owner: string, repo: string, branch: string): Promise<FileInfo[]> {
     this.owner = owner; 
     this.repo = repo;
     
-    console.log(`[GitHubService] Fetching repository tree with content for ${owner}/${repo}@${branch} using archive method`);
+    console.log(`[GitHubService] Fetching repository tree for ${owner}/${repo}@${branch} using archive download method`);
     
     try {
       // Use archive download method for better performance and complete file content
       const files = await this.downloadRepositoryArchive(owner, repo, branch);
       
       if (files.length === 0) {
-        throw new Error(`Archive download failed and no fallback is configured`);
+        throw new Error(`Archive download failed - no files found`);
       }
       
-      console.log(`[GitHubService] Successfully fetched ${files.length} files with content using archive method`);
+      // Log both total files and analyzable source files
+      const sourceFiles = files.filter(f => this.isSourceFile(f.path) && f.content);
+      console.log(`[GitHubService] Successfully fetched ${files.length} files (${sourceFiles.length} analyzable source files)`);
       return files;
-      
     } catch (error) {
       console.error(`[GitHubService] Failed to fetch repository tree via archive download: ${error}`);
       this.handleGitHubError(error, `fetch repository tree for ${owner}/${repo}`);
-      return [];
+      throw error; // This will never be reached due to handleGitHubError, but TypeScript needs it
     }
   }
   parseGitHubUrl(url: string): { owner: string; repo: string } | null {
@@ -594,8 +576,10 @@ export class GitHubService {
           type: 'file',
           content: undefined, // Will be populated below for text files
           language: this.getLanguageFromExtension(cleanPath) // Add language detection
-        };// Only extract content for text files under a reasonable size limit
-        if (this.isTextFile(cleanPath)) {
+        };
+        
+        // Only extract content for source files under a reasonable size limit
+        if (this.isTextFile(cleanPath) && this.isSourceFile(cleanPath)) {
           const contentPromise = (zipObject as any).async('text').then((content: string) => {
             // Set size based on content length and only include if reasonable size
             if (content.length < 1024 * 1024) { // 1MB limit per file
@@ -760,173 +744,194 @@ export class GitHubService {
   }
 
   /**
-   * Extract files from ZIP archive with intelligent filtering
-   * Provides comprehensive analysis of all repository files
+   * Determine if a file is likely a source file based on extension and path
    */
-  async extractFilesFromArchive(
-    archiveBuffer: Buffer, 
-    maxFiles: number = 800,
-    maxFileSize: number = 200 * 1024
-  ): Promise<FileInfo[]> {
-    const startTime = Date.now();
-    console.log(`[GitHubService] 🔍 Starting file extraction from ${(archiveBuffer.length / 1024 / 1024).toFixed(2)}MB archive`);
-    
-    // Load ZIP archive buffer
-    const zip = await new JSZip().loadAsync(archiveBuffer);
-    const files: FileInfo[] = [];
-    let extractedCount = 0;
-    let skippedCount = 0;
-    let totalEntries = 0;
-    
-    // Count total entries for progress tracking
-    Object.keys(zip.files).forEach(() => totalEntries++);
-      // Sort files by relevance before processing
-    const sortedEntries = Object.entries(zip.files)
-      .filter(([_, file]) => !(file as any).dir)
-      .sort(([pathA], [pathB]) => this.prioritizeFile(pathA) - this.prioritizeFile(pathB));
-    
-    console.log(`[GitHubService] 📁 Found ${sortedEntries.length} files in archive`);
-    console.log(`[GitHubService] 🎯 Will extract up to ${maxFiles} most relevant files`);
-    
-    for (const [relativePath, file] of sortedEntries) {
-      if (extractedCount >= maxFiles) {
-        console.log(`[GitHubService] 🛑 Reached max files limit (${maxFiles}), stopping extraction`);
-        break;
-      }
-      
-      // Remove the root folder from path (GitHub archives have a root folder)
-      const cleanPath = relativePath.split('/').slice(1).join('/');
-      
-      if (!cleanPath || !this.isAnalyzableFile(cleanPath)) {
-        skippedCount++;
-        continue;
-      }
-        try {
-        const content = await (file as any).async('string');
-        
-        if (content.length > maxFileSize) {
-          console.log(`[GitHubService] ⚠️  Skipping large file: ${cleanPath} (${(content.length / 1024).toFixed(1)}KB)`);
-          skippedCount++;
-          continue;
-        }
-          files.push({
-          path: cleanPath,
-          name: path.basename(cleanPath),
-          type: 'file',
-          size: content.length,
-          content,
-          language: this.detectLanguage(cleanPath),
-          lastModified: new Date().toISOString(), // Archive doesn't preserve timestamps
-        });
-        
-        extractedCount++;
-        
-        if (extractedCount % 50 === 0) {
-          console.log(`[GitHubService] 📊 Progress: ${extractedCount}/${maxFiles} files extracted...`);
-        }
-        
-      } catch (error) {
-        console.warn(`[GitHubService] ⚠️  Failed to extract ${cleanPath}:`, error);
-        skippedCount++;
-      }
-    }
-    
-    const extractionTime = Date.now() - startTime;
-    console.log(`[GitHubService] ✅ Extraction complete:`);
-    console.log(`[GitHubService]    📄 Files extracted: ${extractedCount}`);
-    console.log(`[GitHubService]    ⏭️  Files skipped: ${skippedCount}`);
-    console.log(`[GitHubService]    ⏱️  Extraction time: ${extractionTime}ms`);
-    console.log(`[GitHubService]    🎯 Coverage: ${((extractedCount / Math.max(1, sortedEntries.length)) * 100).toFixed(1)}% of analyzable files`);
-    
-    return files;
-  }
-
-  /**
-   * Determine if a file should be analyzed
-   */
-  private isAnalyzableFile(filePath: string): boolean {
-    const fileName = path.basename(filePath);
+  private isSourceFile(filePath: string): boolean {
     const ext = path.extname(filePath).toLowerCase();
+    const fileName = path.basename(filePath).toLowerCase();
+    const dirPath = path.dirname(filePath);
     
-    // Skip common non-essential directories
-    const skipDirectories = [
-      'node_modules', '.git', 'dist', 'build', 'coverage', 
-      '.next', 'out', 'public', 'static', 'assets',
-      '__pycache__', '.pytest_cache', 'venv', 'env',
-      'target', 'bin', 'obj', 'packages'
-    ];
+    // Check if file is in an excluded directory
+    const pathParts = dirPath.split(path.sep);
+    const excludedDirectories = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      'coverage',
+      'public',
+      'assets',
+      'vendor',
+      '.vscode',
+      '.idea',
+    ]);
     
-    const pathParts = filePath.split('/');
-    if (pathParts.some(part => skipDirectories.includes(part))) {
+    if (pathParts.some(part => excludedDirectories.has(part))) {
       return false;
     }
     
-    // Only include source files
-    const analyzableExtensions = [
-      '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-      '.py', '.java', '.go', '.cs', '.php', '.rb',
-      '.cpp', '.c', '.h', '.hpp', '.rs', '.swift',
-      '.kt', '.scala', '.dart', '.lua', '.r', '.m'
-    ];
+    // Check if extension is explicitly excluded
+    const excludedExtensions = new Set([
+      '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp',
+      '.woff', '.woff2', '.eot', '.ttf', '.otf',
+      '.mp4', '.webm', '.ogg', '.mp3', '.wav',
+      '.zip', '.gz', '.tar', '.rar',
+      '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+      '.lock',
+      '.log',
+      '.csv',
+      '.d.ts',
+      '.min.js',
+      '.min.css',
+    ]);
     
-    // Skip common non-source files
-    const skipPatterns = [
-      /\.min\./,
-      /\.map$/,
-      /\.lock$/,
-      /\.log$/,
-      /\.tmp$/,
-      /\.test\./,
-      /\.spec\./,
-      /\.d\.ts$/,
-      /\.config\./,
+    if (excludedExtensions.has(ext)) {
+      return false;
+    }
+    
+    // Check if filename matches excluded patterns
+    const excludedFilePatterns = [
+      /^\./, // Hidden files
+      /vite-env\.d\.ts$/,
+      /\.config\.(js|ts|mjs|cjs)$/,
+      /eslint\.config\.(js|ts|mjs|cjs)$/,
+      /\.min\.(js|css)$/,
+      /\.bundle\.(js|css)$/,
+      /\.chunk\.(js|css)$/,
       /package-lock\.json$/,
       /yarn\.lock$/,
       /composer\.lock$/,
+      /Pipfile\.lock$/,
+      /\.log$/,
+      /\.tmp$/,
+      /\.temp$/,
+      /\.cache$/,
     ];
     
-    return analyzableExtensions.includes(ext) && 
-           !skipPatterns.some(pattern => pattern.test(fileName)) &&
-           pathParts.length < 8; // Skip deeply nested files
-  }
+    if (excludedFilePatterns.some(pattern => pattern.test(fileName))) {
+      return false;
+    }
 
-  /**
-   * Prioritize files for extraction (lower number = higher priority)
-   */
-  private prioritizeFile(filePath: string): number {
-    let priority = 1000; // Default priority
-    
-    // Higher priority for main application files
-    if (filePath.includes('src/') || filePath.includes('lib/')) priority -= 100;
-    if (filePath.includes('components/')) priority -= 50;
-    if (filePath.includes('services/')) priority -= 50;
-    if (filePath.includes('pages/') || filePath.includes('views/')) priority -= 50;
-    
-    // Lower priority for test files
-    if (filePath.includes('test') || filePath.includes('spec')) priority += 200;
-    
-    // Lower priority for config files
-    if (filePath.includes('config') || filePath.includes('.config.')) priority += 100;
-    
-    // Higher priority for entry points
-    if (path.basename(filePath).match(/^(index|main|app)\./)) priority -= 200;
-    
-    return priority;
-  }
+    // First check our mapping
+    const extensionLanguageMap: Record<string, string> = {
+      // JavaScript/TypeScript
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.mjs': 'javascript',
+      '.cjs': 'javascript',
+      
+      // HTML/CSS
+      '.html': 'html',
+      '.htm': 'html',
+      '.css': 'css',
+      '.scss': 'scss',
+      '.sass': 'sass',
+      '.less': 'less',
+      '.styl': 'stylus',
 
-  /**
-   * Detect language from file extension
-   */
-  private detectLanguage(filePath: string): string {
-    const ext = path.extname(filePath).toLowerCase();
-    const languageMap: Record<string, string> = {
-      '.ts': 'typescript', '.tsx': 'typescript',
-      '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript',
-      '.py': 'python', '.java': 'java', '.go': 'go',
-      '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
-      '.cpp': 'cpp', '.c': 'c', '.rs': 'rust', '.swift': 'swift'
+      // Python
+      '.py': 'python',
+      '.pyw': 'python',
+      '.pyc': 'python',
+      '.pyd': 'python',
+      '.pyo': 'python',
+
+      // Java
+      '.java': 'java',
+      '.jar': 'java',
+      '.class': 'java',
+
+      // C#
+      '.cs': 'csharp',
+
+      // C/C++
+      '.c': 'c',
+      '.h': 'c',
+      '.cpp': 'cpp',
+      '.hpp': 'cpp',
+      '.cc': 'cpp',
+
+      // Ruby
+      '.rb': 'ruby',
+
+      // PHP
+      '.php': 'php',
+
+      // Go
+      '.go': 'go',
+
+      // Rust
+      '.rs': 'rust',
+
+      // Swift
+      '.swift': 'swift',
+
+      // Kotlin
+      '.kt': 'kotlin',
+      '.kts': 'kotlin',
+
+      // Shell
+      '.sh': 'shell',
+      '.bash': 'shell',
+      '.zsh': 'shell',
+
+      // Other
+      '.json': 'json',
+      '.xml': 'xml',
+      '.md': 'markdown',
+      '.yml': 'yaml',
+      '.yaml': 'yaml',
+      '.toml': 'toml',
+      '.dockerfile': 'dockerfile',
+      'Dockerfile': 'dockerfile',
     };
-    return languageMap[ext] || 'text';
+    
+    if (ext in extensionLanguageMap) {
+      return true;
+    }
+    
+    // For Tensorflow specifically, handle Bazel files
+    const bazelFiles = new Set([
+      'BUILD', 'WORKSPACE', '.bazelrc', '.bazelversion',
+      '.bzl', '.bazel'
+    ]);
+    
+    if (bazelFiles.has(fileName)) {
+      return true;
+    }
+    
+    // Additional common source extensions not in our main mapping
+    const commonSourceExts = new Set([
+      '.hxx', '.cxx', '.cc',  // Additional C++
+      '.pyx', '.pyd', '.pyi',  // Additional Python
+      '.scala', '.groovy',  // Additional JVM
+      '.rake', '.gemspec',  // Additional Ruby
+      '.phps', '.php5', '.phtml',  // Additional PHP
+      '.m', '.mm',  // Objective-C
+      '.fs', '.razor',  // Additional .NET
+      '.tf', '.tfvars', '.hcl',  // Terraform/HCL
+      '.proto', '.thrift',  // IDL
+      '.sol', '.cairo',  // Smart contracts
+      '.ml', '.hs', '.lisp', '.clj', // Functional langs
+      '.lua', '.R', '.pl', '.sql', '.dart' // Other languages
+    ]);
+    
+    return commonSourceExts.has(ext);
+  }
+
+  private logLanguageStats(files: FileInfo[]): void {
+    const languages: Record<string, number> = {};
+    const sourceFiles = files.filter(file => this.isSourceFile(file.path));
+    
+    sourceFiles.forEach(file => {
+      if (file.language) {
+        languages[file.language] = (languages[file.language] || 0) + 1;
+      }
+    });
+    
+    console.log(`[GitHubService] Language stats for ${sourceFiles.length} source files:`, languages);
   }
 }
 

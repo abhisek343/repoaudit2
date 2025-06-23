@@ -42,7 +42,7 @@ export const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
-import { SavedReport } from '../types';
+import { SavedReport, AnalysisResult } from '../types';
 
 /**
  * Saves or updates a report in IndexedDB.
@@ -54,11 +54,11 @@ export const saveReport = async (report: SavedReport): Promise<void> => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
     
-    // Add or update the report
+    // Add or update the report (use the record's id property as keyPath)
     store.put({
       ...report,
       lastAccessed: new Date().toISOString(),
-    }, report.id);
+    });
 
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -128,6 +128,33 @@ export const getReportByRepoName = async (repoName: string): Promise<SavedReport
     });
   } catch (error) {
     console.error(`Failed to get report for ${repoName}:`, error);
+    return undefined;
+  }
+};
+/**
+ * Retrieves a report by its ID.
+ * @param id The ID of the report to find.
+ * @returns A promise that resolves with the report, or undefined if not found.
+ */
+export const getReportById = async (id: string): Promise<AnalysisResult | undefined> => {
+  try {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(id);
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      
+      request.onerror = (event) => {
+        console.error(`Error getting report for ${id}:`, event);
+        reject(`Error getting report for ${id}`);
+      };
+    });
+  } catch (error) {
+    console.error(`Failed to get report for ${id}:`, error);
     return undefined;
   }
 };

@@ -3,6 +3,45 @@ import mermaid from 'mermaid';
 import { SystemArchitecture } from '../types';
 import { Code, GitBranch, Package, Shield, Activity, ArrowRight } from 'lucide-react';
 
+// Helper to generate an advanced Mermaid script from SystemArchitecture data
+function generateAdvancedMermaid(sa: SystemArchitecture): string {
+  let diagram = 'graph TD\n';
+  // Define complexity styling classes
+  diagram += 'classDef highComplexity fill:#FEE2E2,stroke:#DC2626,stroke-width:2px;\n';
+  diagram += 'classDef medComplexity fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px;\n';
+  diagram += 'classDef lowComplexity fill:#E0F2FE,stroke:#3B82F6,stroke-width:2px;\n\n';
+  // Generate subgraphs per layer
+  sa.layers.forEach(layer => {
+    const layerId = layer.name.replace(/\s+/g, '_');
+    const colors = {
+      presentation: { fill: '#EEF6FF', stroke: '#3B82F6' },
+      business:     { fill: '#ECFDF5', stroke: '#10B981' },
+      data:         { fill: '#FFF7ED', stroke: '#F97316' },
+      infrastructure:{ fill: '#F5F3FF', stroke: '#A78BFA' }
+    }[layer.type] || { fill: '#F3F4F6', stroke: '#6B7280' };
+    diagram += `subgraph ${layerId}["${layer.name}"]\n`;
+    diagram += `  direction TB\n`;
+    diagram += `  style ${layerId} fill:${colors.fill},stroke:${colors.stroke},stroke-width:2px\n`;
+    layer.components.forEach(c => {
+      const nodeId = c.id.replace(/[^a-zA-Z0-9_]/g, '_');
+      const label = `${c.name}<br/>Complexity: ${c.complexity}%`;
+      diagram += `  ${nodeId}["${label}"]\n`;
+      // Apply complexity class
+      if (c.complexity >= 80) diagram += `  class ${nodeId} highComplexity\n`;
+      else if (c.complexity >= 60) diagram += `  class ${nodeId} medComplexity\n`;
+      else diagram += `  class ${nodeId} lowComplexity\n`;
+    });
+    diagram += 'end\n\n';
+  });
+  // Generate edges with dependency type labels
+  sa.dependencies.forEach(dep => {
+    const fromId = dep.from.replace(/[^a-zA-Z0-9_]/g, '_');
+    const toId   = dep.to.replace(/[^a-zA-Z0-9_]/g, '_');
+    diagram += `${fromId} -- "${dep.type}" --> ${toId}\n`;
+  });
+  return diagram;
+}
+
 interface SystemArchitectureViewProps {
   systemArchitecture: SystemArchitecture;
 }
@@ -11,10 +50,12 @@ const SystemArchitectureView: React.FC<SystemArchitectureViewProps> = ({ systemA
   const mermaidRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (mermaidRef.current && systemArchitecture.mermaidDiagram) {
-      // Initialize mermaid
+    const renderDiagram = async () => {
+      if (!mermaidRef.current || !systemArchitecture) return;
+
+      // Initialize mermaid with custom theme
       mermaid.initialize({
-        startOnLoad: true,
+        startOnLoad: false,
         theme: 'default',
         securityLevel: 'loose',
         themeVariables: {
@@ -26,18 +67,22 @@ const SystemArchitectureView: React.FC<SystemArchitectureViewProps> = ({ systemA
           tertiaryColor: '#e5e7eb'
         }
       });
-
-      // Clear previous content
+      const diagramCode = generateAdvancedMermaid(systemArchitecture);
       mermaidRef.current.innerHTML = '';
-
-      // Render the diagram
       const diagramId = `mermaid-diagram-${Date.now()}`;
-      mermaidRef.current.innerHTML = `<div class="mermaid" id="${diagramId}">${systemArchitecture.mermaidDiagram}</div>`;
-      
-      // Re-render mermaid
-      mermaid.init(undefined, `#${diagramId}`);
-    }
-  }, [systemArchitecture.mermaidDiagram]);
+      // Render asynchronously without await to avoid parser issues
+      mermaid.render(diagramId, diagramCode)
+        .then(({ svg }) => {
+          if (mermaidRef.current) mermaidRef.current.innerHTML = svg;
+        })
+        .catch(err => {
+          console.error('Mermaid render failed:', err);
+          if (mermaidRef.current) mermaidRef.current.textContent = 'Failed to render diagram.';
+        });
+    };
+
+    renderDiagram();
+  }, [systemArchitecture]);
 
   const getComponentIcon = (type: string) => {
     switch (type) {

@@ -17,7 +17,14 @@ export interface RepositoryArchiveMetadata {
   compressionMetadata: CompressionMetadata; // Compression algorithm details
 }
 
-// Repository archive data interface
+// Repository archive data interface for storage
+interface RepositoryArchiveStorageData {
+  metadata: RepositoryArchiveMetadata;
+  compressedFilesBase64: string; // Base64 encoded compressed file data for storage compatibility
+  rawArchive?: ArrayBuffer; // Optional: store the raw ZIP data (rarely used due to size)
+}
+
+// Repository archive data interface for API
 export interface RepositoryArchiveData {
   metadata: RepositoryArchiveMetadata;
   compressedFiles: ArrayBuffer; // Extremely compressed file data
@@ -40,6 +47,30 @@ export class RepositoryArchiveService {
   private static readonly MAX_AGE_HOURS = 24; // Cache for 24 hours
 
   /**
+   * Convert ArrayBuffer to base64 string for storage
+   */
+  private static arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  /**
+   * Convert base64 string back to ArrayBuffer
+   */
+  private static base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  /**
    * Generate a unique ID for a repository
    */
   private static generateRepoId(owner: string, repo: string, branch: string = 'main'): string {
@@ -55,9 +86,10 @@ export class RepositoryArchiveService {
   ): Promise<FileInfo[] | null> {
     try {
       const repoId = this.generateRepoId(owner, repo, branch);
-      const cached = await archiveStore.getItem<RepositoryArchiveData>(repoId);
+      const cached = await archiveStore.getItem<RepositoryArchiveStorageData>(repoId);
       
       if (!cached) {
+        console.log(`No cached archive found for ${repoId}`);
         return null;
       }
 
@@ -71,17 +103,44 @@ export class RepositoryArchiveService {
 
       console.log(`Found valid cached archive for ${repoId} (${ageHours.toFixed(1)} hours old, ${cached.metadata.fileCount} files)`);
       
+      // Ensure compressedFiles is valid before attempting decompression
+      if (!cached.compressedFilesBase64 || cached.compressedFilesBase64.length === 0) {
+        console.error(`Cached archive for ${repoId} has invalid or empty compressedFiles. Removing from cache.`);
+        await archiveStore.removeItem(repoId);
+        return null;
+      }
+
+      // Convert base64 back to ArrayBuffer
+      const compressedArrayBuffer = this.base64ToArrayBuffer(cached.compressedFilesBase64);
+      
+      console.log(`DEBUG: Decompressing cached archive: ${compressedArrayBuffer.byteLength} bytes, algorithm: ${cached.metadata.compressionMetadata.algorithm}`);
+
       // Decompress the files
       const filesJson = await AdvancedCompressionService.decompressAuto(
-        cached.compressedFiles,
+        compressedArrayBuffer,
         cached.metadata.compressionMetadata
       );
+      
+      if (!filesJson || typeof filesJson !== 'string') {
+        console.error(`Decompression returned invalid data for ${repoId}:`, typeof filesJson);
+        await archiveStore.removeItem(repoId);
+        return null;
+      }
+      
       const files: FileInfo[] = JSON.parse(filesJson);
       
-      console.log(`✅ Decompressed ${files.length} files from cache (ratio: ${cached.metadata.compressionRatio.toFixed(2)}:1)`);
+      console.log(`Successfully decompressed ${files.length} files from cache (ratio: ${cached.metadata.compressionRatio.toFixed(2)}:1)`);
       return files;
     } catch (error) {
       console.error('Failed to get cached repository archive:', error);
+      // Remove corrupted cache entry
+      try {
+        const repoId = this.generateRepoId(owner, repo, branch);
+        await archiveStore.removeItem(repoId);
+        console.log(`Removed corrupted cache entry for ${repoId}`);
+      } catch (removeError) {
+        console.error('Failed to remove corrupted cache entry:', removeError);
+      }
       return null;
     }
   }
@@ -103,34 +162,53 @@ export class RepositoryArchiveService {
         return sum + (file.content?.length || 0);
       }, 0);
 
-      console.log(`🗜️ Compressing ${files.length} files (${(totalSize / 1024 / 1024).toFixed(2)} MB) for cache storage...`);
+      console.log(`Compressing ${files.length} files (${(totalSize / 1024 / 1024).toFixed(2)} MB) for cache storage...`);
       
       // Compress the files using extreme compression
       const filesJson = JSON.stringify(files);
       const compressionResult = await AdvancedCompressionService.compressAuto(filesJson);
       
-      console.log(`✅ Compression completed: ${compressionResult.compressionRatio.toFixed(2)}:1 ratio, ${((compressionResult.originalSize - compressionResult.compressedSize) / 1024 / 1024).toFixed(2)} MB saved`);
+      console.log(`Compression completed: ${compressionResult.compressionRatio.toFixed(2)}:1 ratio, ${((compressionResult.originalSize - compressionResult.compressedSize) / 1024 / 1024).toFixed(2)} MB saved`);
 
-      const archiveData: RepositoryArchiveData = {
+      // Convert ArrayBuffer to base64 for storage compatibility
+      const compressedFilesBase64 = this.arrayBufferToBase64(compressionResult.compressedData);
+      
+      const archiveData: RepositoryArchiveStorageData = {
         metadata: {
           id: repoId,
           owner,
           repo,
           branch,
           downloadedAt: Date.now(),
-          originalSize: totalSize,
+          originalSize: compressionResult.originalSize, // Use the actual JSON size that was compressed
           compressedSize: compressionResult.compressedSize,
           compressionRatio: compressionResult.compressionRatio,
           fileCount: files.length,
           compressionMetadata: compressionResult.metadata
         },
-        compressedFiles: compressionResult.compressedData,
+        compressedFilesBase64,
         rawArchive
       };
 
       // Store the archive
       await archiveStore.setItem(repoId, archiveData);
-      console.log(`💾 Stored repository archive for ${repoId} (${files.length} files, ${(compressionResult.compressedSize / 1024).toFixed(2)} KB compressed)`);
+      console.log(`Stored repository archive for ${repoId} (${files.length} files, ${(compressionResult.compressedSize / 1024).toFixed(2)} KB compressed)`);
+      
+      // Verify the data was stored correctly by immediately reading it back
+      const verification = await archiveStore.getItem<RepositoryArchiveStorageData>(repoId);
+      
+      if (!verification || !verification.compressedFilesBase64) {
+        console.error(`Data verification failed for ${repoId}. No data found after storage.`);
+        throw new Error('Failed to store archive data correctly');
+      }
+      
+      // Verify the base64 data can be converted back to the correct size
+      const verificationBuffer = this.base64ToArrayBuffer(verification.compressedFilesBase64);
+      if (verificationBuffer.byteLength !== compressionResult.compressedSize) {
+        console.error(`Data verification failed for ${repoId}. Expected ${compressionResult.compressedSize} bytes, got ${verificationBuffer.byteLength}`);
+        throw new Error('Failed to store archive data correctly');
+      }
+      console.log(`Data verification passed for ${repoId}`);
 
       // Clean up old archives to stay within limits
       await this.cleanupOldArchives();
@@ -156,7 +234,7 @@ export class RepositoryArchiveService {
       
       for (const key of allKeys) {
         try {
-          const archive = await archiveStore.getItem<RepositoryArchiveData>(key);
+          const archive = await archiveStore.getItem<RepositoryArchiveStorageData>(key);
           if (archive?.metadata) {
             archives.push({ key, metadata: archive.metadata });
           }
@@ -204,7 +282,7 @@ export class RepositoryArchiveService {
 
       for (const key of allKeys) {
         try {
-          const archive = await archiveStore.getItem<RepositoryArchiveData>(key);
+          const archive = await archiveStore.getItem<RepositoryArchiveStorageData>(key);
           if (archive?.metadata) {
             metadataList.push(archive.metadata);
           }

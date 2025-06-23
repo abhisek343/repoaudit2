@@ -28,6 +28,7 @@ import OnboardingPage from '../components/report/OnboardingPage';
 import DiagramsPage from '../components/report/DiagramsPage';
 import GitHistoryPage from './GitHistoryPage';
 import { AnalysisResult } from '../types';
+import { getReportById } from '../services/reportService';
 import { StorageService } from '../services/storageService';
 import VisualizationErrorBoundary from '../components/VisualizationErrorBoundary';
 
@@ -70,31 +71,25 @@ const ReportPage = ({ analysisResult }: ReportPageProps) => {
           console.log('[ReportPage] Using analysisResult prop');
           setReportData(analysisResult);
           setIsLoading(false);
-        } else if (repoId && repoId.trim() !== "") { // Fallback to loading from storage by ID, ensure repoId is valid
-          console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from StorageService.`);
-          
-          // First check if we have the latest result that matches
-          const latestResult = await StorageService.getLatestAnalysisResult();
-          if (latestResult && latestResult.id === repoId) {
-            console.log('[ReportPage] Found matching latest result');
-            setReportData(latestResult);
+        } else if (repoId && repoId.trim() !== "") { // Fallback to loading by ID
+          console.log(`[ReportPage] No direct data, attempting to load ID: ${repoId} from local DB.`);
+          // Try local IndexedDB first
+          const local = await getReportById(repoId!);
+          if (local) {
+            console.log('[ReportPage] Loaded report from local DB');
+            setReportData(local);
             setIsLoading(false);
             return;
           }
-          
-          // Otherwise try to get by specific ID
-          const storedResult = await StorageService.getAnalysisResultById(repoId);
-          console.log('[ReportPage] Result from StorageService.getAnalysisResultById:', !!storedResult);
-          if (storedResult) {
-            // Validate the stored result before using it
-            if (storedResult.id && storedResult.repositoryUrl && storedResult.basicInfo) {
-              setReportData(storedResult);
-            } else {
-              console.error('[ReportPage] Stored result is corrupted or incomplete');
-              setError("Report data appears to be corrupted. Please try analyzing again.");
-            }
+          // Fallback to server
+          const response = await fetch(`/api/report/${repoId}`);
+          if (response.ok) {
+            const remote = await response.json() as AnalysisResult;
+            setReportData(remote);
+            // cache raw AnalysisResult
+            await StorageService.storeAnalysisResult(remote);
           } else {
-            console.error(`[ReportPage] No data found in StorageService for ID: ${repoId}`);
+            console.error(`[ReportPage] Server report not found for ID: ${repoId}`);
             setError("Report data not found. Please try analyzing again.");
           }
           setIsLoading(false);

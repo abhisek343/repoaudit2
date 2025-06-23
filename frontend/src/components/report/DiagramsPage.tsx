@@ -547,7 +547,9 @@ const DiagramsPage = ({ analysisResult: reportData }: DiagramsPageProps) => {
               </p>
             </header>
             <div className="flex justify-center items-center">
-              {renderDiagramComponent()}
+              <VisualizationErrorBoundary>
+                {renderDiagramComponent()}
+              </VisualizationErrorBoundary>
             </div>
           </div>
         </main>

@@ -7,12 +7,14 @@ interface ProgressModalProps {
   currentStep: string;
   progress: number;
   error?: string;
+  status: 'idle' | 'analyzing' | 'success' | 'error';
   onOpenSettings?: () => void;
   onClose: () => void;
   onCancel: () => void;
+  children?: React.ReactNode;
 }
 
-const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel }: ProgressModalProps) => {
+const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, onClose, onCancel, children }: ProgressModalProps) => {
   const [elapsed, setElapsed] = useState(0);
 
   // Debug logging for progress updates
@@ -160,6 +162,8 @@ const ProgressModal = ({ isOpen, currentStep, progress, error, onOpenSettings, o
               </div>
             )}
           </div>
+        ) : children ? (
+          <>{children}</>
         ) : (
           <div className="text-center">
             <div className="relative w-16 h-16 mx-auto mb-4">

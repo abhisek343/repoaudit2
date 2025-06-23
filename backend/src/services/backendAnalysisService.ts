@@ -9,10 +9,18 @@ import {
 } from '../types';
 import * as parser from '@babel/parser';
 import * as path from 'path';
+import { ArchitectureAnalysisService } from './architectureAnalysisService';
+import { AIArchitectureConfigManager } from '../config/aiArchitectureConfig';
+import { AdvancedAnalysisService } from './advancedAnalysisService';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import * as os from 'os';
+import * as fs from 'fs/promises';
 
 export class BackendAnalysisService {
   private githubService: GitHubService;
   private llmService: LLMService;
+  private advancedAnalysisService: AdvancedAnalysisService;  // Add field for advanced service
   private analysisWarnings: AnalysisWarning[]; // Added to store warnings
   constructor(githubToken?: string, llmConfig?: LLMConfig) {
     this.githubService = new GitHubService(githubToken);
@@ -31,11 +39,12 @@ export class BackendAnalysisService {
       finalLlmConfig = { 
         provider: 'openai', 
         apiKey: '', 
-          model: llmConfig?.model 
+        model: llmConfig?.model 
       };
     }
     
     this.llmService = new LLMService(finalLlmConfig);
+    this.advancedAnalysisService = new AdvancedAnalysisService(this.llmService);
     
     // Final debug logging
     console.log('Final LLM Config used for LLMService:', finalLlmConfig);
@@ -86,7 +95,7 @@ export class BackendAnalysisService {
   private extractRepoParts(repoUrl: string): [string, string] {
     const parts = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
     if (!parts || parts.length < 3) {
-      throw new Error('Could not extract owner and repo from URL');
+      throw new Error('Invalid repository URL format');
     }
     return [parts[1], parts[2].replace(/\.git$/, '')];
   }
@@ -499,8 +508,39 @@ export class BackendAnalysisService {
     if (excludedFilePatterns.some(pattern => pattern.test(fileName))) {
       return false;
     }
-      // Only include files that have a recognized extension
-    return ext in BackendAnalysisService.EXTENSION_LANGUAGE_MAP;
+
+    // First check our mapping
+    if (ext in BackendAnalysisService.EXTENSION_LANGUAGE_MAP) {
+      return true;
+    }
+    
+    // For Tensorflow specifically, handle Bazel files
+    const bazelFiles = new Set([
+      'BUILD', 'WORKSPACE', '.bazelrc', '.bazelversion',
+      '.bzl', '.bazel'
+    ]);
+    
+    if (bazelFiles.has(fileName)) {
+      return true;
+    }
+    
+    // Additional common source extensions not in our main mapping
+    const commonSourceExts = new Set([
+      '.hxx', '.cxx', '.cc',  // Additional C++
+      '.pyx', '.pyd', '.pyi',  // Additional Python
+      '.scala', '.groovy',  // Additional JVM
+      '.rake', '.gemspec',  // Additional Ruby
+      '.phps', '.php5', '.phtml',  // Additional PHP
+      '.m', '.mm',  // Objective-C
+      '.fs', '.razor',  // Additional .NET
+      '.tf', '.tfvars', '.hcl',  // Terraform/HCL
+      '.proto', '.thrift',  // IDL
+      '.sol', '.cairo',  // Smart contracts
+      '.ml', '.hs', '.lisp', '.clj', // Functional langs
+      '.lua', '.R', '.pl', '.sql', '.dart' // Other languages
+    ]);
+    
+    return commonSourceExts.has(ext);
   }
 
   // ADDED: Stricter check specifically for escomplex compatibility
@@ -654,7 +694,7 @@ export class BackendAnalysisService {
     this.analysisWarnings = []; // Reset warnings for each new analysis
 
     const [owner, repo] = this.extractRepoParts(repoUrl);
-    
+    let errorMessage = '';
     // --- Stateful Progress Manager ---
     let lastProgress = 0;
     const progressStages = {
@@ -672,266 +712,318 @@ export class BackendAnalysisService {
 
     const sendProgress = (stage: keyof typeof progressStages, step: string, stageProgress: number) => {
       if (!options.sendProgress) return;
-
       progressStages[stage].progress = Math.max(0, Math.min(100, stageProgress));
-
       let totalProgress = 0;
       for (const s in progressStages) {
         totalProgress += progressStages[s as keyof typeof progressStages].weight * (progressStages[s as keyof typeof progressStages].progress / 100);
       }
-      
       const finalProgress = Math.round(totalProgress);
-
       if (finalProgress > lastProgress) {
         lastProgress = finalProgress;
         options.sendProgress(step, finalProgress);
       } else {
-        // Log if progress tries to go backward, but send the last known progress to avoid UI flicker
         if (finalProgress < lastProgress) {
           console.warn(`Progress decrease detected (from ${lastProgress}% to ${finalProgress}%) for step "${step}". Sending ${lastProgress}% instead.`);
         }
         options.sendProgress(step, lastProgress);
       }
     };
-    
-    sendProgress('init', 'Initializing analysis...', 100);
 
-    if (!this.isValidRepoUrl(repoUrl)) {
-      throw new Error('Invalid GitHub repository URL');
-    }
-
-    const branch = options.branch || 'main'; // Default to main if not provided
-
-    sendProgress('repoInfo', 'Fetching repository metadata', 25);
-    
-    // Use batched GraphQL API for better efficiency
-    console.log(`[Backend Analysis] START: Attempting batched fetch using GraphQL API`);
-    const batchedData = await this.githubService.getBatchedRepositoryData(owner, repo, branch);
-    const repoData = batchedData.repository;
-    const files = batchedData.files;
-    console.log(`[Backend Analysis] SUCCESS: Batched fetch completed - repo info + ${files.length} files`);
-    sendProgress('repoInfo', 'Fetched repository metadata', 100);
-    sendProgress('files', 'Fetched repository tree via GraphQL', 100);
-    
-    const basicInfo = this.transformRepoData(repoData);
-    console.log(`[Backend Analysis] DONE: Processed repo info for ${basicInfo.fullName}`);
-    sendProgress('files', 'Processing repository files', 10);
-
-    // Step 3: Fetch commits
-    console.log(`[Backend Analysis] START: Fetching commit history`);
-    sendProgress('commits', 'Fetching commit history', 0);
-    const commitsData = await this.githubService.getCommits(owner, repo, branch, 2000, (_step, progress) => sendProgress('commits', 'Fetching commit history', progress));
-    const commits = this.processCommits(commitsData);
-    console.log(`[Backend Analysis] DONE: Fetched and processed ${commits.length} commits`);
-    sendProgress('commits', 'Fetched commit history', 100);
-
-    // Step 4: Fetch contributors
-    let contributors: ProcessedContributor[] = [];
-    if (options.contributorAnalysis) {
-      console.log(`[Backend Analysis] START: Fetching contributors`);
-      sendProgress('contributors', 'Fetching contributors', 0);
-      const contributorsData = await this.githubService.getContributors(owner, repo);
-      contributors = this.processContributors(contributorsData);
-      console.log(`[Backend Analysis] DONE: Fetched and processed ${contributors.length} contributors`);
-     sendProgress('contributors', 'Fetched contributor data', 100);
-    }
-
-    // Step 5: Fetch dependencies from package.json
-    let dependencies: DependencyInfo = { dependencies: {}, devDependencies: {} };
-    if (options.dependencies) {
-      console.log(`[Backend Analysis] START: Analyzing dependencies`);
-      sendProgress('dependencies', 'Analyzing dependencies', 0);
-      const packageJsonFile = files.find(f => f.path === 'package.json');
-      if (packageJsonFile?.content) {
-        dependencies = this.parseDependencies(packageJsonFile.content);
-        console.log(`[Backend Analysis] DONE: Parsed ${Object.keys(dependencies.dependencies).length} dependencies and ${Object.keys(dependencies.devDependencies).length} dev dependencies`);
-       sendProgress('dependencies', 'Parsed dependencies', 100);
-      } else {
-        this.addWarning("Dependencies", "package.json not found or content is missing.");
+    try {
+      sendProgress('init', 'Initializing analysis...', 5);
+      if (!this.isValidRepoUrl(repoUrl)) {
+        throw new Error('Invalid GitHub repository URL');
       }
-    }
-
-    // Step 6: Analyze architecture
-    let architecture: ArchitectureData = { nodes: [], links: [] };
-    sendProgress('architecture', 'Detecting architecture patterns', 0);
-    if (options.architecture) {
-      console.log(`[Backend Analysis] START: Detecting architecture patterns`);
-      architecture = await this.safeDetectArchitecturePatterns(files);
-      console.log(`[Backend Analysis] DONE: Analyzed architecture, found ${architecture.nodes.length} nodes and ${architecture.links.length} links`);
-     sendProgress('architecture', 'Detected architecture patterns', 100);
-    }
-
-    // Step 7: Calculate quality metrics
-    let quality: QualityMetrics = {};
-    sendProgress('quality', 'Calculating quality metrics', 0);
-    if (options.quality) {
-      console.log(`[Backend Analysis] START: Calculating quality metrics`);
-      quality = await this.safeCalculateQualityMetrics(files, (step, progress) => sendProgress('quality', step, progress));
-      console.log(`[Backend Analysis] DONE: Calculated quality metrics for ${Object.keys(quality).length} files`);
-     sendProgress('quality', 'Calculated quality metrics', 100);
-    }
-
-    // Steps 8-19: Perform final analysis steps in parallel
-    sendProgress('finalizing', 'Generating analysis data', 5);
-
-    const analysisPromises: Record<string, Promise<any>> = {};
-    if (options.hotspots) analysisPromises.hotspots = Promise.resolve(this.generateHotspots(files, commits));
-    if (options.keyFunctions) analysisPromises.keyFunctions = Promise.resolve(this.generateKeyFunctions(files));
-    if (options.security) analysisPromises.securityIssues = Promise.resolve(this.generateFallbackSecurityIssues(files));
-    if (options.technicalDebt) analysisPromises.technicalDebt = Promise.resolve(this.generateFallbackTechnicalDebt(files, quality));
-    if (options.performance) analysisPromises.performanceMetrics = Promise.resolve(this.generateFallbackPerformanceMetrics(files));
-    if (options.apiEndpoints) analysisPromises.apiEndpoints = Promise.resolve(this.generateFallbackAPIEndpoints(files));
-    if (options.prAnalysis) analysisPromises.prData = this.githubService.getPullRequests(owner, repo);
-    if (options.temporalCoupling) analysisPromises.temporalCouplingData = Promise.resolve(this.generateTemporalCouplings(commits, files));
-    if (options.dataTransformation) analysisPromises.dataTransformationData = Promise.resolve(this.generateDataTransformationFlow(files, commits));
-    if (options.gitGraph) analysisPromises.gitGraphData = Promise.resolve(this.generateGitGraphData(commits, contributors));
-
-    const analysisResults = await Promise.all(Object.values(analysisPromises).map(p => p.catch(e => e)));
-    const results: Record<string, any> = {};
-    Object.keys(analysisPromises).forEach((key, index) => {
-        results[key] = analysisResults[index];
-    });
-
-    const {
-      hotspots = [],
-      keyFunctions = [],
-      securityIssues = [],
-      technicalDebt = [],
-      performanceMetrics = [],
-      apiEndpoints = [],
-      prData = [],
-      temporalCouplingData = [],
-      dataTransformationData = { nodes: [], links: [] },
-      gitGraphData = { nodes: [], links: [] },
-    } = results;
-
-    console.log(`[Backend Analysis] Generated analysis results`);
-    sendProgress('finalizing', 'Generated analysis data', 30);
-
-    // AI-powered analysis
-    let aiSummary: string | undefined;
-    let aiArchitecture: string | undefined;
-
-    if (this.llmService.isConfigured() && (options.aiSummary || options.aiArchitecture)) {
-      const aiPromises: Promise<string | undefined>[] = [];
-      if (options.aiSummary) {
-        aiPromises.push(this.generateAISummary(repoData, files));
-      } else {
-        aiPromises.push(Promise.resolve(undefined));
+      // Determine branch to use: provided or repository default
+      let branch = options.branch;
+      if (!branch) {
+        try {
+          const repoMeta = await this.githubService.getRepository(owner, repo);
+          branch = repoMeta.defaultBranch;
+        } catch (e) {
+          branch = 'main'; // Fallback to 'main' if unable to retrieve default branch
+        }
       }
-      if (options.aiArchitecture) {
-        aiPromises.push(this.generateAIArchitectureDescription(repoData, files, architecture));
-      } else {
-        aiPromises.push(Promise.resolve(undefined));
+      sendProgress('repoInfo', 'Fetching repository metadata', 10);
+      let batchedData, repoData, files;
+      try {
+        sendProgress('repoInfo', 'Fetching repository metadata (start)', 15);
+        batchedData = await this.githubService.getBatchedRepositoryData(owner, repo, branch);
+        repoData = batchedData.repository;
+        files = batchedData.files;
+        sendProgress('repoInfo', 'Fetched repository metadata', 100);
+        sendProgress('files', 'Fetched repository tree via GraphQL', 100);
+      } catch (e) {
+        errorMessage = 'Failed to fetch repository metadata';
+        sendProgress('repoInfo', errorMessage, 100);
+        throw e;
       }
+      const basicInfo = this.transformRepoData(repoData);
+      sendProgress('files', 'Processing repository files', 10);
+      // Step 3: Fetch commits
+      let commitsData, commits;
+      try {
+        sendProgress('commits', 'Fetching commit history', 0);
+        commitsData = await this.githubService.getCommits(owner, repo, branch, 2000, (_step, progress) => sendProgress('commits', 'Fetching commit history', progress));
+        commits = this.processCommits(commitsData);
+        sendProgress('commits', 'Fetched commit history', 100);
+      } catch (e) {
+        errorMessage = 'Failed to fetch commit history';
+        sendProgress('commits', errorMessage, 100);
+        throw e;
+      }
+      // Step 4: Fetch contributors
+      let contributors: ProcessedContributor[] = [];
+      if (options.contributorAnalysis) {
+        try {
+          sendProgress('contributors', 'Fetching contributors', 0);
+          const contributorsData = await this.githubService.getContributors(owner, repo);
+          contributors = this.processContributors(contributorsData);
+          sendProgress('contributors', 'Fetched contributor data', 100);
+        } catch (e) {
+          errorMessage = 'Failed to fetch contributors';
+          sendProgress('contributors', errorMessage, 100);
+          throw e;
+        }
+      }
+      // Step 5: Fetch dependencies from package.json
+      let dependencies: DependencyInfo = { dependencies: {}, devDependencies: {} };
+      if (options.dependencies) {
+        try {
+          sendProgress('dependencies', 'Analyzing dependencies', 0);
+          const packageJsonFile = files.find(f => f.path === 'package.json');
+          if (packageJsonFile?.content) {
+            dependencies = this.parseDependencies(packageJsonFile.content);
+            sendProgress('dependencies', 'Parsed dependencies', 100);
+          } else {
+            this.addWarning("Dependencies", "package.json not found or content is missing.");
+            sendProgress('dependencies', 'No package.json found', 100);
+          }
+        } catch (e) {
+          errorMessage = 'Failed to analyze dependencies';
+          sendProgress('dependencies', errorMessage, 100);
+          throw e;
+        }
+      }
+      // Step 6: Analyze architecture
+      let architecture: ArchitectureData = { nodes: [], links: [] };
+      sendProgress('architecture', 'Detecting architecture patterns', 0);
+      if (options.architecture) {
+        try {
+          sendProgress('architecture', 'Detecting architecture patterns (start)', 10);
+          architecture = await this.safeDetectArchitecturePatterns(files);
+          sendProgress('architecture', 'Detected architecture patterns', 100);
+        } catch (e) {
+          errorMessage = 'Failed to detect architecture patterns';
+          sendProgress('architecture', errorMessage, 100);
+          throw e;
+        }
+      }
+      // Generate full system architecture structure using ArchitectureAnalysisService
+      let systemArchitecture;
+      if (options.architecture) {
+        const aiConfigManager = new AIArchitectureConfigManager();
+        const archService = new ArchitectureAnalysisService(aiConfigManager.getConfig());
+        sendProgress('architecture', 'Generating detailed system architecture', 80);
+        systemArchitecture = await archService.analyzeArchitecture(files);
+        sendProgress('architecture', 'Generated detailed system architecture', 100);
+      }
+      // Step 7: Calculate quality metrics
+      let quality: QualityMetrics = {};
+      sendProgress('quality', 'Calculating quality metrics', 0);
+      if (options.quality) {
+        try {
+          sendProgress('quality', 'Calculating quality metrics (start)', 10);
+          quality = await this.safeCalculateQualityMetrics(files, (step, progress) => sendProgress('quality', step, progress));
+          sendProgress('quality', 'Calculated quality metrics', 100);
+        } catch (e) {
+          errorMessage = 'Failed to calculate quality metrics';
+          sendProgress('quality', errorMessage, 100);
+          throw e;
+        }
+      }
+      // Steps 8-19: Perform final analysis steps in parallel
+      sendProgress('finalizing', 'Generating analysis data', 5);
+      const analysisPromises: Record<string, Promise<any>> = {};
+      if (options.hotspots) analysisPromises.hotspots = Promise.resolve(this.generateHotspots(files, commits));
+      if (options.keyFunctions) analysisPromises.keyFunctions = Promise.resolve(this.generateKeyFunctions(files));
+      if (options.security) {
+        // Use Semgrep for multi-language scanning if enabled, else advanced or fallback
+        if (process.env.USE_SEMGREP === 'true') {
+          analysisPromises.securityIssues = this.cloneAndScanWithSemgrep(repoUrl, branch, files);
+        } else if (this.llmService.isConfigured()) {
+          analysisPromises.securityIssues = this.advancedAnalysisService.analyzeSecurityIssues(files);
+        } else {
+          analysisPromises.securityIssues = Promise.resolve(this.generateFallbackSecurityIssues(files));
+        }
+      }
+      if (options.technicalDebt) analysisPromises.technicalDebt = Promise.resolve(this.generateFallbackTechnicalDebt(files, quality));
+      if (options.performance) analysisPromises.performanceMetrics = Promise.resolve(this.generateFallbackPerformanceMetrics(files));
+      if (options.apiEndpoints) analysisPromises.apiEndpoints = Promise.resolve(this.generateFallbackAPIEndpoints(files));
+      if (options.prAnalysis) analysisPromises.prData = this.githubService.getPullRequests(owner, repo);
+      if (options.temporalCoupling) analysisPromises.temporalCouplingData = Promise.resolve(this.generateTemporalCouplings(commits, files));
+      if (options.dataTransformation) analysisPromises.dataTransformationData = Promise.resolve(this.generateDataTransformationFlow(files, commits));
+      if (options.gitGraph) analysisPromises.gitGraphData = Promise.resolve(this.generateGitGraphData(commits, contributors));
+      let analysisResults: Array<any>;
+      let results: Record<string, any> = {};
+      try {
+        sendProgress('finalizing', 'Running final analysis steps', 10);
+        analysisResults = await Promise.all(Object.values(analysisPromises).map(p => p.catch(e => e)));
+        Object.keys(analysisPromises).forEach((key, index) => {
+            results[key] = analysisResults[index];
+        });
+        sendProgress('finalizing', 'Generated analysis data', 30);
+      } catch (e) {
+        errorMessage = 'Failed during final analysis steps';
+        sendProgress('finalizing', errorMessage, 100);
+        throw e;
+      }
+      // AI-powered analysis
+      let aiSummary: string | undefined;
+      let aiArchitecture: string | undefined;
+      if (this.llmService.isConfigured() && (options.aiSummary || options.aiArchitecture)) {
+        try {
+          sendProgress('finalizing', 'Generating AI analysis', 40);
+          const aiPromises: Promise<string | undefined>[] = [];
+          if (options.aiSummary) {
+            aiPromises.push(this.generateAISummary(repoData, files));
+          } else {
+            aiPromises.push(Promise.resolve(undefined));
+          }
+          if (options.aiArchitecture) {
+            aiPromises.push(this.generateAIArchitectureDescription(repoData, files, architecture));
+          } else {
+            aiPromises.push(Promise.resolve(undefined));
+          }
+          const [summaryResult, architectureResult] = await Promise.all(aiPromises.map(p => p.catch(e => e)));
+          if (options.aiSummary) {
+            if (summaryResult instanceof Error) {
+              this.addWarning('AI Summary', 'Failed to generate AI summary', summaryResult);
+              sendProgress('finalizing', 'Failed to generate AI summary', 50);
+            } else {
+              aiSummary = summaryResult;
+              sendProgress('finalizing', 'Generated AI summary', 50);
+            }
+          }
+          if (options.aiArchitecture) {
+            if (architectureResult instanceof Error) {
+              this.addWarning('AI Architecture', 'Failed to generate AI architecture description', architectureResult);
+              sendProgress('finalizing', 'Failed to generate AI architecture description', 70);
+            } else {
+              aiArchitecture = architectureResult;
+              sendProgress('finalizing', 'Generated AI architecture description', 70);
+            }
+          }
+        } catch (e) {
+          errorMessage = 'Failed to generate AI analysis';
+          sendProgress('finalizing', errorMessage, 100);
+          throw e;
+        }
+      }
+      sendProgress('finalizing', 'Finalizing report', 99);
       
-      const [summaryResult, architectureResult] = await Promise.all(aiPromises.map(p => p.catch(e => e)));
-
-      if (options.aiSummary) {
-        if (summaryResult instanceof Error) {
-          this.addWarning('AI Summary', 'Failed to generate AI summary', summaryResult);
-        } else {
-          aiSummary = summaryResult;
-        }
-        console.log('[Backend Analysis] Generated AI summary');
-        sendProgress('finalizing', 'Generated AI summary', 50);
+      // Calculate metrics for AnalysisResult
+      const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+      console.log(`[Backend Analysis] Processing ${files.length} total files, ${sourceFiles.length} source files for metrics`);
+      
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const recentCommits = commits.filter(commit => new Date(commit.date) > thirtyDaysAgo).length;
+      
+      const avgComplexity = Object.values(quality).length > 0
+        ? Object.values(quality).reduce((sum, q) => sum + q.complexity, 0) / Object.values(quality).length
+        : 0;
+      console.log(`[Backend Analysis] Quality analysis complete: ${Object.keys(quality).length} files analyzed, avg complexity: ${avgComplexity.toFixed(2)}`);
+      
+      const avgMaintainability = Object.values(quality).length > 0
+        ? Object.values(quality).reduce((sum, q) => sum + q.maintainability, 0) / Object.values(quality).length
+        : 0;
+      
+      // Enhanced metric calculations
+      const testCoverage = this.calculateTestCoverage(files);
+      const languageDistribution = this.detectLanguages(files);
+      const languageCount = Object.keys(languageDistribution).length;
+      console.log(`[Backend Analysis] Detected ${languageCount} languages, test coverage: ${testCoverage.toFixed(1)}%`);
+      
+      const busFactor = this.calculateBusFactor(contributors, commits);
+      const securityScore = Math.max(0, 100 - (results.securityIssues?.length || 0) * 5);
+      const technicalDebtScore = Math.max(0, 100 - (results.technicalDebt?.length || 0) * 2);
+      const qualityScore = this.calculateQualityScore(avgMaintainability, avgComplexity, testCoverage, securityScore, technicalDebtScore);
+      
+      sendProgress('finalizing', 'Analysis complete', 100);
+      
+      return {
+        id: `${repoData.fullName.replace(/\//g, '-')}-${Date.now()}`,
+        repositoryUrl: `https://github.com/${repoData.fullName}`,
+        createdAt: new Date().toISOString(),
+        basicInfo,
+        repository: repoData,
+        commits,
+        contributors,
+        files,
+        languages: languageDistribution,
+        dependencies,
+        dependencyGraph: architecture,
+        qualityMetrics: quality,
+        securityIssues: results.securityIssues || [],
+        technicalDebt: results.technicalDebt || [],
+        performanceMetrics: results.performanceMetrics || [],
+        hotspots: results.hotspots || [],
+        keyFunctions: results.keyFunctions || [],
+        apiEndpoints: results.apiEndpoints || [],
+        aiSummary,
+        architectureAnalysis: aiArchitecture,
+        systemArchitecture,
+        temporalCoupling: results.temporalCouplingData || [],
+        dataTransformation: results.dataTransformationData || { nodes: [], links: [] },
+        pullRequests: results.prData || [],
+        gitGraph: results.gitGraphData || { nodes: [], links: [] },
+        metrics: {
+          totalCommits: commits.length,
+          totalContributors: contributors.length,
+          fileCount: files.length,
+          analyzableFileCount: sourceFiles.length,
+          linesOfCode: (() => {
+            const totalLOC = sourceFiles.reduce((sum, f) => {
+              if (quality[f.path]) {
+                return sum + quality[f.path].linesOfCode;
+              }
+              const linesFromContent = f.content?.split('\n').length || 0;
+              return sum + linesFromContent;
+            }, 0);
+            console.log(`[Backend Analysis] Calculated ${totalLOC} total lines of code from ${sourceFiles.length} source files`);
+            return totalLOC;
+          })(),
+          codeQuality: qualityScore,
+          testCoverage: testCoverage,
+          busFactor: busFactor,
+          securityScore: securityScore,
+          technicalDebtScore: technicalDebtScore,
+          performanceScore: Math.max(0, 100 - (results.performanceMetrics?.length || 0) * 3),
+          criticalVulnerabilities: Array.isArray(results.securityIssues) ? results.securityIssues.filter((s) => s?.severity === 'critical').length : 0,
+          highVulnerabilities: Array.isArray(results.securityIssues) ? results.securityIssues.filter((s) => s?.severity === 'high').length : 0,
+          mediumVulnerabilities: Array.isArray(results.securityIssues) ? results.securityIssues.filter((s) => s?.severity === 'medium').length : 0,
+          lowVulnerabilities: Array.isArray(results.securityIssues) ? results.securityIssues.filter((s) => s?.severity === 'low').length : 0,
+          totalPRs: (results.prData || []).length,
+          mergedPRs: (results.prData || []).filter((pr: {mergedAt?: string | null}) => pr.mergedAt).length,
+          prMergeRate: (results.prData || []).length > 0 ? (results.prData || []).filter((pr: {mergedAt?: string | null}) => pr.mergedAt).length / (results.prData || []).length * 100 : 0,
+          avgPRMergeTime: 0, // Would need actual PR analysis
+          recentActivity: recentCommits,
+          avgCommitsPerWeek: commits.length > 0 ? commits.length / Math.max(1, Math.ceil((new Date().getTime() - new Date(commits[commits.length - 1].date).getTime()) / (7 * 24 * 60 * 60 * 1000))) : 0,
+          avgComplexity,
+          filesWithComplexity: Object.keys(quality).length,
+          repositorySize: this.calculateRepositorySize(files),
+          languageDistribution: languageDistribution,
+        },
+        analysisWarnings: this.analysisWarnings,
+      };
+    } catch (err) {
+      // Preemptive error reporting
+      if (options.sendProgress) {
+        options.sendProgress('Analysis failed', 100);
       }
-      if (options.aiArchitecture) {
-        if (architectureResult instanceof Error) {
-          this.addWarning('AI Architecture', 'Failed to generate AI architecture description', architectureResult);
-        } else {
-          aiArchitecture = architectureResult;
-        }
-        console.log('[Backend Analysis] Generated AI architecture description');
-        sendProgress('finalizing', 'Generated AI architecture description', 70);
-      }
+      throw err;
     }
-
-   sendProgress('finalizing', 'Finalizing report', 99);
-    console.log('[Backend Analysis] Analysis complete.');
-    
-    // Calculate metrics for AnalysisResult
-    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
-    console.log(`[Backend Analysis] Processing ${files.length} total files, ${sourceFiles.length} source files for metrics`);
-    
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const recentCommits = commits.filter(commit => new Date(commit.date) > thirtyDaysAgo).length;
-    const avgComplexity = Object.values(quality).length > 0
-      ? Object.values(quality).reduce((sum, q) => sum + q.complexity, 0) / Object.values(quality).length
-      : 0;
-    console.log(`[Backend Analysis] Quality analysis complete: ${Object.keys(quality).length} files analyzed, avg complexity: ${avgComplexity.toFixed(2)}`);
-    
-    const avgMaintainability = Object.values(quality).length > 0
-      ? Object.values(quality).reduce((sum, q) => sum + q.maintainability, 0) / Object.values(quality).length
-      : 0;
-    
-    // Enhanced metric calculations
-    const testCoverage = this.calculateTestCoverage(files);
-    const languageDistribution = this.detectLanguages(files);
-    const languageCount = Object.keys(languageDistribution).length;
-    console.log(`[Backend Analysis] Detected ${languageCount} languages, test coverage: ${testCoverage.toFixed(1)}%`);
-    
-    const busFactor = this.calculateBusFactor(contributors, commits);
-    const securityScore = Math.max(0, 100 - securityIssues.length * 5);
-    const technicalDebtScore = Math.max(0, 100 - technicalDebt.length * 2);
-    const qualityScore = this.calculateQualityScore(avgMaintainability, avgComplexity, testCoverage, securityScore, technicalDebtScore);
-    
-    sendProgress('finalizing', 'Analysis complete', 100);
-    
-    return {
-      id: `${repoData.fullName.replace(/\//g, '-')}-${Date.now()}`,
-      repositoryUrl: `https://github.com/${repoData.fullName}`,
-      createdAt: new Date().toISOString(),
-      basicInfo,
-      repository: repoData,
-      commits,
-      contributors,
-      files,
-      languages: languageDistribution,
-      dependencies,
-      dependencyGraph: architecture,
-      qualityMetrics: quality,
-      securityIssues,
-      technicalDebt,
-      performanceMetrics,
-      hotspots,
-      keyFunctions,
-      apiEndpoints,
-      aiSummary,
-      architectureAnalysis: aiArchitecture,
-      temporalCoupling: temporalCouplingData,
-      dataTransformation: dataTransformationData,
-      pullRequests: prData,
-      gitGraph: gitGraphData,
-      metrics: {
-        totalCommits: commits.length,
-        totalContributors: contributors.length,
-        linesOfCode: quality ? Object.values(quality).reduce((sum, metric) => sum + (metric.linesOfCode || 0), 0) : 0,
-        fileCount: files.length,
-        codeQuality: qualityScore,
-        testCoverage: testCoverage,
-        busFactor: busFactor,
-        securityScore: securityScore,
-        technicalDebtScore: technicalDebtScore,
-        performanceScore: Math.max(0, 100 - performanceMetrics.length * 3),
-        criticalVulnerabilities: securityIssues.filter((s: SecurityIssue) => s.severity === 'critical').length,
-        highVulnerabilities: securityIssues.filter((s: SecurityIssue) => s.severity === 'high').length,
-        mediumVulnerabilities: securityIssues.filter((s: SecurityIssue) => s.severity === 'medium').length,
-        lowVulnerabilities: securityIssues.filter((s: SecurityIssue) => s.severity === 'low').length,
-        totalPRs: prData.length,
-        mergedPRs: prData.filter((pr: any) => pr.mergedAt).length,
-        prMergeRate: prData.length > 0 ? prData.filter((pr: any) => pr.mergedAt).length / prData.length * 100 : 0,
-        avgPRMergeTime: 0, // Would need actual PR analysis
-        recentActivity: recentCommits,
-        avgCommitsPerWeek: commits.length > 0 ? commits.length / Math.max(1, Math.ceil((new Date().getTime() - new Date(commits[commits.length - 1].date).getTime()) / (7 * 24 * 60 * 60 * 1000))) : 0,
-        avgComplexity,
-        filesWithComplexity: Object.keys(quality).length,
-        repositorySize: this.calculateRepositorySize(files),
-        languageDistribution: languageDistribution,
-      },
-      analysisWarnings: this.analysisWarnings,
-    };
   }
   private static EXTENSION_LANGUAGE_MAP: Record<string, string> = {
     // JavaScript/TypeScript
@@ -1530,7 +1622,9 @@ export class BackendAnalysisService {
       { regex: /TODO:|FIXME:/g, type: 'configuration', severity: 'low', cwe: 'CWE-546' },
     ];
 
-    const sourceFiles = files.filter(f => this.isSourceFile(f.path));
+    // Skip very large files to avoid regex DoS
+    const MAX_SECURITY_SCAN_BYTES = 500_000; // 500 KB
+    const sourceFiles = files.filter(f => this.isSourceFile(f.path) && f.content && f.content.length <= MAX_SECURITY_SCAN_BYTES);
 
     sourceFiles.forEach(file => {
       if (!file.content) return;
@@ -1849,5 +1943,40 @@ export class BackendAnalysisService {
     ) / 10; // Convert to 0-10 scale
     
     return Math.round(qualityScore * 10) / 10;
+  }
+
+  // Add methods for Semgrep-based security scanning
+  private async cloneAndScanWithSemgrep(repoUrl: string, branch: string, files: FileInfo[]): Promise<SecurityIssue[]> {
+    const tmpDir = path.join(os.tmpdir(), `semgrep-scan-${Date.now()}`);
+    await promisify(execFile)('git', ['clone', '--depth', '1', '--branch', branch, repoUrl, tmpDir]);
+    try {
+      const { stdout } = await promisify(execFile)('semgrep', ['--config', 'p/ci', '--json'], { cwd: tmpDir });
+      const output = JSON.parse(stdout);
+      return output.results.map((r: any) => ({
+        type: 'vulnerability',
+        severity: this.mapSemgrepSeverity(r.extra.metadata.severity || ''),
+        file: r.path,
+        line: r.start.line,
+        description: r.extra.message,
+        recommendation: r.extra.metadata.fix?.message || '',
+        cwe: r.extra.metadata.cwe || '',
+        codeSnippet: r.extra.lines,
+      }));
+    } catch (e) {
+      this.addWarning('Semgrep Scan', 'Semgrep scanning failed', e);
+      return this.generateFallbackSecurityIssues(files);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  private mapSemgrepSeverity(sev: string): SecurityIssue['severity'] {
+    switch (sev.toLowerCase()) {
+      case 'critical': return 'critical';
+      case 'error': return 'high';
+      case 'warning': return 'medium';
+      case 'info': return 'low';
+      default: return 'low';
+    }
   }
 }

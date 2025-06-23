@@ -66,174 +66,10 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
   }
 
   /**
-   * Enhanced repository analysis with archive caching
-   * First checks IndexedDB cache, then falls back to backend analysis
-   */
-  async analyzeRepositoryWithCaching(
-    repoUrl: string,
-    onProgress: (step: string, progress: number) => void,
-    forceRefresh: boolean = false
-  ): Promise<AnalysisResult> {
-    this.isCancelled = false;
-    
-    try {
-      // Parse repository URL
-      const { owner, repo, branch } = this.parseRepositoryUrl(repoUrl);
-        // Check for cached archive first (unless forcing refresh)
-      if (!forceRefresh) {
-        onProgress('Checking cached repository archive...', 5);
-        const cachedFiles = await RepositoryArchiveService.getCachedArchive(owner, repo, branch);
-        
-        if (cachedFiles && cachedFiles.length > 0) {
-          onProgress('Found cached repository archive, performing analysis...', 10);
-          
-          // Use cached files for analysis
-          return this.analyzeFromCachedFiles(repoUrl, cachedFiles, onProgress);
-        }
-      }
-        // No cache or force refresh - use backend analysis with archive caching
-      onProgress('Downloading repository archive...', 15);
-      return this.analyzeRepositoryWithBackend(repoUrl, onProgress);
-      
-    } catch (error) {
-      console.error('Repository analysis failed:', error);
-      throw new Error(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }  /**
-   * Analyze repository using cached files (client-side analysis)
-   */
-  private async analyzeFromCachedFiles(
-    repoUrl: string,
-    _cachedFiles: FileInfo[],
-    onProgress: (step: string, progress: number) => void
-  ): Promise<AnalysisResult> {
-    // For now, we'll still use the backend for analysis but we could implement
-    // client-side analysis here in the future. The key benefit is that we avoid
-    // re-downloading the repository archive.
-    
-    // We can pass a flag to indicate that we have cached files
-    const params = new URLSearchParams();
-    params.append('repoUrl', repoUrl);
-    params.append('useCachedFiles', 'true'); // Signal backend that files are cached
-    
-    if (this.llmConfig) {
-      params.append('llmConfig', JSON.stringify(this.llmConfig));
-    }
-    if (this.githubToken) {
-      params.append('githubToken', this.githubToken);
-    }
-
-    // For now, still use backend analysis
-    // TODO: Implement client-side analysis for cached files
-    return this.analyzeWithEventSource(params, onProgress);
-  }
-  /**
-   * Analyze repository using backend with archive caching
-   */
-  private async analyzeRepositoryWithBackend(
-    repoUrl: string,
-    onProgress: (step: string, progress: number) => void
-  ): Promise<AnalysisResult> {
-    const params = new URLSearchParams();
-    params.append('repoUrl', repoUrl);
-    
-    if (this.llmConfig) {
-      params.append('llmConfig', JSON.stringify(this.llmConfig));
-    }
-    if (this.githubToken) {
-      params.append('githubToken', this.githubToken);
-    }
-
-    return this.analyzeWithEventSource(params, onProgress);
-  }  /**
    * Common EventSource-based analysis logic
    */
-  private analyzeWithEventSource(
-    params: URLSearchParams,
-    onProgress: (step: string, progress: number) => void
-  ): Promise<AnalysisResult> {
-    return new Promise((resolve, reject) => {
-      const eventSourceUrl = `/api/analyze?${params.toString()}`;
-      
-      let eventSource: EventSource;
-      let retryTimeout: NodeJS.Timeout | null = null;
-      let retryCount = 0;
-      const maxRetries = 3;
+  // Removed deprecated analyzeWithEventSource method
 
-      const cleanup = () => {
-        if (retryTimeout) clearTimeout(retryTimeout);
-        if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
-          eventSource.close();
-        }
-      };
-
-      const setupEventListeners = (es: EventSource) => {
-        es.onopen = () => {
-          console.log('🔗 SSE Connection established.');
-          retryCount = 0;
-        };
-
-        es.onmessage = (event) => {
-          if (this.isCancelled) {
-            cleanup();
-            return;
-          }
-
-          try {
-            const payload = JSON.parse(event.data);
-            const { status, data } = payload;
-
-            switch (status) {
-              case 'progress':
-                onProgress(data.step, data.progress);
-                break;
-              case 'complete':
-                cleanup();
-                resolve(this.ensureDefaults(data, params.get('repoUrl') || ''));
-                break;
-              case 'error':
-                cleanup();
-                reject(new Error(data.message || 'Unknown error occurred during analysis.'));
-                break;
-              default:
-                console.warn('Received unknown event status:', status);
-            }
-          } catch (error) {
-            console.error('Error parsing SSE message:', error);
-            // Don't reject on parse error, could be a keep-alive ping
-          }
-        };
-
-        es.onerror = () => {
-          if (this.isCancelled) {
-            cleanup();
-            return;
-          }
-          
-          console.error('EventSource failed. ReadyState:', es.readyState);
-
-          if (es.readyState === EventSource.CLOSED) {
-            if (retryCount < maxRetries) {
-              retryCount++;
-              cleanup();
-              retryTimeout = setTimeout(() => {
-                console.log(`Retrying EventSource connection (attempt ${retryCount}/${maxRetries})`);
-                eventSource = new EventSource(eventSourceUrl);
-                setupEventListeners(eventSource);
-              }, Math.pow(2, retryCount) * 1000);
-            } else {
-              cleanup();
-              reject(new Error('Connection failed after maximum retries.'));
-            }
-          }
-        };
-      };
-
-      eventSource = new EventSource(eventSourceUrl);
-      setupEventListeners(eventSource);
-    });
-  }
-  
   analyzeRepository(
     repoUrl: string,
     onProgress: (step: string, progress: number) => void,
@@ -357,7 +193,7 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
       };
 
       // Handle completion events
-      eventSource.addEventListener('complete', (event) => {
+      eventSource.addEventListener('result', (event) => {
         if (this.isCancelled) {
           cleanup();
           reject(new Error('Analysis cancelled'));
@@ -375,7 +211,6 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
           });
           
           onProgress('Analysis complete!', 100);
-          cleanup();
           
           const finalResult = this.ensureDefaults(result, repoUrl);
           
@@ -387,33 +222,24 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
           }
           
           // Persist to storage (IndexedDB) with error handling
-          Promise.all([
-            StorageService.storeAnalysisResult(finalResult),
-            this.saveAsReport(finalResult)
-          ]).then(() => {
-            console.log('Analysis result and report successfully stored');
-            window.dispatchEvent(new CustomEvent('analysisComplete'));
-            
-            // Log any warnings from the backend
-            if (finalResult.analysisWarnings && finalResult.analysisWarnings.length > 0) {
-              console.warn('Analysis completed with warnings from the backend:');
-              finalResult.analysisWarnings.forEach(warning => {
-                console.warn(`[${warning.step}]: ${warning.message}`, warning.error || '');
-              });
-            }
-            
-            resolve(finalResult);
-          }).catch(e => {
-            console.error('Failed to store analysis result or report:', e);
-            // Still resolve with the result even if storage fails
-            console.warn('Continuing with analysis result despite storage failure');
-            resolve(finalResult);
-          });
+          // The result is now returned without saving.
+          // The UI will be responsible for calling the save function.
+          resolve(finalResult);
         } catch (error) {
           console.error('Error parsing completion event:', error);
           reject(new Error('Failed to parse analysis result'));
         }
-      });      // Handle error events
+      });
+      
+      // Handle done event to properly close the connection
+      eventSource.addEventListener('done', () => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🏁 Received done event, closing connection');
+        }
+        cleanup();
+      });
+
+      // Handle error events
       eventSource.addEventListener('error', (event) => {
         if (process.env.NODE_ENV === 'development') {
           console.log('❌ SSE Error event received:', event);
@@ -514,7 +340,12 @@ async analyzeArchitecture(files: FileInfo[]): Promise<SystemArchitecture> {
       return false;
     }
   }
-private async saveAsReport(result: AnalysisResult): Promise<void> {
+  public async saveReport(result: AnalysisResult): Promise<void> {
+    await this.saveAsReport(result);
+    window.dispatchEvent(new CustomEvent('analysisComplete'));
+  }
+
+  private async saveAsReport(result: AnalysisResult): Promise<void> {
     try {
       const report: Omit<SavedReport, 'id'> = {
         repositoryName: result.repository?.full_name || 'Unknown Repo',
@@ -676,7 +507,7 @@ private async saveAsReport(result: AnalysisResult): Promise<void> {
       commits: result?.commits || [],
       contributors: result?.contributors || [],
       hotspots: result?.hotspots || [],
-      securityIssues: result?.securityIssues || [],
+      securityIssues: Array.isArray(result?.securityIssues) ? result.securityIssues : [],
       technicalDebt: result?.technicalDebt || [],
       performanceMetrics: result?.performanceMetrics || [],
       keyFunctions: result?.keyFunctions || [],

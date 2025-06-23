@@ -27,6 +27,15 @@ mermaid.initialize({
   securityLevel: 'loose',
 });
 
+// Suppress console output in production to avoid leaking sensitive data
+if (import.meta.env.PROD) {
+  const noop = () => {};
+  console.log = noop;
+  console.debug = noop;
+  console.info = noop;
+  console.warn = noop;
+}
+
 // Render the app
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

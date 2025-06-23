@@ -140,3 +140,14 @@ if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
   (window as unknown as { testRepositoryArchive: () => Promise<void> }).testRepositoryArchive = runRepositoryArchiveTests;
   console.log('🧪 Repository Archive Service test available via: testRepositoryArchive()');
 }
+
+// Jest test wrapper to ensure the suite registers at least one test
+
+jest.setTimeout(10000); // Allow up to 10s for async operations
+
+describe('RepositoryArchiveService (integration)', () => {
+  it('should store, retrieve, provide stats and clear archives correctly', async () => {
+    const tester = new RepositoryArchiveServiceTest();
+    await tester.runTests();
+  });
+});

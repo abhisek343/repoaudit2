@@ -473,21 +473,43 @@ Provide a comprehensive and detailed analysis in plain English without markdown 
 
   async generateMermaidDiagram(files: FileInfo[], languages: Record<string, number>): Promise<string> {
     if (!this.isConfigured()) return "LLM not configured. Mermaid diagram generation unavailable.";
-    const filePaths = files.slice(0, 100).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
-    const languageSummary = Object.entries(languages || {}).map(([lang, bytes]) => `${lang}: ${bytes} bytes`).join(', ');
+    
+    // Process more files (increased from 100 to 250)
+    const filePaths = files.slice(0, 250).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
+    
+    // More detailed language summary
+    const languageSummary = Object.entries(languages || {})
+      .sort(([, a], [, b]) => b - a) // Sort by size descending
+      .map(([lang, bytes]) => `${lang}: ${(bytes / 1024).toFixed(1)}KB`)
+      .join(', ');
+    
     const prompt = `
-Analyze the architecture of this codebase and generate a Mermaid diagram.
-Languages used: ${languageSummary}
-Key files and directories:
+Create a comprehensive and highly visible system architecture diagram using Mermaid for this codebase.
+
+CODEBASE SUMMARY:
+- Languages: ${languageSummary}
+- Total files analyzed: ${files.length}
+
+KEY FILES AND DIRECTORIES:
 ${filePaths}
-Generate a complete and detailed Mermaid diagram that represents the system architecture.
-The diagram should include:
-- All major components and their relationships.
-- Data flow between components.
-- Key dependencies.
-Return ONLY the Mermaid diagram code. Do not include any explanations or surrounding text.
+
+REQUIREMENTS:
+1. Create a visually impressive architecture diagram using Mermaid graph syntax.
+2. Use a larger font size to ensure text is clearly visible (fontsize: 14+).
+3. Group related components into subgraphs by their function/domain.
+4. Use meaningful colors with high contrast for better visibility.
+5. Include all major system components (frontend, backend, services, etc.).
+6. Show data flow and key dependencies between components.
+7. Use different line styles to represent different types of relationships.
+8. Ensure the diagram fits well on a standard screen (avoid excessive width).
+9. Use clear labels for all components and connections.
+10. Include a title and legend/key explaining the symbols used.
+
+Optimize for both visual clarity and architectural insight. Make the diagram large enough to be easily readable.
+Return ONLY the complete Mermaid diagram code with no explanations or surrounding text.
+Use TB (top-to-bottom) direction to better utilize screen space.
 `;
-    return this.generateText(prompt, 1500);
+    return this.generateText(prompt, 2500); // Increased token limit for more detailed diagram
   }
   
   async generateSecurityAnalysis(files: FileInfo[], repoName: string): Promise<string> {

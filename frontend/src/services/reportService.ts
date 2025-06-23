@@ -4,8 +4,8 @@
  * This service abstracts the underlying database logic, providing a clean API for report management.
  * It includes functionality for migrating legacy reports from localStorage to IndexedDB.
  */
-import { SavedReport } from '../types';
-import { saveReport, getAllReports, getReportByRepoName, deleteReport as deleteReportFromDB, clearAllReports } from '../utils/db';
+import { SavedReport, AnalysisResult } from '../types';
+import { saveReport, getAllReports, getReportByRepoName, deleteReport as deleteReportFromDB, clearAllReports, getReportById as getReportByIdFromDB } from '../utils/db';
 import { toast } from 'react-hot-toast';
 
 /**
@@ -75,6 +75,20 @@ export const getReports = async (): Promise<SavedReport[]> => {
     return await getAllReports();
   } catch (error) {
     console.error('Failed to get reports:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetches a single report by its ID.
+ * @param id The ID of the report to fetch.
+ * @returns A promise that resolves with the report data.
+ */
+export const getReportById = async (id: string): Promise<AnalysisResult | undefined> => {
+  try {
+    return await getReportByIdFromDB(id);
+  } catch (error) {
+    console.error('Failed to get report by ID:', error);
     throw error;
   }
 };

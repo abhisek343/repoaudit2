@@ -462,6 +462,44 @@ Provide a detailed technical analysis (400-500 words) covering:
 Provide a comprehensive and detailed analysis in plain English without markdown or bullet points. Aim for 400-500 words. Return only the analysis text.`;
         return this.generateText(prompt, 800);
     }
+    async generateMermaidDiagram(files, languages) {
+        if (!this.isConfigured())
+            return "LLM not configured. Mermaid diagram generation unavailable.";
+        // Process more files (increased from 100 to 250)
+        const filePaths = files.slice(0, 250).map(f => `- ${f.path} (${f.size} bytes)`).join('\n');
+        // More detailed language summary
+        const languageSummary = Object.entries(languages || {})
+            .sort(([, a], [, b]) => b - a) // Sort by size descending
+            .map(([lang, bytes]) => `${lang}: ${(bytes / 1024).toFixed(1)}KB`)
+            .join(', ');
+        const prompt = `
+Create a comprehensive and highly visible system architecture diagram using Mermaid for this codebase.
+
+CODEBASE SUMMARY:
+- Languages: ${languageSummary}
+- Total files analyzed: ${files.length}
+
+KEY FILES AND DIRECTORIES:
+${filePaths}
+
+REQUIREMENTS:
+1. Create a visually impressive architecture diagram using Mermaid graph syntax.
+2. Use a larger font size to ensure text is clearly visible (fontsize: 14+).
+3. Group related components into subgraphs by their function/domain.
+4. Use meaningful colors with high contrast for better visibility.
+5. Include all major system components (frontend, backend, services, etc.).
+6. Show data flow and key dependencies between components.
+7. Use different line styles to represent different types of relationships.
+8. Ensure the diagram fits well on a standard screen (avoid excessive width).
+9. Use clear labels for all components and connections.
+10. Include a title and legend/key explaining the symbols used.
+
+Optimize for both visual clarity and architectural insight. Make the diagram large enough to be easily readable.
+Return ONLY the complete Mermaid diagram code with no explanations or surrounding text.
+Use TB (top-to-bottom) direction to better utilize screen space.
+`;
+        return this.generateText(prompt, 2500); // Increased token limit for more detailed diagram
+    }
     async generateSecurityAnalysis(files, repoName) {
         if (!this.isConfigured())
             return "LLM not configured. Security analysis unavailable.";

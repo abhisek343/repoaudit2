@@ -4,29 +4,34 @@ import compression from 'compression';
 import { BackendAnalysisService } from './src/services/backendAnalysisService';
 import { ArchitectureController } from './src/controllers/architectureController';
 import { getVisualizations } from './src/controllers/visualizationController';
-import { RedisCacheService } from './src/services/redisCacheService';
+import { getCacheService, closeCacheService } from './src/services/cacheServiceProvider';
 import type { LLMConfig } from './src/types';
 import { safeAsync, errorHandler } from './src/middleware/errorHandler';
 import he from 'he';
+import { getContributorStats, getContributorDetails } from './src/controllers/contributorController';
+import crypto from 'crypto';
+import { LLMService } from './src/services/llmService';
 
 const app: Express = express();
 const port = process.env.PORT || 3001;
 
 // Redis cache for analysis results
-const cacheService = new RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
+const cacheService = getCacheService();
 
 // Initialize controllers with shared cache service
 const architectureController = new ArchitectureController(cacheService);
 
 // Enable gzip/brotli compression for all responses, but not for SSE
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (req.path === '/api/analyze') {
+  // Bypass compression for SSE connections
+  const accept = req.headers.accept || '';
+  if (accept.includes('text/event-stream')) {
     return next();
   }
   compression()(req, res, next);
 });
 app.use(cors()); // Enable CORS for all routes
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' })); // Increase JSON limit for larger diagrams
 
 // Safe serialization preserving all data and handling circular references
 function safeSerializeReport(report: any): string {
@@ -92,6 +97,37 @@ app.post('/api/validate-llm-key', safeAsync(async (req: Request, res: Response) 
   res.status(200).json(result);
 }));
 
+// New endpoint for LLM diagram enhancement
+app.post('/api/llm/enhance-diagram', safeAsync(async (req: Request, res: Response) => {
+  const { llmConfig, diagramCode } = req.body;
+  
+  if (!llmConfig || !diagramCode) {
+    return res.status(400).json({ 
+      error: 'LLM configuration and diagram code are required.' 
+    });
+  }
+  
+  try {
+    // Directly enhance the diagram via LLM service
+    const llmService = new LLMService(llmConfig);
+    const { enhancedCode } = await llmService.enhanceMermaidDiagram(diagramCode, {
+      name: 'diagram', path: 'diagram', size: diagramCode.length, type: 'file', content: diagramCode
+    });
+
+    // Cache the enhanced diagram
+    const diagramHash = crypto.createHash('sha256').update(diagramCode).digest('hex');
+    const cacheKey = `diagram_${diagramHash}`;
+    await cacheService.set(cacheKey, enhancedCode, 60 * 60 * 24);
+
+    res.status(200).json({ enhancedDiagram: enhancedCode });
+  } catch (error) {
+    console.error('Error enhancing diagram:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Unknown error enhancing diagram',
+      enhancedDiagram: diagramCode
+    });
+  }
+}));
 
 // Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req: Request, res: Response) => {
@@ -117,7 +153,7 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
   const cleanup = () => {
     if (!clientDisconnected) {
       clientDisconnected = true;
-      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      if (keepAliveInterval) clearInterval(keepAliveInterval!);
       console.warn('Client disconnected, cleaning up resources.');
       try { res.end(); } catch (e) { /* ignore */ }
     }
@@ -138,11 +174,13 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
   // Send a comment every 15 seconds to prevent proxy timeouts.
   keepAliveInterval = setInterval(() => {
     if (clientDisconnected) {
-      clearInterval(keepAliveInterval as NodeJS.Timeout);
+      clearInterval(keepAliveInterval!);
       return;
     }
+
+    // Emit a named keep-alive event to clients
     try {
-      res.write(': heartbeat\n\n');
+      res.write('event: keep-alive\ndata: {}\n\n');
     } catch (err) {
       console.warn('Heartbeat failed, client likely disconnected.');
       cleanup();
@@ -199,10 +237,10 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
       res.end();
       return;    }
 
-    // Additional validation for GitHub URL format
-    const githubUrlPattern = /^https:\/\/github\.com\/[a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+$/;
-    if (!githubUrlPattern.test(repoUrl.trim())) {
-      const error = 'Invalid GitHub repository URL format. Expected: https://github.com/owner/repo';
+    // Additional validation for repository URL format (HTTPS, SSH, Enterprise, .git suffix, /tree/branch)
+    const urlPattern = /^(?:https?:\/\/|git@)[^\/ :]+[\/ :][A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\/tree\/[A-Za-z0-9_.-]+)?(?:\.git)?$/;
+    if (!urlPattern.test(repoUrl.trim())) {
+      const error = 'Invalid repository URL format. Expected forms like https://github.com/owner/repo, git@github.com:owner/repo.git, or with /tree/branch.';
       console.error(error, { repoUrl: repoUrl.trim() });
       res.write(`event: error-message\ndata: ${JSON.stringify({ error: he.encode(error) })}\n\n`);
       res.end();
@@ -231,9 +269,9 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
     // Send initial progress to confirm connection
     sendProgress('Connection established', 0);
 
-    // Check cache first
-    const sanitizedRepoUrl = cleanRepoUrl.replace(/[^a-zA-Z0-9-._:/]/g, '');
-    const cacheKey = `analysis_${sanitizedRepoUrl}`;
+    // Check cache first with hashed key to avoid collisions
+    const repoHash = crypto.createHash('sha256').update(cleanRepoUrl).digest('hex');
+    const cacheKey = `analysis_${repoHash}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       console.log(`Returning cached analysis for key ${cacheKey}`);
@@ -268,10 +306,18 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
         gitGraph: true,
         sendProgress,
       });
-      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      if (keepAliveInterval) clearInterval(keepAliveInterval!);
       
       if (clientDisconnected) {
         console.warn('Client disconnected - skipping completion signal');
+        return;
+      }
+      
+      // Validate that we have a valid report object
+      if (!report) {
+        console.error('Analysis completed but no report was generated');
+        res.write(`event: error-message\ndata: ${JSON.stringify({ error: 'Analysis completed but no report was generated' })}\n\n`);
+        res.end();
         return;
       }
       
@@ -279,8 +325,19 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
       await cacheService.set(cacheKey, jsonString);
       
       // Also cache the report by its ID for the /api/report/:id endpoint
-      await cacheService.set(report.id, jsonString);
-      console.log(`Report cached with both keys: ${cacheKey} and ${report.id}`);
+      if (report && report.id) {
+        await cacheService.set(report.id, jsonString);
+        console.log(`Report cached with both keys: ${cacheKey} and ${report.id}`);
+      } else {
+        // Generate a fallback ID if report.id is missing
+        const fallbackId = `fallback_${Date.now()}`;
+        await cacheService.set(fallbackId, jsonString);
+        console.log(`Report cached with fallback ID: ${cacheKey} and ${fallbackId}`);
+        // Add the id to the report object for consistency
+        if (report) {
+          report.id = fallbackId;
+        }
+      }
       
       // Send the final report payload under a 'result' event
       console.log('Sending final analysis report to client.');
@@ -293,14 +350,14 @@ const handleAnalysisRequest = async (req: Request, res: Response) => {
       // Now, it's safe to close the connection.
       res.end();
     } catch (error) {
-      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      if (keepAliveInterval) clearInterval(keepAliveInterval!);
       handleAnalysisError(res, error);
       return;
     }
 
   } catch (error) {
     console.error('Analysis failed:', error);
-    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    if (keepAliveInterval) clearInterval(keepAliveInterval!);
     handleAnalysisError(res, error);
   }
 };
@@ -366,6 +423,32 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // Centralized error handler
 app.use(errorHandler);
 
-app.listen(port, () => {
+app.get('/api/contributors/stats', getContributorStats);
+app.get('/api/contributors/details/:contributorLogin', getContributorDetails);
+
+// Start the server
+const server = app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);
 });
+
+// Graceful shutdown
+const gracefulShutdown = async () => {
+  console.log('\n[server]: Shutting down gracefully...');
+  server.close(async () => {
+    console.log('[server]: Closed express server');
+    
+    try {
+      // Close Redis connection
+      await closeCacheService();
+      console.log('[server]: All connections closed successfully');
+    } catch (err) {
+      console.error('[server]: Error during shutdown:', err);
+    }
+    
+    process.exit(0);
+  });
+};
+
+// Listen for termination signals
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);

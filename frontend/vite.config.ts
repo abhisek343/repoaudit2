@@ -22,11 +22,10 @@ export default defineConfig({
             console.error('Proxy error:', err);
           });
           proxy.on('proxyReq', (proxyReq, req) => {
-            // This is the key fix: the browser sends `Connection: close`
-            // which was being proxied to the backend. We must remove it.
+            // Remove and reset connection header
             proxyReq.removeHeader('connection');
             proxyReq.setHeader('connection', 'keep-alive');
-            console.log(`Proxying request from ${req.url} to http://localhost:3001${proxyReq.path}`);
+            // silenced proxy request log
           });
         },
       },
@@ -38,8 +37,5 @@ export default defineConfig({
         ws: false
       }
     },
-    // This is crucial for SPA routing. It ensures that any deep-link
-    // request is redirected to index.html, allowing React Router to handle it.
-    historyApiFallback: true,
   }
 });

@@ -93,6 +93,7 @@ export class AdvancedCompressionService {
       
       const decompressionTime = performance.now() - startTime;
       console.log(`✅ Extreme decompression completed in ${decompressionTime.toFixed(2)}ms`);
+      console.log('DEBUG: decompressExtreme returning:', finalData.substring(0, 100));
       
       return finalData;
     } catch (error) {
@@ -239,17 +240,42 @@ export class AdvancedCompressionService {
    * Multi-stage decompression
    */
   private static async multiStageDecompress(compressedData: ArrayBuffer): Promise<{ decompressed: string; dictionary: Record<string, string> }> {
-    // Stage 1: Inflate
-    const inflated = pako.inflate(new Uint8Array(compressedData));
-    
-    // Stage 2: LZ4 decompress
-    const lz4Decompressed = LZ4.decompress(Array.from(inflated));
-    
-    // Decode payload
-    const payload = new TextDecoder().decode(new Uint8Array(lz4Decompressed));
-    const { text, dictionary } = JSON.parse(payload);
-    
-    return { decompressed: text, dictionary };
+    try {
+      // Stage 1: Inflate
+      const inflated = pako.inflate(new Uint8Array(compressedData));
+      
+      if (!inflated) {
+        throw new Error('Stage 1 decompression (pako.inflate) failed');
+      }
+      
+      // Stage 2: LZ4 decompress
+      const lz4DecompressedArray = LZ4.decompress(Array.from(inflated));
+      
+      if (!lz4DecompressedArray) {
+        throw new Error('Stage 2 decompression (LZ4.decompress) failed');
+      }
+      
+      const lz4DecompressedUint8 = new Uint8Array(lz4DecompressedArray);
+      
+      // Decode payload
+      const payload = new TextDecoder().decode(lz4DecompressedUint8);
+      
+      // Check for empty or problematic payload before parsing
+      if (!payload || payload === "undefined" || payload.trim() === '') {
+        throw new Error(`Decompression resulted in an invalid payload: '${payload}'. Data might be corrupted or an unexpected decompression artifact.`);
+      }
+
+      const { text, dictionary } = JSON.parse(payload);
+      
+      if (typeof text !== 'string') {
+        throw new Error('Decompressed payload does not contain valid text data');
+      }
+      
+      return { decompressed: text, dictionary };
+    } catch (error) {
+      console.error('Multi-stage decompression failed:', error);
+      throw new Error(`Multi-stage decompression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
   
   /**
@@ -263,7 +289,7 @@ export class AdvancedCompressionService {
     const compressedSize = compressed.length;
     
     return {
-      compressedData: compressed.buffer,
+      compressedData: compressed.slice().buffer,
       originalSize,
       compressedSize,
       compressionRatio: originalSize / compressedSize,
@@ -280,8 +306,20 @@ export class AdvancedCompressionService {
    * Standard decompression
    */
   static decompressStandard(compressedData: ArrayBuffer): string {
-    const inflated = pako.inflate(new Uint8Array(compressedData));
-    return new TextDecoder().decode(inflated);
+    try {
+      const decompressed = pako.inflate(new Uint8Array(compressedData), { to: 'string' });
+      
+      // Check if decompression was successful
+      if (decompressed === undefined || decompressed === null) {
+        throw new Error('Decompression failed: pako.inflate returned undefined/null');
+      }
+      
+      console.log('DEBUG: decompressStandard returning:', typeof decompressed === 'string' ? decompressed.substring(0, 100) : 'Non-string result');
+      return decompressed;
+    } catch (error) {
+      console.error('Failed to decompress data with standard method:', error);
+      throw new Error(`Standard decompression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
   
   /**
@@ -292,10 +330,14 @@ export class AdvancedCompressionService {
       ? new TextEncoder().encode(data).length 
       : data.byteLength;
     
+    console.log(`📏 Data size for compression decision: ${(size / 1024).toFixed(2)} KB`);
+    
     // Use extreme compression for large data (>100KB)
     if (size > 100 * 1024) {
+      console.log('🚀 Using extreme compression for large data');
       return this.compressExtreme(data);
     } else {
+      console.log('📦 Using standard compression for smaller data');
       // Use standard compression for smaller data
       return this.compressStandard(typeof data === 'string' ? data : new TextDecoder().decode(data));
     }
@@ -305,10 +347,22 @@ export class AdvancedCompressionService {
    * Auto-decompress based on metadata
    */
   static async decompressAuto(compressedData: ArrayBuffer, metadata: CompressionMetadata): Promise<string> {
-    if (metadata.algorithm === 'extreme-multi-stage') {
-      return this.decompressExtreme(compressedData);
-    } else {
-      return this.decompressStandard(compressedData);
+    try {
+      console.log(`Auto-decompressing with algorithm: ${metadata.algorithm}`);
+      
+      if (metadata.algorithm === 'extreme-multi-stage') {
+        try {
+          return await this.decompressExtreme(compressedData);
+        } catch (extremeError) {
+          console.warn('Extreme decompression failed, trying standard fallback:', extremeError);
+          return this.decompressStandard(compressedData);
+        }
+      } else {
+        return this.decompressStandard(compressedData);
+      }
+    } catch (error) {
+      console.error('Auto-decompression failed completely:', error);
+      throw new Error(`Failed to decompress data with algorithm ${metadata.algorithm}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
   

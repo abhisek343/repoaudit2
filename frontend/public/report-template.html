@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analysis Report</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/mermaid@8.14.0/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+    }
+    .mermaid {
+      text-align: center;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 p-8">
+  <div id="report-container" class="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+    <h1 class="text-3xl font-bold mb-4" id="report-title"></h1>
+    <div id="visualizations"></div>
+  </div>
+
+  <script>
+    const reportData = __REPORT_DATA__;
+
+    document.getElementById('report-title').innerText = `Analysis Report for ${reportData.basicInfo.fullName}`;
+
+    const visualizationsContainer = document.getElementById('visualizations');
+
+    function renderVisualization(title, data) {
+      const container = document.createElement('div');
+      container.className = 'mb-8';
+      
+      const titleEl = document.createElement('h2');
+      titleEl.className = 'text-2xl font-bold mb-4';
+      titleEl.innerText = title;
+      container.appendChild(titleEl);
+
+      if (title === 'System Architecture' && data && data.mermaidDiagram) {
+        const mermaidDiv = document.createElement('div');
+        mermaidDiv.className = 'mermaid';
+        mermaidDiv.innerHTML = data.mermaidDiagram;
+        container.appendChild(mermaidDiv);
+      } else {
+        const pre = document.createElement('pre');
+        pre.className = 'bg-gray-200 p-4 rounded';
+        pre.innerText = JSON.stringify(data, null, 2);
+        container.appendChild(pre);
+      }
+      
+      visualizationsContainer.appendChild(container);
+    }
+
+    renderVisualization('Interactive Architecture', reportData.advancedAnalysis);
+    renderVisualization('System Architecture', reportData.systemArchitecture);
+    renderVisualization('Vulnerability Distribution', reportData.securityIssues);
+    renderVisualization('Complexity Scatter Plot', reportData.qualityMetrics);
+
+    mermaid.initialize({ startOnLoad: true });
+  </script>
+</body>
+</html>

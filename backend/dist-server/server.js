@@ -8,13 +8,15 @@ const cors_1 = __importDefault(require("cors"));
 const compression_1 = __importDefault(require("compression"));
 const backendAnalysisService_1 = require("./src/services/backendAnalysisService");
 const architectureController_1 = require("./src/controllers/architectureController");
-const redisCacheService_1 = require("./src/services/redisCacheService");
+const visualizationController_1 = require("./src/controllers/visualizationController");
+const cacheServiceProvider_1 = require("./src/services/cacheServiceProvider");
 const errorHandler_1 = require("./src/middleware/errorHandler");
 const he_1 = __importDefault(require("he"));
+const contributorController_1 = require("./src/controllers/contributorController");
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3001;
 // Redis cache for analysis results
-const cacheService = new redisCacheService_1.RedisCacheService(process.env.REDIS_URL || 'redis://localhost:6379');
+const cacheService = (0, cacheServiceProvider_1.getCacheService)();
 // Initialize controllers with shared cache service
 const architectureController = new architectureController_1.ArchitectureController(cacheService);
 // Enable gzip/brotli compression for all responses, but not for SSE
@@ -25,7 +27,7 @@ app.use((req, res, next) => {
     (0, compression_1.default)()(req, res, next);
 });
 app.use((0, cors_1.default)()); // Enable CORS for all routes
-app.use(express_1.default.json({ limit: '50mb' }));
+app.use(express_1.default.json({ limit: '100mb' })); // Increase JSON limit for larger diagrams
 // Safe serialization preserving all data and handling circular references
 function safeSerializeReport(report) {
     const cache = new Set();
@@ -62,6 +64,7 @@ app.get('/api/architecture/config', (0, errorHandler_1.safeAsync)((req, res) => 
 app.put('/api/architecture/config', (0, errorHandler_1.safeAsync)((req, res) => architectureController.updateConfiguration(req, res)));
 app.get('/api/architecture/config/export', (0, errorHandler_1.safeAsync)((req, res) => architectureController.exportConfiguration(req, res)));
 app.post('/api/architecture/config/import', (0, errorHandler_1.safeAsync)((req, res) => architectureController.importConfiguration(req, res)));
+app.get('/api/visualizations', (0, errorHandler_1.safeAsync)(visualizationController_1.getVisualizations));
 // Endpoint to check LLM availability
 app.post('/api/llm/check', (0, errorHandler_1.safeAsync)(async (req, res) => {
     const { llmConfig } = req.body;
@@ -80,6 +83,56 @@ app.post('/api/validate-llm-key', (0, errorHandler_1.safeAsync)(async (req, res)
     const analysisService = new backendAnalysisService_1.BackendAnalysisService(undefined, llmConfig);
     const result = await analysisService.validateLlmKey(llmConfig);
     res.status(200).json(result);
+}));
+// New endpoint for LLM diagram enhancement
+app.post('/api/llm/enhance-diagram', (0, errorHandler_1.safeAsync)(async (req, res) => {
+    const { llmConfig, diagramCode } = req.body;
+    if (!llmConfig || !diagramCode) {
+        return res.status(400).json({
+            error: 'LLM configuration and diagram code are required.'
+        });
+    }
+    try {
+        // Create analysis service with the provided LLM config
+        const analysisService = new backendAnalysisService_1.BackendAnalysisService(undefined, llmConfig);
+        // Use the public analyze method with only the architecture option enabled
+        // This is a workaround since we can't access the private llmService directly
+        const result = await analysisService.analyze("dummy-repo-url", {
+            useCache: false,
+            architecture: true,
+            // Disable all other analysis features
+            dependencies: false,
+            quality: false,
+            security: false,
+            technicalDebt: false,
+            performance: false,
+            hotspots: false,
+            keyFunctions: false,
+            prAnalysis: false,
+            contributorAnalysis: false,
+            aiSummary: false,
+            aiArchitecture: false,
+            temporalCoupling: false,
+            dataTransformation: false,
+            gitGraph: false
+        });
+        // Get the diagram from the result
+        const enhancedDiagram = result.systemArchitecture?.mermaidDiagram || diagramCode;
+        // Cache the result
+        const diagramHash = Buffer.from(diagramCode).toString('base64').substring(0, 16);
+        const cacheKey = `diagram_${diagramHash}`;
+        await cacheService.set(cacheKey, enhancedDiagram, 60 * 60 * 24); // Cache for 24 hours
+        res.status(200).json({
+            enhancedDiagram
+        });
+    }
+    catch (error) {
+        console.error('Error enhancing diagram:', error);
+        res.status(500).json({
+            error: error instanceof Error ? error.message : 'Unknown error enhancing diagram',
+            enhancedDiagram: diagramCode // Return original diagram on error
+        });
+    }
 }));
 // Handle analysis request with proper SSE formatting and error handling
 const handleAnalysisRequest = async (req, res) => {
@@ -248,11 +301,30 @@ const handleAnalysisRequest = async (req, res) => {
                 console.warn('Client disconnected - skipping completion signal');
                 return;
             }
+            // Validate that we have a valid report object
+            if (!report) {
+                console.error('Analysis completed but no report was generated');
+                res.write(`event: error-message\ndata: ${JSON.stringify({ error: 'Analysis completed but no report was generated' })}\n\n`);
+                res.end();
+                return;
+            }
             const jsonString = safeSerializeReport(report);
             await cacheService.set(cacheKey, jsonString);
             // Also cache the report by its ID for the /api/report/:id endpoint
-            await cacheService.set(report.id, jsonString);
-            console.log(`Report cached with both keys: ${cacheKey} and ${report.id}`);
+            if (report && report.id) {
+                await cacheService.set(report.id, jsonString);
+                console.log(`Report cached with both keys: ${cacheKey} and ${report.id}`);
+            }
+            else {
+                // Generate a fallback ID if report.id is missing
+                const fallbackId = `fallback_${Date.now()}`;
+                await cacheService.set(fallbackId, jsonString);
+                console.log(`Report cached with fallback ID: ${cacheKey} and ${fallbackId}`);
+                // Add the id to the report object for consistency
+                if (report) {
+                    report.id = fallbackId;
+                }
+            }
             // Send the final report payload under a 'result' event
             console.log('Sending final analysis report to client.');
             res.write(`event: result\ndata: ${jsonString}\n\n`);
@@ -330,6 +402,28 @@ app.get('/api/health', (_req, res) => {
 });
 // Centralized error handler
 app.use(errorHandler_1.errorHandler);
-app.listen(port, () => {
+app.get('/api/contributors/stats', contributorController_1.getContributorStats);
+app.get('/api/contributors/details/:contributorLogin', contributorController_1.getContributorDetails);
+// Start the server
+const server = app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 });
+// Graceful shutdown
+const gracefulShutdown = async () => {
+    console.log('\n[server]: Shutting down gracefully...');
+    server.close(async () => {
+        console.log('[server]: Closed express server');
+        try {
+            // Close Redis connection
+            await (0, cacheServiceProvider_1.closeCacheService)();
+            console.log('[server]: All connections closed successfully');
+        }
+        catch (err) {
+            console.error('[server]: Error during shutdown:', err);
+        }
+        process.exit(0);
+    });
+};
+// Listen for termination signals
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);

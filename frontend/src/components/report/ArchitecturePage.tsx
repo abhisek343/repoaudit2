@@ -10,12 +10,10 @@ import {
   Brain, 
   AlertTriangle
 } from 'lucide-react';
-import ArchitectureDiagram from '../diagrams/ArchitectureDiagram';
 import SystemArchitectureView from '../SystemArchitectureView';
 import { AnalysisResult, FileInfo } from '../../types'; // Changed ExtendedFileInfo to FileInfo
 import { defaultDependencyConfig } from '../../config/dependencies.config';
 import { defaultSecurityConfig } from '../../config/security.config';
-import { checkLLMAvailability } from '../../api/llm';
 import { DependencyMetricsDisplay } from '../DependencyMetrics';
 
 
@@ -36,12 +34,10 @@ interface ArchitecturePageProps {
 
 const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: reportData }) => {
   const [selectedDiagram, setSelectedDiagram] = useState<string>('architecture');
-  const [diagramPath, setDiagramPath] = useState<string[]>([]);
-  const [useLLM, setUseLLM] = useState(true);
   const [llmConfig, setLlmConfig] = useState<import('../../types').LLMConfig | null>(null);
   
   const { hotspots, architectureAnalysis, systemArchitecture, metrics, files = [], securityIssues, dependencyMetrics } = reportData;
-  const [isLLMAvailable, setIsLLMAvailable] = useState(true);
+  const archAnalysisData = architectureAnalysis || systemArchitecture;
 
   // Get LLM config from localStorage
   React.useEffect(() => {
@@ -55,17 +51,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
     }
   }, []);
 
-  React.useEffect(() => {
-    const check = async () => {
-        if (useLLM) {
-            const available = await checkLLMAvailability();
-            setIsLLMAvailable(available);
-        }
-    };
-    check();
-  }, [useLLM]);
-
-
   const complexityData: ComplexityData[] = useMemo(() => 
     files.map((file: FileInfo) => ({
       name: file.name,
@@ -78,6 +63,14 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
       type: file.type || 'file'
     })), [files]);
 
+  // New: unify summary handling whether string or object
+  const archSummary = React.useMemo(() => {
+    if (!archAnalysisData) return '';
+    if (typeof archAnalysisData === 'string') return (archAnalysisData as string).trim();
+    return (archAnalysisData as any).summary || '';
+  }, [archAnalysisData]);
+
+  const isAnalysisUnavailable = !archSummary || archSummary.includes('LLM service unavailable') || archSummary.includes('quota exhaustion') || archSummary.length < 100;
 
   const getComplexityColor = (complexity: number) => {
     if (complexity >= 80) return '#EF4444'; 
@@ -106,73 +99,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
       icon: <Target />
     }
   ];
-  
-  const architectureDiagramFileInfo = React.useMemo(() => {
-    const info: Record<string, FileInfo> = {}; // Changed ExtendedFileInfo to FileInfo
-    (files || []).forEach(file => {
-      info[file.path] = { 
-        ...file,
-        content: file.content || '',
-        language: file.language || 'unknown',
-        complexity: file.complexity || 0,
-        testCoverage: file.testCoverage || 0,
-        lastModified: file.lastModified || new Date(0).toISOString(),
-        primaryAuthor: file.primaryAuthor || 'N/A',
-        type: file.type || 'file',
-        dependencies: file.dependencies || [],
-        contributors: file.contributors || [],
-        commitCount: file.commitCount || 0,
-        functions: file.functions || [],
-      };
-    });
-    return info;
-  }, [files]);
-
-  const generateMermaidFromFiles = (filesForDiagram: FileInfo[], path: string[]): string => {
-    if (!filesForDiagram || filesForDiagram.length === 0) return 'graph TD\n  A["No files to display"];';
-    
-    const currentPath = path.join('/');
-    let mermaidString = 'graph TD;\n';
-    const nodes = new Map<string, { name: string, type: 'file' | 'dir' }>();
-    
-    if (path.length > 0) {
-        nodes.set('..', { name: `../`, type: 'dir' });
-    }
-
-    filesForDiagram.forEach(file => {
-        if (file.path.startsWith(currentPath)) {
-            const relativePath = file.path.substring(currentPath.length).replace(/^\//, '');
-            const parts = relativePath.split('/');
-            if (parts.length > 0) {
-                const itemName = parts[0];
-                const itemPath = currentPath ? `${currentPath}/${itemName}` : itemName;
-                if (parts.length === 1) { // It's a file
-                    if (!nodes.has(itemPath)) {
-                        nodes.set(itemPath, { name: itemName, type: 'file' });
-                    }
-                } else { // It's a directory
-                    if (!nodes.has(itemPath)) {
-                        nodes.set(itemPath, { name: `${itemName}/`, type: 'dir' });
-                    }
-                }
-            }
-        }
-    });
-
-    for (const [key, value] of nodes.entries()) {
-        const nodeId = key.replace(/[^a-zA-Z0-9_]/g, '_');
-        const nodeLabel = value.name;
-        if (value.type === 'dir') {
-            mermaidString += `  ${nodeId}["<div style='font-weight: bold;'>${nodeLabel}</div>"]\n`;
-        } else {
-            mermaidString += `  ${nodeId}("${nodeLabel}")\n`;
-        }
-    }
-
-    return mermaidString;
-  };
-
-  const dynamicMermaidDiagram = React.useMemo(() => generateMermaidFromFiles(files || [], diagramPath), [files, diagramPath]);
 
   const renderDiagram = () => {
     switch (selectedDiagram) {
@@ -198,47 +124,18 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
           </div>
         );
       }
-
-        case 'architecture':
+      case 'architecture':
         return (
           <div className="w-full space-y-6">
-            {/* Show system architecture analysis if available */}
+            {/* Show system architecture analysis with stats & patterns */}
             {systemArchitecture && (
               <div className="bg-white rounded-lg border border-gray-200">
                 <SystemArchitectureView systemArchitecture={systemArchitecture} />
               </div>
             )}
-            
-            {/* Show existing architecture diagram */}
-            <div className="w-full h-full min-h-[600px] bg-white rounded-lg border border-gray-200 p-4">
-              <ArchitectureDiagram
-                title="Code Structure Diagram"
-                description="File-based architecture overview generated from code structure"
-                diagram={dynamicMermaidDiagram} 
-                width={800}
-                height={600}
-                interactive={true}
-                fileInfo={architectureDiagramFileInfo}
-                onNodeClick={(nodeId) => {
-                  if (nodeId === '..') {
-                    setDiagramPath(p => p.slice(0, -1));
-                    return;
-                  }
-                  // This is a simplified check. You might need a more robust way
-                  // to differentiate files from directories based on your data.
-                  const isDirectory = Object.values(architectureDiagramFileInfo).some(f => f.path.startsWith(nodeId + '/') && f.path !== nodeId);
-                  
-                  if (isDirectory) {
-                    setDiagramPath(p => [...p, nodeId.split('/').pop()!]);
-                  }
-                }}
-                showDetails={true}
-                useLLM={useLLM}
-                llmConfig={llmConfig as unknown as Record<string, unknown> || undefined}
-              />
-            </div>
           </div>
-        );case 'vulnerability': {
+        );
+      case 'vulnerability': {
         // Use dependency metrics if available, otherwise fall back to basic metrics
         const vulnerabilityData = dependencyMetrics?.vulnerabilityDistribution || [ 
           { severity: 'Critical', count: metrics.criticalVulnerabilities || 0, color: '#DC2626' },
@@ -304,7 +201,7 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
 
   return (
     <div className="space-y-8">
-      {architectureAnalysis && (
+      {archAnalysisData && (
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
           <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
             <Brain className="w-6 h-6 text-blue-500 mr-3" />
@@ -313,7 +210,21 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
           <div className="prose prose-indigo max-w-none">
             <div className="relative bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-500 rounded-2xl p-8 mb-8 shadow-2xl overflow-auto transform transition-all duration-500 hover:scale-[1.01] hover:shadow-3xl max-h-[500px]">
               <div className="absolute inset-0 bg-pattern opacity-10"></div> {/* Subtle pattern overlay */}
-              {!architectureAnalysis?.summary || architectureAnalysis.summary.includes('LLM service unavailable') || architectureAnalysis.summary.includes('quota exhaustion') || architectureAnalysis.summary.length < 100 ? (
+              {!isAnalysisUnavailable ? (
+                <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
+                  {archSummary
+                    .replace(/\*\*/g, '') // Remove bold markdown
+                    .split('\n')
+                    .map((line: string) => line.replace(/^\s*(\d+\.|\*|-)/, '').trim()) // Remove list markers
+                    .filter((line: string) => line.length > 0)
+                    .map((line: string, index: number) => (
+                      <li key={index} className="flex items-start">
+                        <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
+                        <span>{line}</span>
+                      </li>
+                  ))}
+                </ul>
+              ) : (
                 <div className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
                   <p>Full AI analysis is currently unavailable or limited due to service constraints. Please try again later for detailed insights.</p>
                   <p>Below is a summary of basic architecture metrics extracted from the analysis data:</p>
@@ -333,20 +244,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
                   </ul>
                   <p>You can also view additional architecture details and diagrams below.</p>
                 </div>
-              ) : (
-                <ul className="text-white text-lg md:text-xl leading-relaxed font-medium relative z-10 space-y-3">
-                  {architectureAnalysis.summary
-                    .replace(/\*\*/g, '') // Remove bold markdown
-                    .split('\n')
-                    .map((line: string) => line.replace(/^\s*(\d+\.|\*|-)\s*/, '').trim()) // Remove list markers
-                    .filter((line: string) => line.length > 0)
-                    .map((line: string, index: number) => (
-                      <li key={index} className="flex items-start">
-                        <span className="w-3 h-3 bg-white rounded-full mt-2 mr-3 flex-shrink-0 animate-bounce-slow"></span>
-                        <span>{line}</span>
-                      </li>
-                  ))}
-                </ul>
               )}
             </div>
           </div>
@@ -360,25 +257,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
         </h3>
 
         <div className="flex flex-wrap items-center gap-2 mb-6 border-b pb-4">
-          {diagramPath.length > 0 && (
-            <button
-              onClick={() => setDiagramPath([])}
-              className="flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300"
-            >
-              Home
-            </button>
-          )}
-          {diagramPath.map((part, index) => (
-            <React.Fragment key={index}>
-              <span className="text-gray-500">/</span>
-              <button
-                onClick={() => setDiagramPath(p => p.slice(0, index + 1))}
-                className="flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300"
-              >
-                {part}
-              </button>
-            </React.Fragment>
-          ))}
           <div className="flex flex-wrap gap-2">
             {diagramsOptions.map((diagram: { id: string; title: string; icon: React.ReactElement }) => (
               <button
@@ -396,27 +274,6 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
             ))}
           </div>
         </div>
-        
-        {selectedDiagram === 'architecture' && (
-            <div className="mb-4 flex items-center justify-end gap-2">
-                <label className="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
-                <input
-                    type="checkbox"
-                    checked={useLLM}
-                    onChange={(e) => setUseLLM(e.target.checked)}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4"
-                    disabled={!isLLMAvailable && useLLM} 
-                />
-                Use AI Enhancement
-                </label>
-                {!isLLMAvailable && useLLM && (
-                    <Tooltip content="LLM service is not available. Basic diagram is shown.">
-                        <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                    </Tooltip>
-                )}
-            </div>
-        )}
-
 
         <div className="relative w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 min-h-[400px] md:min-h-[500px] flex items-center justify-center">
           {renderDiagram()}
@@ -496,10 +353,11 @@ const ArchitecturePage: React.FC<ArchitecturePageProps> = ({ analysisResult: rep
                 <div>
                     <h4 className="text-lg font-semibold text-gray-800 mb-2">Top Security Issues Found:</h4>
                     <ul className="list-disc list-inside space-y-1 text-sm text-red-600 max-h-40 overflow-y-auto">
-                        {securityIssues.slice(0,3).map((issue,idx) => (
-                            <li key={idx} title={`${issue.file}${issue.line ? ':'+issue.line : ''} - ${issue.description}`}>{issue.description.substring(0,60)}... ({issue.severity})</li>
+                        {securityIssues.map((issue, idx) => (
+                            <li key={idx} title={`${issue.file}${issue.line ? ':' + issue.line : ''} - ${issue.description}`}>
+                                {issue.description} ({issue.severity})
+                            </li>
                         ))}
-                         {securityIssues.length > 3 && <li>And {securityIssues.length - 3} more...</li>}
                     </ul>
                 </div>
             )}
